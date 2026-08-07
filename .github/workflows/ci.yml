@@ -100,9 +100,10 @@ jobs:
         with:
           path: release
           merge-multiple: true
+          pattern: '*.zip'
       - run: |
           cat release/*.sha256 > release/SHA256SUMS
           rm release/*.sha256
-          gh release create "${GITHUB_REF_NAME}" release/* --generate-notes
+          gh release create "${GITHUB_REF_NAME}" release/*.zip release/SHA256SUMS --generate-notes
         env:
           GH_TOKEN: ${{ github.token }}
