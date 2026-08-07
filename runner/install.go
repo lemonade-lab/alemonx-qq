@@ -183,6 +183,12 @@ func installNapCat() (string, error) {
 			return "", err
 		}
 		return "installed-by-script", nil
+	case "darwin":
+		guide, err := macInstallGuide()
+		if err != nil {
+			return "", err
+		}
+		return guide, nil
 	default:
 		return "", fmt.Errorf("当前系统暂不支持 NapCat 安装（仅 Windows / Linux）")
 	}

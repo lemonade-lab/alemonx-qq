@@ -25,8 +25,8 @@ func webUIBridge() string {
 	return "http://127.0.0.1:" + strconv.Itoa(webUIPort) + "/webui"
 }
 
-// napcatCommand builds the command that launches NapCat in the background.
-// The runner detaches itself as the parent so the NapCat process survives alx.
+// napcatCommand builds the command that launches NapCat in the background
+// (Windows / Linux). macOS overrides start/stop in macos.go.
 func napcatCommand(state State) (*exec.Cmd, error) {
 	switch runtime.GOOS {
 	case "windows":
@@ -34,57 +34,12 @@ func napcatCommand(state State) (*exec.Cmd, error) {
 	case "linux":
 		return linuxNapcatCommand(state)
 	default:
-		return nil, fmt.Errorf("当前系统暂不支持 NapCat（仅 Windows / Linux）")
+		return nil, fmt.Errorf("当前系统暂不支持独立 NapCat 进程")
 	}
-}
-
-// startNapCat spawns NapCat detached from the runner's process group.
-func startNapCat(state State) (int, error) {
-	command, err := napcatCommand(state)
-	if err != nil {
-		return 0, err
-	}
-	logFile, err := logPath()
-	if err != nil {
-		return 0, err
-	}
-	if err := os.MkdirAll(filepath.Dir(logFile), 0755); err != nil {
-		return 0, err
-	}
-	handle, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
-	if err != nil {
-		return 0, err
-	}
-	defer handle.Close()
-	command.Stdin = nil
-	command.Stdout = handle
-	command.Stderr = handle
-	detachProcess(command)
-	if err := command.Start(); err != nil {
-		return 0, err
-	}
-	pid := command.Process.Pid
-	_ = command.Process.Release()
-	return pid, nil
 }
 
 func processAlive(pid int) bool {
 	return aliveProbe(pid)
-}
-
-func stopProcess(pid int) {
-	if pid <= 0 {
-		return
-	}
-	process, err := os.FindProcess(pid)
-	if err != nil {
-		return
-	}
-	_ = process.Signal(os.Interrupt)
-	time.Sleep(500 * time.Millisecond)
-	if aliveProbe(pid) {
-		_ = process.Kill()
-	}
 }
 
 // status returns a human-readable status line for the current state.

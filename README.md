@@ -13,7 +13,7 @@
 - **扫码登录**：内嵌 NapCat 管理面板，直接在插件页扫码登录 QQ。
 - **守护模式**：开启后 NapCat 意外退出会自动拉起（约 15 秒）。
 
-支持 Windows 和 Linux。
+支持 Windows、Linux 和 macOS。
 
 ## 安装插件
 
@@ -32,7 +32,7 @@
 
 - Windows：下载内置 QQ 的 Shell 包，解压即用。
 - Linux：下载 Shell 包，需要 `unzip` 与 Node.js 18+。
-- macOS：暂不支持（NapCat 仅 Docker 支持，本轮未做）。
+- macOS：原生支持（无需 Docker）。NapCat 通过注入 QQ 应用运行，需先装 QQ（Mac App Store）与 Node.js 18+；安装按插件内引导手动完成（需在「系统设置 → 隐私与安全性 → App 管理」授权一次）。启动 = 打开 QQ，停止 = 退出 QQ。
 
 ## 给开发者
 

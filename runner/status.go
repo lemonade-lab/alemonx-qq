@@ -21,7 +21,7 @@ type statusPayload struct {
 func collectStatus(state State) statusPayload {
 	payload := statusPayload{Version: state.Version}
 	payload.Installed = state.InstallDir != "" && dirExists(state.InstallDir)
-	payload.Running = processAlive(state.PID)
+	payload.Running = isRunning(state)
 	payload.Watchdog = processAlive(state.WatchdogPID)
 	payload.PortReachable = webUIBridge() != ""
 

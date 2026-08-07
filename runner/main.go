@@ -135,7 +135,7 @@ func installAction() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	dir, err := installDir()
+	dir, err := platformInstallDir()
 	if err != nil {
 		return "", err
 	}
@@ -156,7 +156,7 @@ func uninstallAction() (string, error) {
 		stopProcess(state.PID)
 	}
 	state.PID = 0
-	dir, err := installDir()
+	dir, err := platformInstallDir()
 	if err != nil {
 		return "", err
 	}
