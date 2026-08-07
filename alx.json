@@ -1,0 +1,20 @@
+{
+  "id": "alemonx-qq",
+  "name": "QQ 机器人（NapCat）",
+  "version": "0.1.0",
+  "description": "安装、启动与管理 NapCat，让 QQ 机器人协议跑起来。",
+  "platforms": ["darwin", "linux", "windows"],
+  "runtime": "binary",
+  "entry": {
+    "darwin-arm64": "dist/alemonx-qq-darwin-arm64",
+    "darwin-amd64": "dist/alemonx-qq-darwin-amd64",
+    "linux-amd64": "dist/alemonx-qq-linux-amd64",
+    "windows-amd64": "dist/alemonx-qq-windows-amd64.exe"
+  },
+  "development": {
+    "runtime": "go",
+    "entry": { "go": "runner/main.go" }
+  },
+  "web": { "root": "web" },
+  "navigation": { "label": "QQ 机器人", "icon": "qq", "order": -90 }
+}

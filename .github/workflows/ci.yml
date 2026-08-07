@@ -1,0 +1,108 @@
+name: CI
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+          cache: true
+      - name: Test
+        run: go test ./runner/...
+      - name: Vet
+        run: go vet ./runner/...
+      - name: Cross-compile check
+        run: |
+          GOOS=linux GOARCH=amd64 go build -trimpath -o /tmp/alemonx-qq-linux ./runner
+          GOOS=windows GOARCH=amd64 go build -trimpath -o /tmp/alemonx-qq-windows.exe ./runner
+          GOOS=darwin GOARCH=arm64 go build -trimpath -o /tmp/alemonx-qq-darwin ./runner
+      - name: Validate alx.json
+        run: python3 scripts/validate-alx.py alx.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: corepack enable
+      - run: yarn install --non-interactive && yarn build
+        working-directory: frontend
+
+  web:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: yarn
+          cache-dependency-path: frontend/yarn.lock
+      - run: corepack enable
+      - run: yarn install --non-interactive && yarn build
+        working-directory: frontend
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-dist
+          path: frontend/../web/
+
+  package:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [verify, web]
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - { goos: windows, goarch: amd64, binary: alemonx-qq-windows-amd64.exe, bundle: alemonx-qq-windows-amd64.zip }
+          - { goos: darwin, goarch: arm64, binary: alemonx-qq-darwin-arm64, bundle: alemonx-qq-darwin-arm64.zip }
+          - { goos: darwin, goarch: amd64, binary: alemonx-qq-darwin-amd64, bundle: alemonx-qq-darwin-amd64.zip }
+          - { goos: linux, goarch: amd64, binary: alemonx-qq-linux-amd64, bundle: alemonx-qq-linux-amd64.zip }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+          cache: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: web-dist
+          path: web
+      - name: Build plugin bundle
+        run: |
+          mkdir -p "bundle/alemonx-qq/dist" release
+          cp alx.json "bundle/alemonx-qq/alx.json"
+          cp -r web "bundle/alemonx-qq/web"
+          CGO_ENABLED=0 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} \
+            go build -trimpath -ldflags "-s -w" -o "bundle/alemonx-qq/dist/${{ matrix.binary }}" ./runner
+          (cd bundle && zip -r "../release/${{ matrix.bundle }}" alemonx-qq)
+          (cd release && sha256sum "${{ matrix.bundle }}" > "${{ matrix.bundle }}.sha256")
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.bundle }}
+          path: release/
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: release
+          merge-multiple: true
+      - run: |
+          cat release/*.sha256 > release/SHA256SUMS
+          rm release/*.sha256
+          gh release create "${GITHUB_REF_NAME}" release/* --generate-notes
+        env:
+          GH_TOKEN: ${{ github.token }}

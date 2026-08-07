@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>QQ 机器人（NapCat）</title>
+    <script>
+      // The host iframe passes the current theme via query so the plugin UI
+      // matches alx before first paint (it has its own document, no inheritance).
+      var theme = new URLSearchParams(location.search).get('theme')
+      if (theme) {
+        document.documentElement.dataset.theme = theme
+        document.documentElement.style.colorScheme = theme
+      }
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

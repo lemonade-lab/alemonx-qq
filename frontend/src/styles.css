@@ -1,0 +1,176 @@
+@import 'tailwindcss';
+@custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
+
+@theme {
+  --color-brand-50: var(--theme-brand-50);
+  --color-brand-100: var(--theme-brand-100);
+  --color-brand-200: var(--theme-brand-200);
+  --color-brand-300: var(--theme-brand-300);
+  --color-brand-600: var(--theme-brand-600);
+  --color-brand-700: var(--theme-brand-700);
+  --color-ink-950: var(--theme-ink-950);
+  --color-ink-700: var(--theme-ink-700);
+  --color-ink-500: var(--theme-ink-500);
+  --radius-panel: 0.75rem;
+  --radius-control: 0.375rem;
+}
+
+@utility primary-button {
+  @apply inline-flex min-h-9 items-center justify-center rounded-control border border-brand-600 bg-brand-600 px-3.5 text-xs font-semibold text-white transition hover:border-brand-700 hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50;
+}
+
+@utility secondary-button {
+  @apply inline-flex min-h-8 items-center justify-center rounded-control border border-[var(--theme-border-strong)] bg-[var(--theme-surface-panel)] px-3 text-xs font-semibold text-[var(--theme-text-secondary)] transition hover:border-[var(--theme-border-strong)] hover:bg-[var(--theme-surface-hover)] hover:text-[var(--theme-text-strong)] disabled:cursor-not-allowed disabled:opacity-50;
+}
+
+@utility text-button {
+  @apply inline-flex min-h-8 items-center justify-center rounded-control px-2.5 text-xs font-semibold text-[var(--theme-text-muted)] transition hover:bg-[var(--theme-surface-hover)] hover:text-[var(--theme-text-strong)] disabled:cursor-not-allowed disabled:opacity-50;
+}
+
+@utility icon-button {
+  @apply inline-flex size-8 items-center justify-center rounded-control border border-[var(--theme-border-strong)] bg-[var(--theme-surface-panel)] text-[var(--theme-text-secondary)] transition hover:border-[var(--theme-border-strong)] hover:bg-[var(--theme-surface-hover)] hover:text-[var(--theme-text-strong)] disabled:cursor-not-allowed disabled:opacity-50;
+}
+
+@utility danger-button {
+  @apply inline-flex min-h-9 items-center justify-center rounded-control border border-[var(--theme-danger)] bg-[var(--theme-danger)] px-3.5 text-xs font-semibold text-white transition hover:border-[var(--theme-danger-text)] hover:bg-[var(--theme-danger-text)] disabled:cursor-not-allowed disabled:opacity-50;
+}
+
+:root {
+  /* Warm-neutral surfaces (Codex-aligned) */
+  --theme-surface-page: #f6f5f2;
+  --theme-surface-panel: #ffffff;
+  --theme-surface-raised: #f2f1ee;
+  --theme-surface-hover: #eae8e4;
+  --theme-surface-active: #e0ddd7;
+  --theme-surface-input: #ffffff;
+  --theme-surface-invert: #1c1a17;
+  --theme-surface-overlay: rgb(28 26 23 / 0.36);
+  /* Text */
+  --theme-text-strong: #1c1a17;
+  --theme-text-primary: #2a2825;
+  --theme-text-secondary: #57534a;
+  --theme-text-muted: #8a857c;
+  --theme-text-faint: #a8a39a;
+  --theme-text-invert: #ffffff;
+  /* Borders */
+  --theme-border-subtle: #efeeea;
+  --theme-border-default: #e4e2dc;
+  --theme-border-strong: #d5d2ca;
+  /* Accent — warm amber */
+  --theme-accent: #c2660a;
+  --theme-accent-hover: #a05205;
+  --theme-accent-text: #b45309;
+  --theme-accent-soft: #fff7e8;
+  --theme-accent-soft-border: #f5ddb0;
+  --theme-accent-soft-text: #9a5a07;
+  --theme-accent-contrast: #ffffff;
+  /* Semantic */
+  --theme-success: #3f8f5f;
+  --theme-success-soft: #edf7f0;
+  --theme-success-text: #2c7a4b;
+  --theme-warning: #d98a1c;
+  --theme-warning-soft: #fff8ea;
+  --theme-warning-text: #b06a0a;
+  --theme-danger: #d64545;
+  --theme-danger-soft: #fdefef;
+  --theme-danger-text: #b23a3a;
+  --theme-info: #3b6fd4;
+  --theme-info-soft: #eef3fc;
+  --theme-info-text: #2b56a8;
+  /* Shadows */
+  --theme-shadow-soft: rgb(28 26 23 / 0.08);
+  --theme-shadow-panel: 0 10px 24px rgb(28 26 23 / 0.06);
+  --theme-shadow-pop: 0 18px 48px rgb(28 26 23 / 0.14);
+  /* Legacy brand/ink tokens */
+  --theme-brand-50: var(--theme-accent-soft);
+  --theme-brand-100: #fdeecb;
+  --theme-brand-200: var(--theme-accent-soft-border);
+  --theme-brand-300: #eec278;
+  --theme-brand-600: var(--theme-accent);
+  --theme-brand-700: var(--theme-accent-hover);
+  --theme-ink-950: var(--theme-text-strong);
+  --theme-ink-700: var(--theme-text-secondary);
+  --theme-ink-500: var(--theme-text-muted);
+  color: var(--theme-text-primary);
+  background: var(--theme-surface-page);
+  font-family:
+    Inter,
+    -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    sans-serif;
+}
+
+body {
+  margin: 0;
+  background: var(--theme-surface-page);
+  color: var(--theme-text-primary);
+}
+
+[data-theme='dark'] {
+  color-scheme: dark;
+  /* Warm-neutral surfaces (Codex-aligned) */
+  --theme-surface-page: #141312;
+  --theme-surface-panel: #1d1c1a;
+  --theme-surface-raised: #23211f;
+  --theme-surface-hover: #2b2926;
+  --theme-surface-active: #34312d;
+  --theme-surface-input: #171615;
+  --theme-surface-invert: #f2f0ec;
+  --theme-surface-overlay: rgb(0 0 0 / 0.58);
+  /* Text */
+  --theme-text-strong: #f2f0ec;
+  --theme-text-primary: #e4e1db;
+  --theme-text-secondary: #a9a49b;
+  --theme-text-muted: #8b867d;
+  --theme-text-faint: #63605a;
+  --theme-text-invert: #141312;
+  /* Borders */
+  --theme-border-subtle: #262421;
+  --theme-border-default: #34312d;
+  --theme-border-strong: #46423c;
+  /* Accent — warm amber */
+  --theme-accent: #e59b26;
+  --theme-accent-hover: #f0ab3c;
+  --theme-accent-text: #f0b54d;
+  --theme-accent-soft: #2c2010;
+  --theme-accent-soft-border: #4a3515;
+  --theme-accent-soft-text: #f0c378;
+  --theme-accent-contrast: #141312;
+  /* Semantic */
+  --theme-success: #4fae74;
+  --theme-success-soft: #16271c;
+  --theme-success-text: #7cc99b;
+  --theme-warning: #d99a3a;
+  --theme-warning-soft: #2d2413;
+  --theme-warning-text: #e3b05e;
+  --theme-danger: #d96a5c;
+  --theme-danger-soft: #331b18;
+  --theme-danger-text: #e89487;
+  --theme-info: #6a93e0;
+  --theme-info-soft: #1b2335;
+  --theme-info-text: #93b2ec;
+  /* Shadows */
+  --theme-shadow-soft: rgb(0 0 0 / 0.4);
+  --theme-shadow-panel: 0 12px 30px rgb(0 0 0 / 0.28);
+  --theme-shadow-pop: 0 22px 60px rgb(0 0 0 / 0.42);
+  /* Legacy brand/ink tokens */
+  --theme-brand-50: var(--theme-accent-soft);
+  --theme-brand-100: #3a2c13;
+  --theme-brand-200: var(--theme-accent-soft-border);
+  --theme-brand-300: #6b4f1c;
+  --theme-brand-600: var(--theme-accent);
+  --theme-brand-700: var(--theme-accent-hover);
+  --theme-ink-950: var(--theme-text-strong);
+  --theme-ink-700: var(--theme-text-secondary);
+  --theme-ink-500: var(--theme-text-muted);
+}
+
+[data-theme='dark'] body {
+  background: var(--theme-surface-page);
+  color: var(--theme-text-primary);
+}
+
+[data-theme='dark'] .primary-button {
+  color: var(--theme-accent-contrast);
+}
