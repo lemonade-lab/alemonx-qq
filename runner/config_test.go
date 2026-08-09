@@ -1,6 +1,8 @@
 package main
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -17,7 +19,41 @@ func withTempState(t *testing.T) string {
 	if err := os.MkdirAll(filepath.Join(napcat, "config"), 0755); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(napcat, "package.json"), []byte(`{"name":"napcat-test"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
 	return napcat
+}
+
+func makeManagedNapcatForConfig(t *testing.T, napcat string) {
+	t.Helper()
+	platform := napcatPlatform()
+	if platform == nil {
+		t.Skip("unsupported host platform")
+	}
+	fingerprint, err := napcatFingerprint(napcat)
+	if err != nil {
+		t.Fatal(err)
+	}
+	previous := napcatReleaseValidationEvidence
+	t.Cleanup(func() { napcatReleaseValidationEvidence = previous })
+	evidence := napcatEvidence{Platform: platform.Key, RuntimeFingerprint: fingerprint, ValidatedAt: "2026-08-10T00:00:00Z", ProcessModel: "foreground"}
+	state := State{InstallDir: napcat, Managed: true, Platform: platform.Key, InstallMode: "managed", Fingerprint: fingerprint, ValidatedAt: evidence.ValidatedAt}
+	if platform.Key == "windows-amd64" {
+		evidence.Tag, evidence.Asset, evidence.ArchiveSHA256 = "v1.0.0", windowsAsset, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+		state.ReleaseTag, state.Asset, state.ArchiveSHA256 = evidence.Tag, evidence.Asset, evidence.ArchiveSHA256
+	} else {
+		evidence.InstallerCommit, evidence.InstallerSHA256 = "commit", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+		state.ReleaseTag, state.ArchiveSHA256 = evidence.InstallerCommit, evidence.InstallerSHA256
+	}
+	data, err := json.Marshal(evidence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	napcatReleaseValidationEvidence = base64.RawURLEncoding.EncodeToString(data)
+	if err := saveState(state); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestFindQQConfig(t *testing.T) {
@@ -60,13 +96,14 @@ func TestReadOnebotConfigRedactsToken(t *testing.T) {
 
 func TestSetServerConfigPreservesOtherFields(t *testing.T) {
 	napcat := withTempState(t)
+	makeManagedNapcatForConfig(t, napcat)
 	path := filepath.Join(napcat, "config", "onebot11_1.json")
 	config := `{"network":{"httpServers":[{"enable":true,"port":3000,"token":"old","messagePostFormat":"array"}],"websocketServers":[{"enable":true,"port":3001,"heartInterval":30000}]},"enableLocalFile2Url":false}`
 	if err := os.WriteFile(path, []byte(config), 0644); err != nil {
 		t.Fatal(err)
 	}
 	// Update HTTP server port + token; keep the rest intact.
-	if _, err := setServerConfig(map[string]string{"port": "3456", "enable": "true", "token": "newsecret"}, false); err != nil {
+	if _, err := setServerConfig(map[string]string{"port": "3456", "enable": "true", "token": "newsecret"}, false, true); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(path)
@@ -86,13 +123,14 @@ func TestSetServerConfigPreservesOtherFields(t *testing.T) {
 
 func TestSetServerConfigRedactedTokenUnchanged(t *testing.T) {
 	napcat := withTempState(t)
+	makeManagedNapcatForConfig(t, napcat)
 	path := filepath.Join(napcat, "config", "onebot11_1.json")
 	config := `{"network":{"httpServers":[{"enable":true,"port":3000,"token":"keepme"}],"websocketServers":[]}}`
 	if err := os.WriteFile(path, []byte(config), 0644); err != nil {
 		t.Fatal(err)
 	}
 	// Passing the redacted sentinel must not overwrite the real token.
-	if _, err := setServerConfig(map[string]string{"port": "3456", "token": redactedToken}, false); err != nil {
+	if _, err := setServerConfig(map[string]string{"port": "3456", "token": redactedToken}, false, true); err != nil {
 		t.Fatal(err)
 	}
 	data, _ := os.ReadFile(path)

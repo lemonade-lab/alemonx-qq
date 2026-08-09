@@ -83,8 +83,16 @@ func windowsNapcatCommand(state State) (*exec.Cmd, error) {
 }
 
 func linuxNapcatCommand(state State) (*exec.Cmd, error) {
-	if _, err := exec.LookPath("napcat"); err != nil {
-		return nil, errors.New("未找到 napcat 命令；请先安装 NapCat-Installer")
+	root := state.InstallDir
+	if root == "" {
+		return nil, errors.New("未记录 NapCat rootless 安装目录")
 	}
-	return exec.Command("napcat", "start"), nil
+	qq := filepath.Join(root, "opt", "QQ", "qq")
+	if _, err := os.Stat(qq); err != nil {
+		return nil, errors.New("未找到 rootless QQ 启动入口：" + qq)
+	}
+	if _, err := exec.LookPath("xvfb-run"); err != nil {
+		return nil, errors.New("未找到 xvfb-run；请先安装 Linux 图形运行依赖")
+	}
+	return exec.Command("xvfb-run", "-a", qq, "--no-sandbox"), nil
 }

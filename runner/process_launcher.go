@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"time"
 )
 
 // startNapCat spawns NapCat detached from the runner's process group
@@ -42,32 +41,32 @@ func startNapCat(state State) (int, error) {
 }
 
 func stopProcess(pid int) {
-	if pid <= 0 {
-		return
-	}
-	process, err := os.FindProcess(pid)
-	if err != nil {
-		return
-	}
-	_ = process.Signal(os.Interrupt)
-	time.Sleep(500 * time.Millisecond)
-	if aliveProbe(pid) {
-		_ = process.Kill()
-	}
+	stopManagedProcess(pid)
 }
 
 // isRunning on Windows/Linux means the tracked PID is alive.
 func isRunning(state State) bool {
+	if state.ProcessGroupID > 0 {
+		return processAlive(state.ProcessGroupID)
+	}
 	return processAlive(state.PID)
 }
 
 // platformInstallDir returns the NapCat install directory on Windows/Linux.
 func platformInstallDir() (string, error) {
-	return installDir()
+	return managedInstallDir()
 }
 
 // macInstallGuide is unused on non-darwin but referenced by install.go's
 // switch; provide a stub so the branch compiles everywhere.
 func macInstallGuide() (string, error) {
+	return "", fmt.Errorf("当前系统不支持 macOS 安装方式")
+}
+
+func macNapcatVersion() string { return "" }
+
+func macQQInstalled() bool    { return false }
+func macNapcatInjected() bool { return false }
+func macInstallDir() (string, error) {
 	return "", fmt.Errorf("当前系统不支持 macOS 安装方式")
 }

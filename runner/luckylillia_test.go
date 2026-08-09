@@ -1,11 +1,16 @@
 package main
 
 import (
+	"archive/tar"
 	"archive/zip"
 	"bytes"
+	"encoding/base64"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/ulikunitz/xz"
 )
 
 func TestExtractLuckyZipRejectsEscapingEntry(t *testing.T) {
@@ -99,7 +104,11 @@ func TestRestoreLuckyConfigCopiesOnlyManagedFiles(t *testing.T) {
 
 func TestLuckyReleaseAssetRequiresOfficialSHA256(t *testing.T) {
 	valid := "9741b26ed6c2cbeb3bcf0fa86928f2bceeb3034a84d7950e489446936e455c1d"
-	release := githubRelease{Assets: []releaseAsset{{Name: luckyAssetName, URL: "https://example.invalid/package.zip", Digest: "sha256:" + valid}}}
+	platform := luckyPlatform()
+	if platform == nil || platform.AssetName == "" {
+		t.Skip("current platform has no official automatic-install asset")
+	}
+	release := githubRelease{Assets: []releaseAsset{{Name: platform.AssetName, URL: "https://example.invalid/package.zip", Digest: "sha256:" + valid}}}
 	asset, err := luckyReleaseAsset(release)
 	if err != nil || asset.Digest != "sha256:"+valid {
 		t.Fatalf("expected valid official digest, asset=%+v err=%v", asset, err)
@@ -107,5 +116,205 @@ func TestLuckyReleaseAssetRequiresOfficialSHA256(t *testing.T) {
 	release.Assets[0].Digest = "sha256:bad"
 	if _, err := luckyReleaseAsset(release); err == nil {
 		t.Fatal("asset without a valid SHA-256 digest must be rejected")
+	}
+}
+
+func TestLuckyPlatformMatrixUsesOfficialAssetNames(t *testing.T) {
+	cases := []struct {
+		goos, goarch, asset, entry string
+		auto                       bool
+	}{
+		{"linux", "arm64", "LLBot-CLI-linux-arm64.zip", "start.sh", true},
+		{"linux", "amd64", "LLBot-CLI-linux-x64.zip", "start.sh", true},
+		{"windows", "amd64", "LLBot-CLI-win-x64.zip", "llbot.exe", true},
+		{"darwin", "arm64", "LLBot-CLI-macos-arm64.tar.xz", "start.sh", true},
+	}
+	for _, test := range cases {
+		platform := luckyPlatformFor(test.goos, test.goarch)
+		if platform == nil || platform.AssetName != test.asset || platform.Entrypoint != test.entry || platform.AutoInstall != test.auto {
+			t.Fatalf("%s/%s = %#v", test.goos, test.goarch, platform)
+		}
+	}
+	if intel := luckyPlatformFor("darwin", "amd64"); intel != nil {
+		t.Fatalf("macOS Intel must be unsupported: %#v", intel)
+	}
+}
+
+func TestLuckyAdoptRequiresHealthyAbsoluteInstallDirectory(t *testing.T) {
+	original := userConfigDir
+	base := t.TempDir()
+	userConfigDir = func() (string, error) { return base, nil }
+	t.Cleanup(func() { userConfigDir = original })
+	if _, err := luckyAdopt(map[string]string{"installDir": "relative"}, true); err == nil {
+		t.Fatal("relative installation path must be rejected")
+	}
+	install := filepath.Join(base, "LLBot")
+	if err := os.MkdirAll(install, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	entry := luckyPlatform().Entrypoint
+	if err := os.WriteFile(filepath.Join(install, entry), []byte("fixture"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := luckyAdopt(map[string]string{"installDir": install}, true); err != nil {
+		t.Fatal(err)
+	}
+	state, err := loadLuckyState()
+	if err != nil || state.InstallDir != install {
+		t.Fatalf("adopted state=%+v err=%v", state, err)
+	}
+}
+
+func TestExtractLuckyTarXZRejectsEscapingEntry(t *testing.T) {
+	archive := filepath.Join(t.TempDir(), "invalid.tar.xz")
+	file, err := os.Create(archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compressed, err := xz.NewWriter(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writer := tar.NewWriter(compressed)
+	if err := writer.WriteHeader(&tar.Header{Name: "../escape", Mode: 0o600, Size: 2}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := writer.Write([]byte("no")); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := compressed.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := extractLuckyTarXZ(archive, filepath.Join(t.TempDir(), "out")); err == nil {
+		t.Fatal("tar path traversal must be rejected")
+	}
+}
+
+func TestLuckyEntrypointUsesExactPlatformContract(t *testing.T) {
+	root := t.TempDir()
+	linux := luckyPlatformFor("linux", "amd64")
+	if err := os.WriteFile(filepath.Join(root, "start.sh"), []byte("#!/bin/sh"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if got := luckyEntryPointFor(linux, root); got == "" {
+		t.Fatal("Linux CLI must accept start.sh")
+	}
+	windows := luckyPlatformFor("windows", "amd64")
+	if got := luckyEntryPointFor(windows, root); got != "" {
+		t.Fatal("Windows CLI must not accept start.sh")
+	}
+	if err := os.WriteFile(filepath.Join(root, "llbot.exe"), []byte("fixture"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if got := luckyEntryPointFor(windows, root); got == "" {
+		t.Fatal("Windows CLI must accept llbot.exe")
+	}
+}
+
+func TestLuckyEvidenceRequiresExactPlatformRecord(t *testing.T) {
+	platform := luckyPlatform()
+	if platform == nil {
+		t.Skip("unsupported host platform")
+	}
+	previous := luckyReleaseValidationEvidence
+	t.Cleanup(func() { luckyReleaseValidationEvidence = previous })
+	records := []luckyEvidence{{Platform: platform.Key, Tag: "v8.1.7", Asset: platform.AssetName, ArchiveSHA256: "9741b26ed6c2cbeb3bcf0fa86928f2bceeb3034a84d7950e489446936e455c1d", Fingerprint: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", ValidatedAt: "2026-08-10T00:00:00Z", ProcessModel: "foreground"}}
+	data, err := json.Marshal(records)
+	if err != nil {
+		t.Fatal(err)
+	}
+	luckyReleaseValidationEvidence = base64.RawURLEncoding.EncodeToString(data)
+	if !luckyVerified() {
+		t.Fatal("valid current-platform evidence must unlock the gate")
+	}
+	asset := releaseAsset{Name: platform.AssetName, Digest: "sha256:9741b26ed6c2cbeb3bcf0fa86928f2bceeb3034a84d7950e489446936e455c1d"}
+	if !luckyEvidenceMatchesRelease(githubRelease{TagName: "v8.1.7"}, asset) {
+		t.Fatal("matching release must be accepted")
+	}
+	if luckyEvidenceMatchesRelease(githubRelease{TagName: "v8.1.8"}, asset) {
+		t.Fatal("different release tag must remain locked")
+	}
+	asset.Digest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	if luckyEvidenceMatchesRelease(githubRelease{TagName: "v8.1.7"}, asset) {
+		t.Fatal("different archive hash must remain locked")
+	}
+}
+
+func TestLuckyExternalAssociationCannotUninstallAndForgetKeepsFiles(t *testing.T) {
+	original := userConfigDir
+	base := t.TempDir()
+	userConfigDir = func() (string, error) { return base, nil }
+	t.Cleanup(func() { userConfigDir = original })
+	external := filepath.Join(t.TempDir(), "external-llbot")
+	if err := os.MkdirAll(external, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := saveLuckyState(luckyState{InstallDir: external, Managed: false}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := luckyUninstall(true); err == nil {
+		t.Fatal("external association must not be uninstallable")
+	}
+	if _, err := os.Stat(external); err != nil {
+		t.Fatalf("external directory was changed: %v", err)
+	}
+	if _, err := luckyForget(true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(external); err != nil {
+		t.Fatalf("forget must keep external directory: %v", err)
+	}
+}
+
+func TestLuckyManagedUninstallRefusesUnexpectedDirectory(t *testing.T) {
+	original := userConfigDir
+	base := t.TempDir()
+	userConfigDir = func() (string, error) { return base, nil }
+	t.Cleanup(func() { userConfigDir = original })
+	external := filepath.Join(t.TempDir(), "not-owned")
+	if err := os.MkdirAll(external, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := saveLuckyState(luckyState{InstallDir: external, Managed: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := luckyUninstall(true); err == nil {
+		t.Fatal("managed state pointing outside the owned directory must be rejected")
+	}
+	if _, err := os.Stat(external); err != nil {
+		t.Fatalf("unexpected directory was changed: %v", err)
+	}
+}
+
+func TestLuckyLegacyStateMigratesToExternal(t *testing.T) {
+	original := userConfigDir
+	base := t.TempDir()
+	userConfigDir = func() (string, error) { return base, nil }
+	t.Cleanup(func() { userConfigDir = original })
+	owned, err := luckyInstallDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := saveLuckyState(luckyState{InstallDir: owned, Managed: true}); err != nil {
+		t.Fatal(err)
+	}
+	state, err := loadLuckyState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Managed || state.InstallMode != "external" {
+		t.Fatalf("legacy state must become external: %+v", state)
+	}
+}
+
+func TestLuckyMutatingActionsRequireConfirmation(t *testing.T) {
+	if err := requireLuckyConfirmation(false, "卸载 LuckyLillia"); err == nil {
+		t.Fatal("mutating Lucky action must require confirmation")
 	}
 }

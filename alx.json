@@ -13,6 +13,7 @@
     "darwin-arm64": "dist/alemonx-qq-darwin-arm64",
     "darwin-amd64": "dist/alemonx-qq-darwin-amd64",
     "linux-amd64": "dist/alemonx-qq-linux-amd64",
+    "linux-arm64": "dist/alemonx-qq-linux-arm64",
     "windows-amd64": "dist/alemonx-qq-windows-amd64.exe"
   },
   "development": {

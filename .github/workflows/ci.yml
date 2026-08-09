@@ -11,7 +11,7 @@ on:
         type: boolean
         default: false
       napcat_runtime_check:
-        description: 'Validate a running NapCat instance on the dedicated host without changing its QQ session'
+        description: 'Run the full real NapCat lifecycle E2E on approved Windows/Linux host(s)'
         required: false
         type: boolean
         default: false
@@ -22,8 +22,6 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-latest
-    outputs:
-      lucky_evidence: ${{ steps.lucky-evidence.outputs.value }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -37,25 +35,21 @@ jobs:
       - name: Cross-compile check
         run: |
           GOOS=linux GOARCH=amd64 go build -trimpath -o /tmp/alemonx-qq-linux ./runner
+          GOOS=linux GOARCH=arm64 go build -trimpath -o /tmp/alemonx-qq-linux-arm64 ./runner
           GOOS=windows GOARCH=amd64 go build -trimpath -o /tmp/alemonx-qq-windows.exe ./runner
           GOOS=darwin GOARCH=arm64 go build -trimpath -o /tmp/alemonx-qq-darwin ./runner
       - name: Validate alx.json
         run: python3 scripts/validate-alx.py alx.json
       - name: Set manifest version from tag
+        if: startsWith(github.ref, 'refs/tags/v')
         run: python3 scripts/set-version.py "$GITHUB_REF_NAME"
       - name: Validate release version
+        if: startsWith(github.ref, 'refs/tags/v')
         run: test "$(python3 -c 'import json; print(json.load(open("alx.json"))["version"])')" = "${GITHUB_REF_NAME#v}"
-      - name: Validate LuckyLillia runtime evidence
-        id: lucky-evidence
+      - name: Validate reviewed runtime evidence
         run: |
-          python3 scripts/validate-runtime-evidence.py
-          if [ -n "$LUCKYLILLIA_VALIDATION_EVIDENCE" ]; then
-            printf 'value=sha256:%s\n' "$(printf '%s' "$LUCKYLILLIA_VALIDATION_EVIDENCE" | sha256sum | awk '{print $1}')" >> "$GITHUB_OUTPUT"
-          else
-            echo 'value=' >> "$GITHUB_OUTPUT"
-          fi
-        env:
-          LUCKYLILLIA_VALIDATION_EVIDENCE: ${{ vars.LUCKYLILLIA_VALIDATION_EVIDENCE }}
+          python3 scripts/release-evidence.py --check-tree
+          python3 scripts/test_release_evidence.py
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -88,10 +82,11 @@ jobs:
     strategy:
       matrix:
         include:
-          - { goos: windows, goarch: amd64, binary: alemonx-qq-windows-amd64.exe, bundle: alemonx-qq-windows-amd64.zip }
-          - { goos: darwin, goarch: arm64, binary: alemonx-qq-darwin-arm64, bundle: alemonx-qq-darwin-arm64.zip }
-          - { goos: darwin, goarch: amd64, binary: alemonx-qq-darwin-amd64, bundle: alemonx-qq-darwin-amd64.zip }
-          - { goos: linux, goarch: amd64, binary: alemonx-qq-linux-amd64, bundle: alemonx-qq-linux-amd64.zip }
+          - { goos: windows, goarch: amd64, bundle_platform: windows-amd64, lucky_platform: windows-amd64, napcat_platform: windows-amd64, binary: alemonx-qq-windows-amd64.exe, bundle: alemonx-qq-windows-amd64.zip }
+          - { goos: darwin, goarch: arm64, bundle_platform: darwin-arm64, lucky_platform: darwin-arm64, napcat_platform: unsupported, binary: alemonx-qq-darwin-arm64, bundle: alemonx-qq-darwin-arm64.zip }
+          - { goos: darwin, goarch: amd64, bundle_platform: darwin-amd64, lucky_platform: unsupported, napcat_platform: unsupported, binary: alemonx-qq-darwin-amd64, bundle: alemonx-qq-darwin-amd64.zip }
+          - { goos: linux, goarch: amd64, bundle_platform: linux-amd64, lucky_platform: linux-amd64, napcat_platform: linux-amd64, binary: alemonx-qq-linux-amd64, bundle: alemonx-qq-linux-amd64.zip }
+          - { goos: linux, goarch: arm64, bundle_platform: linux-arm64, lucky_platform: linux-arm64, napcat_platform: linux-arm64, binary: alemonx-qq-linux-arm64, bundle: alemonx-qq-linux-arm64.zip }
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -107,10 +102,12 @@ jobs:
       - name: Build plugin bundle
         run: |
           mkdir -p "bundle/alemonx-qq/dist" release
-          cp alx.json "bundle/alemonx-qq/alx.json"
+          lucky_evidence="$(python3 scripts/release-evidence.py --core luckylillia --platform ${{ matrix.lucky_platform }} --encode)"
+          napcat_evidence="$(python3 scripts/release-evidence.py --core napcat --platform ${{ matrix.napcat_platform }} --encode)"
+          python3 scripts/release-evidence.py --prepare-manifest --platform ${{ matrix.bundle_platform }} --input alx.json --output "bundle/alemonx-qq/alx.json"
           cp -r web "bundle/alemonx-qq/web"
           CGO_ENABLED=0 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} \
-            go build -trimpath -ldflags "-s -w -X main.luckyReleaseValidationEvidence=${{ needs.verify.outputs.lucky_evidence }}" -o "bundle/alemonx-qq/dist/${{ matrix.binary }}" ./runner
+            go build -trimpath -ldflags "-s -w -X main.luckyReleaseValidationEvidence=$lucky_evidence -X main.napcatReleaseValidationEvidence=$napcat_evidence" -o "bundle/alemonx-qq/dist/${{ matrix.binary }}" ./runner
           (cd bundle && zip -r "../release/${{ matrix.bundle }}" alemonx-qq)
           (cd release && sha256sum "${{ matrix.bundle }}" > "${{ matrix.bundle }}.sha256")
       - uses: actions/upload-artifact@v4
@@ -138,28 +135,104 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
 
-  luckylillia-e2e:
+  luckylillia-e2e-linux-arm64:
     if: github.event_name == 'workflow_dispatch' && inputs.luckylillia_e2e
     runs-on: [self-hosted, linux, arm64, luckylillia-e2e]
     steps:
       - uses: actions/checkout@v4
       - name: Verify official package and record runtime evidence
         run: scripts/verify-luckylillia-e2e.sh
+        env:
+          LUCKYLILLIA_PLATFORM: linux-arm64
+          LUCKYLILLIA_E2E_COMMAND: ${{ vars.LUCKYLILLIA_E2E_COMMAND_LINUX_ARM64 }}
       - uses: actions/upload-artifact@v4
         with:
           name: luckylillia-linux-arm64-validation
           path: artifacts/luckylillia-validation.json
 
-  napcat-runtime-check:
-    if: github.event_name == 'workflow_dispatch' && inputs.napcat_runtime_check
-    runs-on: [self-hosted, napcat-e2e]
+  luckylillia-e2e-linux-amd64:
+    if: github.event_name == 'workflow_dispatch' && inputs.luckylillia_e2e
+    runs-on: [self-hosted, linux, x64, luckylillia-e2e]
     steps:
       - uses: actions/checkout@v4
-      - name: Validate installed NapCat runtime
-        run: scripts/verify-napcat-runtime.sh
+      - run: scripts/verify-luckylillia-e2e.sh
         env:
-          ALX_QQ_RUNNER: ${{ vars.NAPCAT_VALIDATION_RUNNER }}
+          LUCKYLILLIA_PLATFORM: linux-amd64
+          LUCKYLILLIA_E2E_COMMAND: ${{ vars.LUCKYLILLIA_E2E_COMMAND_LINUX_AMD64 }}
       - uses: actions/upload-artifact@v4
         with:
-          name: napcat-runtime-validation
-          path: artifacts/napcat-runtime-validation.json
+          name: luckylillia-linux-amd64-validation
+          path: artifacts/luckylillia-validation.json
+
+  luckylillia-e2e-windows-amd64:
+    if: github.event_name == 'workflow_dispatch' && inputs.luckylillia_e2e
+    runs-on: [self-hosted, windows, x64, luckylillia-e2e]
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash scripts/verify-luckylillia-e2e.sh
+        env:
+          LUCKYLILLIA_PLATFORM: windows-amd64
+          LUCKYLILLIA_E2E_COMMAND: ${{ vars.LUCKYLILLIA_E2E_COMMAND_WINDOWS_AMD64 }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: luckylillia-windows-amd64-validation
+          path: artifacts/luckylillia-validation.json
+
+  luckylillia-e2e-darwin-arm64:
+    if: github.event_name == 'workflow_dispatch' && inputs.luckylillia_e2e
+    runs-on: [self-hosted, macos, arm64, luckylillia-e2e]
+    steps:
+      - uses: actions/checkout@v4
+      - run: scripts/verify-luckylillia-e2e.sh
+        env:
+          LUCKYLILLIA_PLATFORM: darwin-arm64
+          LUCKYLILLIA_E2E_COMMAND: ${{ vars.LUCKYLILLIA_E2E_COMMAND_DARWIN_ARM64 }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: luckylillia-darwin-arm64-validation
+          path: artifacts/luckylillia-validation.json
+
+  napcat-e2e-windows-amd64:
+    if: github.event_name == 'workflow_dispatch' && inputs.napcat_runtime_check
+    runs-on: [self-hosted, windows, x64, napcat-e2e]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run full Windows NapCat lifecycle validation
+        run: bash scripts/verify-napcat-e2e.sh
+        env:
+          NAPCAT_PLATFORM: windows-amd64
+          NAPCAT_E2E_COMMAND: ${{ vars.NAPCAT_E2E_COMMAND_WINDOWS_AMD64 }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: napcat-windows-amd64-validation
+          path: artifacts/napcat-validation.json
+
+  napcat-e2e-linux-amd64:
+    if: github.event_name == 'workflow_dispatch' && inputs.napcat_runtime_check
+    runs-on: [self-hosted, linux, x64, napcat-e2e]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run full Linux x64 rootless NapCat lifecycle validation
+        run: scripts/verify-napcat-e2e.sh
+        env:
+          NAPCAT_PLATFORM: linux-amd64
+          NAPCAT_E2E_COMMAND: ${{ vars.NAPCAT_E2E_COMMAND_LINUX_AMD64 }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: napcat-linux-amd64-validation
+          path: artifacts/napcat-validation.json
+
+  napcat-e2e-linux-arm64:
+    if: github.event_name == 'workflow_dispatch' && inputs.napcat_runtime_check
+    runs-on: [self-hosted, linux, arm64, napcat-e2e]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run full Linux ARM64 rootless NapCat lifecycle validation
+        run: scripts/verify-napcat-e2e.sh
+        env:
+          NAPCAT_PLATFORM: linux-arm64
+          NAPCAT_E2E_COMMAND: ${{ vars.NAPCAT_E2E_COMMAND_LINUX_ARM64 }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: napcat-linux-arm64-validation
+          path: artifacts/napcat-validation.json

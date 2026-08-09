@@ -15,13 +15,13 @@ const watchdogInterval = 15 * time.Second
 // The guard excludes the case where the watchdog itself is not installed yet
 // and avoids restart loops while NapCat is intentionally stopped.
 func needsRestart(state State) bool {
-	if state.InstallDir == "" || !dirExists(state.InstallDir) {
+	if !state.Managed || !napcatStateVerified(state) || state.InstallDir == "" || !dirExists(state.InstallDir) {
 		return false
 	}
-	if state.PID <= 0 {
+	if state.PID <= 0 || state.Platform == "darwin-external" {
 		return false
 	}
-	return !processAlive(state.PID)
+	return !isRunning(state)
 }
 
 // startWatchdog detaches a runner instance running the "watchdog" subcommand.
@@ -59,6 +59,53 @@ func stopWatchdog(pid int) {
 	stopProcess(pid)
 }
 
+func watchdogOnAction(confirmed bool) (string, error) {
+	if err := requireNapcatConfirmation(confirmed, "开启守护"); err != nil {
+		return "", err
+	}
+	state, err := loadState()
+	if err != nil {
+		return "", err
+	}
+	if err := requireManagedNapcat(state, "开启守护"); err != nil {
+		return "", err
+	}
+	if processAlive(state.WatchdogPID) {
+		return "? NapCat 守护已经开启。", nil
+	}
+	pid, err := startWatchdog()
+	if err != nil {
+		return "", err
+	}
+	state.WatchdogPID = pid
+	if err := saveState(state); err != nil {
+		stopWatchdog(pid)
+		return "", err
+	}
+	return "✓ 已开启 NapCat 守护。异常退出后约 15 秒会自动恢复。", nil
+}
+
+func watchdogOffAction(confirmed bool) (string, error) {
+	if err := requireNapcatConfirmation(confirmed, "关闭守护"); err != nil {
+		return "", err
+	}
+	state, err := loadState()
+	if err != nil {
+		return "", err
+	}
+	if err := requireManagedNapcat(state, "关闭守护"); err != nil {
+		return "", err
+	}
+	if state.WatchdogPID > 0 {
+		stopWatchdog(state.WatchdogPID)
+	}
+	state.WatchdogPID = 0
+	if err := saveState(state); err != nil {
+		return "", err
+	}
+	return "✓ 已关闭 NapCat 守护。", nil
+}
+
 // watchdogMain is the entry for the detached watchdog subcommand. It polls
 // until the watchdog PID recorded in state no longer matches its own (i.e. the
 // watchdog was turned off), then exits.
@@ -75,7 +122,7 @@ func watchdogMain() int {
 		}
 		if needsRestart(state) {
 			if pid, startErr := startNapCat(state); startErr == nil {
-				state.PID = pid
+				state.PID, state.ProcessGroupID = pid, pid
 				_ = saveState(state)
 			}
 		}

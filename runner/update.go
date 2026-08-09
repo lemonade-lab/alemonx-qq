@@ -55,8 +55,14 @@ func checkUpdate() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if state.Version == "" || state.Version == "installed-by-script" {
-		return "? 当前 NapCat 由安装脚本管理，无法自动比对版本。\n? 可到 NapCat 管理面板检查更新。", nil
+	if !state.Managed {
+		return "? 当前 NapCat 是外部关联实例；请使用其原始管理方式检查更新。", nil
+	}
+	if !napcatStateVerified(state) {
+		return "? 当前平台未注入匹配的真实 E2E 验证证据，自动更新已锁定。", nil
+	}
+	if state.Platform != "windows-amd64" {
+		return "? Linux rootless 受管安装只在对应验证证据更新后开放升级；当前请保持现有安装。", nil
 	}
 	release, err := fetchLatest()
 	if err != nil {
@@ -73,28 +79,4 @@ func checkUpdate() (string, error) {
 		lines = append(lines, "? 当前版本高于最新 Release（可能是开发版）。")
 	}
 	return strings.Join(lines, "\n"), nil
-}
-
-// update stops NapCat, re-runs the platform install, then restarts it.
-func update() (string, error) {
-	state, err := loadState()
-	if err != nil {
-		return "", err
-	}
-	if state.Version == "installed-by-script" {
-		return "", fmt.Errorf("Linux 脚本安装的 NapCat 请使用管理面板更新")
-	}
-	if processAlive(state.PID) {
-		stopProcess(state.PID)
-		state.PID = 0
-	}
-	version, err := installNapCat()
-	if err != nil {
-		return "", err
-	}
-	state.Version = version
-	if err := saveState(state); err != nil {
-		return "", err
-	}
-	return fmt.Sprintf("✓ NapCat 已更新到 %s。\n✓ 现在可以点「启动」运行。", version), nil
 }

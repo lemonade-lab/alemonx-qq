@@ -88,8 +88,30 @@ func TestNeedsRestart(t *testing.T) {
 	if needsRestart(State{InstallDir: install, PID: -1}) {
 		t.Fatal("negative pid must not restart")
 	}
-	// A non-existent positive PID should trigger a restart (process is dead).
-	if !needsRestart(State{InstallDir: install, PID: 999999999}) {
-		t.Fatal("dead pid must trigger restart")
+	// External / pre-governance installs never participate in the watchdog.
+	if needsRestart(State{InstallDir: install, PID: 999999999}) {
+		t.Fatal("external dead pid must not trigger restart")
+	}
+}
+
+func TestNapCatStatusKeepsOneBotAccountsSeparate(t *testing.T) {
+	original := userConfigDir
+	base := t.TempDir()
+	userConfigDir = func() (string, error) { return base, nil }
+	t.Cleanup(func() { userConfigDir = original })
+	install := filepath.Join(base, "napcat")
+	configDir := filepath.Join(install, "config")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for qq, port := range map[string]string{"10001": "3101", "10002": "3102"} {
+		data := []byte(`{"network":{"websocketServers":[{"enable":true,"port":` + port + `}]}}`)
+		if err := os.WriteFile(filepath.Join(configDir, "onebot11_"+qq+".json"), data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	payload := collectStatus(State{InstallDir: install, SelectedQQ: "10002"})
+	if len(payload.Accounts) != 2 || payload.SelectedAccount != "10002" || payload.OneBotURL != "ws://127.0.0.1:3102" {
+		t.Fatalf("accounts=%+v selected=%q url=%q", payload.Accounts, payload.SelectedAccount, payload.OneBotURL)
 	}
 }

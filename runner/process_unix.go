@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"syscall"
+	"time"
 )
 
 // detachProcess puts the child in its own process group so killing alx (or the
@@ -24,4 +25,18 @@ func aliveProbe(pid int) bool {
 		return false
 	}
 	return process.Signal(syscall.Signal(0)) == nil
+}
+
+// stopManagedProcess only targets the process group created by detachProcess.
+// LuckyLillia CLI scripts may spawn children, so killing their leader alone
+// would leave the WebUI and QQ helpers behind.
+func stopManagedProcess(pid int) {
+	if pid <= 0 {
+		return
+	}
+	_ = syscall.Kill(-pid, syscall.SIGINT)
+	time.Sleep(500 * time.Millisecond)
+	if aliveProbe(pid) {
+		_ = syscall.Kill(-pid, syscall.SIGKILL)
+	}
 }

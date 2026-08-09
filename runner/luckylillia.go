@@ -1,8 +1,10 @@
 package main
 
 import (
+	"archive/tar"
 	"archive/zip"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,46 +18,107 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/ulikunitz/xz"
 )
 
 const (
 	luckyReleaseURL = "https://api.github.com/repos/LLOneBot/LuckyLilliaBot/releases/latest"
-	luckyAssetName  = "LLBot-CLI-linux-arm64.zip"
 	luckyWebUIPort  = 3080
 	luckyOneBotPort = 7199
 )
 
-// luckyReleaseValidationEvidence is injected only by the release pipeline
-// after the self-hosted Linux ARM64 validation record has been reviewed.
-// Empty is deliberately the safe default for every normal build.
+// luckyReleaseValidationEvidence is a base64url-encoded, reviewed record
+// injected by the release pipeline. Empty is deliberately the safe default.
 var luckyReleaseValidationEvidence = ""
 
 type luckyState struct {
-	Version    string `json:"version,omitempty"`
-	InstallDir string `json:"installDir,omitempty"`
-	PID        int    `json:"pid,omitempty"`
+	Version        string `json:"version,omitempty"`
+	InstallDir     string `json:"installDir,omitempty"`
+	PID            int    `json:"pid,omitempty"`
+	ProcessGroupID int    `json:"processGroupId,omitempty"`
+	Managed        bool   `json:"managed"`
+	Platform       string `json:"platform,omitempty"`
+	InstallMode    string `json:"installMode,omitempty"`
+	ReleaseTag     string `json:"releaseTag,omitempty"`
+	Asset          string `json:"asset,omitempty"`
+	ArchiveSHA256  string `json:"archiveSha256,omitempty"`
+	Fingerprint    string `json:"fingerprint,omitempty"`
+	ValidatedAt    string `json:"validatedAt,omitempty"`
+}
+
+type luckyEvidence struct {
+	Platform          string `json:"platform"`
+	Tag               string `json:"tag"`
+	Asset             string `json:"asset"`
+	ArchiveSHA256     string `json:"archiveSha256"`
+	Fingerprint       string `json:"runtimeFingerprint"`
+	ValidatedAt       string `json:"validatedAt"`
+	ProcessModel      string `json:"processModel"`
+	WebSocketRequired bool   `json:"websocketRequired"`
 }
 
 type kernelStatus struct {
-	Engine         string `json:"engine"`
-	Installed      bool   `json:"installed"`
-	InstallHealthy bool   `json:"installHealthy"`
-	Running        bool   `json:"running"`
-	PortReachable  bool   `json:"portReachable"`
-	WebUIReady     bool   `json:"webUiReady"`
-	OneBotReady    bool   `json:"oneBotReady"`
-	LoginPending   bool   `json:"loginPending"`
-	Version        string `json:"version,omitempty"`
-	PID            int    `json:"pid,omitempty"`
-	WebUIURL       string `json:"webUiUrl,omitempty"`
-	OneBotURL      string `json:"oneBotUrl,omitempty"`
-	LogPath        string `json:"logPath,omitempty"`
-	DiagnosticHint string `json:"diagnosticHint,omitempty"`
-	Error          string `json:"error,omitempty"`
-	Supported      bool   `json:"supported"`
-	Verified       bool   `json:"verified"`
-	State          string `json:"state"`
-	UpdatedAt      string `json:"updatedAt"`
+	Engine            string `json:"engine"`
+	Installed         bool   `json:"installed"`
+	InstallHealthy    bool   `json:"installHealthy"`
+	Running           bool   `json:"running"`
+	PortReachable     bool   `json:"portReachable"`
+	WebUIReady        bool   `json:"webUiReady"`
+	OneBotReady       bool   `json:"oneBotReady"`
+	LoginPending      bool   `json:"loginPending"`
+	Version           string `json:"version,omitempty"`
+	PID               int    `json:"pid,omitempty"`
+	WebUIURL          string `json:"webUiUrl,omitempty"`
+	OneBotURL         string `json:"oneBotUrl,omitempty"`
+	LogPath           string `json:"logPath,omitempty"`
+	DiagnosticHint    string `json:"diagnosticHint,omitempty"`
+	Error             string `json:"error,omitempty"`
+	Supported         bool   `json:"supported"`
+	Verified          bool   `json:"verified"`
+	Platform          string `json:"platform,omitempty"`
+	AssetName         string `json:"assetName,omitempty"`
+	Entrypoint        string `json:"entrypoint,omitempty"`
+	InstallMode       string `json:"installMode,omitempty"`
+	Managed           bool   `json:"managed"`
+	ManagedActions    bool   `json:"managedActions"`
+	ReleaseTag        string `json:"releaseTag,omitempty"`
+	ArchiveSHA256     string `json:"archiveSha256,omitempty"`
+	Fingerprint       string `json:"fingerprint,omitempty"`
+	ValidatedAt       string `json:"validatedAt,omitempty"`
+	WebSocketRequired bool   `json:"websocketRequired"`
+	State             string `json:"state"`
+	UpdatedAt         string `json:"updatedAt"`
+}
+
+// luckyPlatformSpec deliberately separates what LLBot supports from what this
+// workbench has proven it can install and manage unattended.  An official
+// package alone is not enough to enable an install button: its runtime
+// contract must have passed E2E validation for the specific platform.
+type luckyPlatformSpec struct {
+	Key         string
+	Label       string
+	AssetName   string
+	Archive     string
+	Entrypoint  string
+	AutoInstall bool
+}
+
+func luckyPlatform() *luckyPlatformSpec { return luckyPlatformFor(runtime.GOOS, runtime.GOARCH) }
+
+func luckyPlatformFor(goos, goarch string) *luckyPlatformSpec {
+	switch goos + "/" + goarch {
+	case "linux/arm64":
+		return &luckyPlatformSpec{Key: "linux-arm64", Label: "Linux ARM64", AssetName: "LLBot-CLI-linux-arm64.zip", Archive: "zip", Entrypoint: "start.sh", AutoInstall: true}
+	case "linux/amd64":
+		return &luckyPlatformSpec{Key: "linux-amd64", Label: "Linux x64", AssetName: "LLBot-CLI-linux-x64.zip", Archive: "zip", Entrypoint: "start.sh", AutoInstall: true}
+	case "windows/amd64":
+		return &luckyPlatformSpec{Key: "windows-amd64", Label: "Windows x64", AssetName: "LLBot-CLI-win-x64.zip", Archive: "zip", Entrypoint: "llbot.exe", AutoInstall: true}
+	case "darwin/arm64":
+		return &luckyPlatformSpec{Key: "darwin-arm64", Label: "macOS Apple Silicon", AssetName: "LLBot-CLI-macos-arm64.tar.xz", Archive: "tar.xz", Entrypoint: "start.sh", AutoInstall: true}
+	default:
+		return nil
+	}
 }
 
 func luckyStatePath() (string, error) {
@@ -95,6 +158,13 @@ func loadLuckyState() (luckyState, error) {
 	if err := json.Unmarshal(data, &state); err != nil {
 		return luckyState{}, err
 	}
+	// Old state never contained immutable release identity. It must remain an
+	// external association even if it happens to use the historical directory.
+	// This prevents a governance upgrade from granting deletion authority.
+	if state.InstallDir != "" && (state.Platform == "" || state.InstallMode != "managed" || state.ReleaseTag == "" || state.Asset == "" || state.ArchiveSHA256 == "" || state.Fingerprint == "" || state.ValidatedAt == "") {
+		state.Managed = false
+		state.InstallMode = "external"
+	}
 	return state, nil
 }
 func saveLuckyState(state luckyState) error {
@@ -115,8 +185,98 @@ func saveLuckyState(state luckyState) error {
 	return os.Rename(path+".new", path)
 }
 
-func luckySupported() bool { return runtime.GOOS == "linux" && runtime.GOARCH == "arm64" }
-func luckyVerified() bool  { return luckySupported() && luckyReleaseValidationEvidence != "" }
+func luckySupported() bool { return luckyPlatform() != nil }
+
+func luckyVerified() bool {
+	platform := luckyPlatform()
+	evidence, err := luckyEvidenceRecord()
+	if err != nil || platform == nil || !platform.AutoInstall {
+		return false
+	}
+	return evidence.Platform == platform.Key && evidence.Asset == platform.AssetName && validLuckySHA(evidence.ArchiveSHA256) && validLuckySHA(evidence.Fingerprint) && evidence.Tag != "" && evidence.ValidatedAt != "" && evidence.ProcessModel == "foreground"
+}
+
+func luckyEvidenceRecord() (luckyEvidence, error) {
+	raw := strings.TrimSpace(luckyReleaseValidationEvidence)
+	if raw == "" {
+		return luckyEvidence{}, errors.New("LuckyLillia 验证证据不存在")
+	}
+	data, err := base64.RawURLEncoding.DecodeString(raw)
+	if err != nil {
+		return luckyEvidence{}, errors.New("LuckyLillia 验证证据格式无效")
+	}
+	var records []luckyEvidence
+	if err := json.Unmarshal(data, &records); err != nil {
+		var evidence luckyEvidence
+		if json.Unmarshal(data, &evidence) != nil {
+			return luckyEvidence{}, errors.New("LuckyLillia 验证证据无效")
+		}
+		records = []luckyEvidence{evidence}
+	}
+	platform := luckyPlatform()
+	for _, evidence := range records {
+		if platform != nil && evidence.Platform == platform.Key {
+			return evidence, nil
+		}
+	}
+	return luckyEvidence{}, errors.New("当前平台没有 LuckyLillia 验证证据")
+}
+
+func validLuckySHA(value string) bool {
+	return len(value) == 64 && strings.Trim(strings.ToLower(value), "0123456789abcdef") == ""
+}
+
+func luckyEvidenceMatchesRelease(release githubRelease, asset releaseAsset) bool {
+	evidence, err := luckyEvidenceRecord()
+	if err != nil {
+		return false
+	}
+	digest := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(asset.Digest)), "sha256:")
+	return luckyVerified() && evidence.Tag == release.TagName && evidence.Asset == asset.Name && strings.EqualFold(evidence.ArchiveSHA256, digest)
+}
+
+func luckyStateMatchesEvidence(state luckyState) bool {
+	evidence, err := luckyEvidenceRecord()
+	platform := luckyPlatform()
+	return err == nil && platform != nil && state.Managed && state.InstallMode == "managed" && state.Platform == platform.Key && evidence.Platform == platform.Key && state.ReleaseTag == evidence.Tag && evidence.Asset == state.Asset && strings.EqualFold(evidence.ArchiveSHA256, state.ArchiveSHA256) && strings.EqualFold(evidence.Fingerprint, state.Fingerprint) && state.ValidatedAt == evidence.ValidatedAt
+}
+
+func requireLuckyConfirmation(confirmed bool, action string) error {
+	if !confirmed {
+		return errors.New("请确认后再" + action)
+	}
+	return nil
+}
+
+func requireManagedLucky(state luckyState, action string) error {
+	if !state.Managed || state.InstallMode != "managed" {
+		return errors.New("当前 LuckyLillia 是外部关联实例；工作台不能" + action)
+	}
+	if !luckyStateMatchesEvidence(state) {
+		return errors.New("当前 LuckyLillia 未与真实验证证据匹配；已拒绝" + action)
+	}
+	return nil
+}
+
+func luckyFingerprint(root string) (string, error) {
+	entry := luckyEntryPoint(root)
+	if entry == "" {
+		return "", errors.New("LuckyLillia 缺少当前平台启动入口")
+	}
+	data, err := os.ReadFile(entry)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(data)
+	return fmt.Sprintf("%x", sum[:]), nil
+}
+
+func reportLuckyProgress(stage string, percent int, message string) {
+	payload, err := json.Marshal(map[string]any{"stage": stage, "percent": percent, "message": message})
+	if err == nil {
+		_, _ = fmt.Fprintf(os.Stderr, "@alx-progress %s\n", payload)
+	}
+}
 func luckyPortURL(port int) string {
 	connection, err := net.DialTimeout("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)), 350*time.Millisecond)
 	if err != nil {
@@ -171,17 +331,30 @@ func luckyStatus() (string, error) {
 	if running && webUI != "" && onebot == "" {
 		stateName = "login-pending"
 	}
+	platform := luckyPlatform()
 	if !luckySupported() {
 		stateName = "unsupported"
 	}
-	status := kernelStatus{Engine: "luckylillia", Installed: installed, InstallHealthy: healthy, Running: running, PortReachable: webUI != "", WebUIReady: webUI != "", OneBotReady: onebot != "", LoginPending: running && webUI != "" && onebot == "", Version: state.Version, PID: state.PID, WebUIURL: webUI, OneBotURL: "ws://127.0.0.1:" + strconv.Itoa(oneBotPort), Supported: luckySupported(), Verified: luckyVerified(), State: stateName, UpdatedAt: time.Now().UTC().Format(time.RFC3339)}
+	status := kernelStatus{Engine: "luckylillia", Installed: installed, InstallHealthy: healthy, Running: running, PortReachable: webUI != "", WebUIReady: webUI != "", OneBotReady: onebot != "", LoginPending: running && webUI != "" && onebot == "", Version: state.Version, PID: state.PID, WebUIURL: webUI, OneBotURL: "ws://127.0.0.1:" + strconv.Itoa(oneBotPort), Supported: luckySupported(), Verified: luckyVerified(), Managed: state.Managed, ManagedActions: luckyStateMatchesEvidence(state), InstallMode: state.InstallMode, ReleaseTag: state.ReleaseTag, AssetName: state.Asset, ArchiveSHA256: state.ArchiveSHA256, Fingerprint: state.Fingerprint, ValidatedAt: state.ValidatedAt, State: stateName, UpdatedAt: time.Now().UTC().Format(time.RFC3339)}
+	if platform != nil {
+		status.Platform, status.Entrypoint = platform.Label, platform.Entrypoint
+		if status.AssetName == "" {
+			status.AssetName = platform.AssetName
+		}
+	}
+	if evidence, evidenceErr := luckyEvidenceRecord(); evidenceErr == nil {
+		status.WebSocketRequired = evidence.WebSocketRequired
+	}
 	if path, logErr := luckyLogPath(); logErr == nil {
 		status.LogPath = path
 	}
 	if !status.Supported {
-		status.DiagnosticHint = "LuckyLillia 仅支持 Linux ARM64 自动安装。"
+		status.DiagnosticHint = "当前系统尚未纳入 LuckyLillia 的工作台适配范围。"
 	} else if !status.Verified {
-		status.DiagnosticHint = "LuckyLillia 实验能力尚未完成真实 Linux ARM64 验证；正式版不提供安装、更新或配置写入。"
+		status.DiagnosticHint = fmt.Sprintf("%s 的官方包已识别，但尚未完成该平台真实端到端验证；正式版不提供安装、更新或配置写入。", platform.Label)
+	}
+	if installed && !state.Managed {
+		status.DiagnosticHint = "这是外部关联的 LuckyLillia CLI；工作台仅提供状态与 WebUI，不能启动、更新、写配置或卸载。"
 	}
 	if installed && !healthy {
 		status.Error, status.DiagnosticHint = "安装目录不完整", "缺少 LuckyLillia 启动入口，请执行重装。"
@@ -213,18 +386,23 @@ func luckyRelease() (githubRelease, error) {
 }
 
 func requireLuckyVerified(action string) error {
-	if !luckySupported() {
-		return errors.New("LuckyLillia " + action + "仅支持 Linux ARM64")
+	platform := luckyPlatform()
+	if platform == nil {
+		return errors.New("当前系统尚未支持 LuckyLillia 工作台安装")
 	}
 	if !luckyVerified() {
-		return errors.New("LuckyLillia 实验能力尚未完成真实 Linux ARM64 验证；正式 Release 暂不允许" + action)
+		return fmt.Errorf("LuckyLillia %s 尚未完成真实 %s 验证；正式 Release 暂不允许%s", platform.AssetName, platform.Label, action)
 	}
 	return nil
 }
 
 func luckyReleaseAsset(release githubRelease) (releaseAsset, error) {
+	platform := luckyPlatform()
+	if platform == nil || platform.AssetName == "" {
+		return releaseAsset{}, errors.New("当前平台没有可用的 LuckyLillia 官方 Release Asset")
+	}
 	for _, asset := range release.Assets {
-		if asset.Name != luckyAssetName {
+		if asset.Name != platform.AssetName {
 			continue
 		}
 		digest := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(asset.Digest)), "sha256:")
@@ -233,10 +411,13 @@ func luckyReleaseAsset(release githubRelease) (releaseAsset, error) {
 		}
 		return asset, nil
 	}
-	return releaseAsset{}, fmt.Errorf("LuckyLillia 发布包中未找到 %s", luckyAssetName)
+	return releaseAsset{}, fmt.Errorf("LuckyLillia 发布包中未找到 %s", platform.AssetName)
 }
 
-func luckyInstall(force bool) (string, error) {
+func luckyInstall(force, confirmed bool) (string, error) {
+	if err := requireLuckyConfirmation(confirmed, "安装 LuckyLillia"); err != nil {
+		return "", err
+	}
 	if err := requireLuckyVerified("安装"); err != nil {
 		return "", err
 	}
@@ -249,19 +430,23 @@ func luckyInstall(force bool) (string, error) {
 			return "? LuckyLillia 已安装；如需覆盖安装请使用重装。", nil
 		}
 	}
+	if force && !previous.Managed {
+		return "", errors.New("外部关联安装不能重装；请先取消关联，再使用工作台安装")
+	}
 	wasRunning := force && processAlive(previous.PID)
 	restartPrevious := func() {
 		if !wasRunning {
 			return
 		}
 		_ = saveLuckyState(previous)
-		_, _ = luckyStart()
+		_, _ = luckyStart(true)
 	}
 	if wasRunning {
-		if _, err := luckyStop(); err != nil {
+		if _, err := luckyStop(true); err != nil {
 			return "", fmt.Errorf("停止旧 LuckyLillia 失败，未开始更新：%w", err)
 		}
 	}
+	reportLuckyProgress("prepare", 5, "准备 LuckyLillia CLI 安装")
 	release, err := luckyRelease()
 	if err != nil {
 		restartPrevious()
@@ -272,6 +457,10 @@ func luckyInstall(force bool) (string, error) {
 		restartPrevious()
 		return "", err
 	}
+	if !luckyEvidenceMatchesRelease(release, asset) {
+		restartPrevious()
+		return "", errors.New("官方 Release 与已验证证据不匹配，已拒绝安装")
+	}
 	base, err := stateDir()
 	if err != nil {
 		restartPrevious()
@@ -281,7 +470,8 @@ func luckyInstall(force bool) (string, error) {
 		restartPrevious()
 		return "", err
 	}
-	archive, err := os.CreateTemp(base, "luckylillia-*.zip")
+	platform := luckyPlatform()
+	archive, err := os.CreateTemp(base, "luckylillia-*"+luckyArchiveSuffix(platform))
 	if err != nil {
 		restartPrevious()
 		return "", err
@@ -289,6 +479,7 @@ func luckyInstall(force bool) (string, error) {
 	archivePath := archive.Name()
 	_ = archive.Close()
 	defer os.Remove(archivePath)
+	reportLuckyProgress("download", 20, "下载已验证的官方 CLI 包")
 	if err := downloadLuckyAsset(asset, archivePath, 300<<20); err != nil {
 		restartPrevious()
 		return "", err
@@ -299,11 +490,13 @@ func luckyInstall(force bool) (string, error) {
 		return "", err
 	}
 	defer os.RemoveAll(stage)
-	if err := extractLuckyZip(archivePath, stage); err != nil {
+	reportLuckyProgress("extract", 50, "校验并解压官方 CLI 包")
+	if err := extractLuckyArchive(archivePath, stage, platform); err != nil {
 		restartPrevious()
 		return "", err
 	}
 	root := luckyExtractRoot(stage)
+	reportLuckyProgress("verify", 65, "验证 CLI 启动入口")
 	if luckyEntryPoint(root) == "" {
 		restartPrevious()
 		return "", errors.New("LuckyLillia 安装包缺少可用启动入口")
@@ -319,6 +512,7 @@ func luckyInstall(force bool) (string, error) {
 		return "", errors.New("检测到未清理的 LuckyLillia 备份目录，请先检查后重试")
 	}
 	hadTarget := false
+	reportLuckyProgress("replace", 75, "原子替换安装目录")
 	if _, statErr := os.Stat(target); statErr == nil {
 		hadTarget = true
 		if err := os.Rename(target, backup); err != nil {
@@ -341,7 +535,26 @@ func luckyInstall(force bool) (string, error) {
 			return "", fmt.Errorf("恢复 LuckyLillia 配置失败，已回滚：%w", err)
 		}
 	}
-	state := luckyState{Version: strings.TrimPrefix(release.TagName, "v"), InstallDir: target}
+	digest := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(asset.Digest)), "sha256:")
+	fingerprint, err := luckyFingerprint(target)
+	if err != nil {
+		_ = os.RemoveAll(target)
+		if hadTarget {
+			_ = os.Rename(backup, target)
+		}
+		restartPrevious()
+		return "", err
+	}
+	evidence, _ := luckyEvidenceRecord()
+	if !strings.EqualFold(fingerprint, evidence.Fingerprint) {
+		_ = os.RemoveAll(target)
+		if hadTarget {
+			_ = os.Rename(backup, target)
+		}
+		restartPrevious()
+		return "", errors.New("LuckyLillia 运行时指纹与验证证据不匹配")
+	}
+	state := luckyState{Version: strings.TrimPrefix(release.TagName, "v"), InstallDir: target, Managed: true, Platform: platform.Key, InstallMode: "managed", ReleaseTag: release.TagName, Asset: asset.Name, ArchiveSHA256: digest, Fingerprint: fingerprint, ValidatedAt: evidence.ValidatedAt}
 	if err := saveLuckyState(state); err != nil {
 		_ = os.RemoveAll(target)
 		if hadTarget {
@@ -351,7 +564,8 @@ func luckyInstall(force bool) (string, error) {
 		return "", err
 	}
 	if wasRunning {
-		if _, err := luckyStart(); err != nil {
+		reportLuckyProgress("restart", 90, "恢复新版本运行状态")
+		if _, err := luckyStart(true); err != nil {
 			_ = os.RemoveAll(target)
 			if hadTarget {
 				_ = os.Rename(backup, target)
@@ -363,6 +577,7 @@ func luckyInstall(force bool) (string, error) {
 	if hadTarget {
 		_ = os.RemoveAll(backup)
 	}
+	reportLuckyProgress("complete", 100, "LuckyLillia CLI 安装完成")
 	return fmt.Sprintf("✓ LuckyLillia 已安装（版本 %s）。", state.Version), nil
 }
 
@@ -411,6 +626,35 @@ func downloadLimited(url, destination string, limit int64) error {
 	return nil
 }
 
+func luckyArchiveSuffix(platform *luckyPlatformSpec) string {
+	if platform != nil && platform.Archive == "tar.xz" {
+		return ".tar.xz"
+	}
+	return ".zip"
+}
+
+func extractLuckyArchive(archivePath, destination string, platform *luckyPlatformSpec) error {
+	if platform == nil {
+		return errors.New("当前平台没有 LuckyLillia CLI 安装契约")
+	}
+	if platform.Archive == "tar.xz" {
+		return extractLuckyTarXZ(archivePath, destination)
+	}
+	return extractLuckyZip(archivePath, destination)
+}
+
+func luckyArchiveTarget(destination, name string) (string, error) {
+	name = filepath.Clean(name)
+	if name == "." || filepath.IsAbs(name) || strings.HasPrefix(name, ".."+string(filepath.Separator)) || name == ".." {
+		return "", errors.New("安装包包含越界路径")
+	}
+	target := filepath.Join(destination, name)
+	if !strings.HasPrefix(filepath.Clean(target), filepath.Clean(destination)+string(filepath.Separator)) {
+		return "", errors.New("安装包包含越界路径")
+	}
+	return target, nil
+}
+
 func extractLuckyZip(archivePath, destination string) error {
 	reader, err := zip.OpenReader(archivePath)
 	if err != nil {
@@ -419,9 +663,12 @@ func extractLuckyZip(archivePath, destination string) error {
 	defer reader.Close()
 	var total int64
 	for _, item := range reader.File {
-		target := filepath.Join(destination, item.Name)
-		if !strings.HasPrefix(filepath.Clean(target), filepath.Clean(destination)+string(filepath.Separator)) {
-			return errors.New("安装包包含越界路径")
+		target, err := luckyArchiveTarget(destination, item.Name)
+		if err != nil {
+			return err
+		}
+		if item.Mode()&os.ModeSymlink != 0 {
+			return errors.New("安装包不能包含符号链接")
 		}
 		if item.FileInfo().IsDir() {
 			if err := os.MkdirAll(target, 0o755); err != nil {
@@ -451,6 +698,64 @@ func extractLuckyZip(archivePath, destination string) error {
 		}
 	}
 	return nil
+}
+
+func extractLuckyTarXZ(archivePath, destination string) error {
+	file, err := os.Open(archivePath)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	compressed, err := xz.NewReader(file)
+	if err != nil {
+		return fmt.Errorf("LuckyLillia tar.xz 安装包无效：%w", err)
+	}
+	reader := tar.NewReader(compressed)
+	var total int64
+	for {
+		header, err := reader.Next()
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("读取 LuckyLillia tar.xz 失败：%w", err)
+		}
+		target, err := luckyArchiveTarget(destination, header.Name)
+		if err != nil {
+			return err
+		}
+		switch header.Typeflag {
+		case tar.TypeDir:
+			if err := os.MkdirAll(target, 0o755); err != nil {
+				return err
+			}
+		case tar.TypeReg, tar.TypeRegA:
+			if header.Size < 0 || total > (500<<20)-header.Size {
+				return errors.New("安装包解压后超过 500 MB 限制")
+			}
+			total += header.Size
+			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+				return err
+			}
+			output, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, header.FileInfo().Mode()|0o600)
+			if err != nil {
+				return err
+			}
+			count, copyErr := io.Copy(output, io.LimitReader(reader, header.Size))
+			closeErr := output.Close()
+			if copyErr != nil {
+				return copyErr
+			}
+			if count != header.Size {
+				return errors.New("LuckyLillia tar.xz 安装包内容不完整")
+			}
+			if closeErr != nil {
+				return closeErr
+			}
+		default:
+			return errors.New("安装包包含不受支持的链接或特殊文件")
+		}
+	}
 }
 
 func luckyExtractRoot(stage string) string {
@@ -490,24 +795,64 @@ func restoreLuckyConfig(previous, target string) error {
 }
 
 func luckyEntryPoint(root string) string {
-	if root == "" {
+	return luckyEntryPointFor(luckyPlatform(), root)
+}
+
+func luckyEntryPointFor(platform *luckyPlatformSpec, root string) string {
+	if platform == nil || root == "" || platform.Entrypoint == "" {
 		return ""
 	}
-	for _, candidate := range []string{"llbot.js", "bin/llbot.js", "bin/llbot", "llbot"} {
-		path := filepath.Join(root, candidate)
-		if info, err := os.Stat(path); err == nil && !info.IsDir() {
-			return path
-		}
+	path := filepath.Join(root, platform.Entrypoint)
+	if info, err := os.Stat(path); err == nil && !info.IsDir() {
+		return path
 	}
 	return ""
 }
 
-func luckyStart() (string, error) {
+// luckyAdopt lets a user point the workbench at an already-unpacked official
+// CLI package. It is intentionally held to the exact current platform entry.
+func luckyAdopt(params map[string]string, confirmed bool) (string, error) {
+	if err := requireLuckyConfirmation(confirmed, "关联 LuckyLillia"); err != nil {
+		return "", err
+	}
+	dir := strings.TrimSpace(params["installDir"])
+	if dir == "" || !filepath.IsAbs(dir) {
+		return "", errors.New("请输入 LuckyLillia 解压目录的绝对路径")
+	}
+	dir = filepath.Clean(dir)
+	info, err := os.Stat(dir)
+	if err != nil || !info.IsDir() {
+		return "", errors.New("指定的 LuckyLillia 安装目录不存在")
+	}
+	if luckyEntryPoint(dir) == "" {
+		return "", errors.New("指定目录未找到 LuckyLillia 启动入口；请选择官方包解压后的根目录")
+	}
+	state, err := loadLuckyState()
+	if err != nil {
+		return "", err
+	}
+	if processAlive(state.PID) && filepath.Clean(state.InstallDir) != dir {
+		return "", errors.New("当前已记录的 LuckyLillia 仍在运行，请先停止后再切换安装目录")
+	}
+	state = luckyState{InstallDir: dir, Managed: false, InstallMode: "external", Platform: luckyPlatform().Key}
+	if err := saveLuckyState(state); err != nil {
+		return "", err
+	}
+	return "✓ 已关联现有 LuckyLillia CLI 安装目录。", nil
+}
+
+func luckyStart(confirmed bool) (string, error) {
+	if err := requireLuckyConfirmation(confirmed, "启动 LuckyLillia"); err != nil {
+		return "", err
+	}
 	if err := requireLuckyVerified("启动"); err != nil {
 		return "", err
 	}
 	state, err := loadLuckyState()
 	if err != nil {
+		return "", err
+	}
+	if err := requireManagedLucky(state, "启动"); err != nil {
 		return "", err
 	}
 	if processAlive(state.PID) {
@@ -516,9 +861,6 @@ func luckyStart() (string, error) {
 	entry := luckyEntryPoint(state.InstallDir)
 	if entry == "" {
 		return "", errors.New("LuckyLillia 未安装或安装不完整，请先安装或重装")
-	}
-	if err := requireNode22(); err != nil {
-		return "", err
 	}
 	logFile, err := luckyLogPath()
 	if err != nil {
@@ -532,61 +874,136 @@ func luckyStart() (string, error) {
 		return "", err
 	}
 	defer handle.Close()
-	var command *exec.Cmd
-	if strings.HasSuffix(entry, ".js") {
-		command = exec.Command("node", entry)
-	} else {
-		_ = os.Chmod(entry, 0o755)
-		command = exec.Command(entry)
+	command, err := luckyStartCommand(luckyPlatform(), state.InstallDir, entry)
+	if err != nil {
+		return "", err
 	}
-	command.Dir = filepath.Dir(entry)
 	command.Stdout, command.Stderr, command.Stdin = handle, handle, nil
 	detachProcess(command)
 	if err := command.Start(); err != nil {
 		return "", err
 	}
 	state.PID = command.Process.Pid
+	state.ProcessGroupID = state.PID
 	_ = command.Process.Release()
 	if err := saveLuckyState(state); err != nil {
+		stopManagedProcess(state.PID)
 		return "", err
+	}
+	if !waitLuckyWebUI(luckyWebUIPort, 20*time.Second) {
+		stopManagedProcess(state.PID)
+		state.PID, state.ProcessGroupID = 0, 0
+		_ = saveLuckyState(state)
+		return "", errors.New("LuckyLillia 启动后 WebUI（3080）未在 20 秒内就绪，请查看日志")
 	}
 	return fmt.Sprintf("✓ LuckyLillia 已启动（PID %d）。请进入 WebUI 扫码登录。", state.PID), nil
 }
-func luckyStop() (string, error) {
+
+func luckyStartCommand(platform *luckyPlatformSpec, root, entry string) (*exec.Cmd, error) {
+	if platform == nil {
+		return nil, errors.New("当前平台没有 LuckyLillia CLI 启动契约")
+	}
+	var command *exec.Cmd
+	if platform.Key == "windows-amd64" {
+		command = exec.Command(entry)
+	} else {
+		command = exec.Command("sh", entry)
+	}
+	command.Dir = root
+	return command, nil
+}
+
+func waitLuckyWebUI(port int, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if luckyPortURL(port) != "" {
+			return true
+		}
+		time.Sleep(300 * time.Millisecond)
+	}
+	return false
+}
+func luckyStop(confirmed bool) (string, error) {
+	if err := requireLuckyConfirmation(confirmed, "停止 LuckyLillia"); err != nil {
+		return "", err
+	}
 	state, err := loadLuckyState()
 	if err != nil {
 		return "", err
 	}
-	if processAlive(state.PID) {
-		stopProcess(state.PID)
+	if err := requireManagedLucky(state, "停止"); err != nil {
+		return "", err
 	}
-	state.PID = 0
+	if processAlive(state.ProcessGroupID) || processAlive(state.PID) {
+		processGroupID := state.ProcessGroupID
+		if processGroupID <= 0 {
+			processGroupID = state.PID
+		}
+		stopManagedProcess(processGroupID)
+		if processAlive(processGroupID) || processAlive(state.PID) {
+			return "", errors.New("LuckyLillia 进程组未能停止；状态已保留以便继续诊断")
+		}
+	}
+	state.PID, state.ProcessGroupID = 0, 0
 	if err := saveLuckyState(state); err != nil {
 		return "", err
 	}
 	return "✓ LuckyLillia 已停止。", nil
 }
-func luckyRestart() (string, error) {
+func luckyRestart(confirmed bool) (string, error) {
+	if err := requireLuckyConfirmation(confirmed, "重启 LuckyLillia"); err != nil {
+		return "", err
+	}
 	if err := requireLuckyVerified("重启"); err != nil {
 		return "", err
 	}
-	if _, err := luckyStop(); err != nil {
+	if _, err := luckyStop(true); err != nil {
 		return "", err
 	}
-	return luckyStart()
+	return luckyStart(true)
 }
-func luckyUninstall() (string, error) {
-	if _, err := luckyStop(); err != nil {
+func luckyUninstall(confirmed bool) (string, error) {
+	if err := requireLuckyConfirmation(confirmed, "卸载 LuckyLillia"); err != nil {
+		return "", err
+	}
+	state, err := loadLuckyState()
+	if err != nil {
+		return "", err
+	}
+	if err := requireManagedLucky(state, "卸载"); err != nil {
+		return "", err
+	}
+	if _, err := luckyStop(true); err != nil {
 		return "", err
 	}
 	dir, err := luckyInstallDir()
 	if err != nil {
 		return "", err
 	}
+	if state.InstallDir != "" && filepath.Clean(state.InstallDir) != filepath.Clean(dir) {
+		return "", errors.New("受管 LuckyLillia 安装目录不属于工作台；已拒绝删除")
+	}
 	if err := os.RemoveAll(dir); err != nil {
 		return "", err
 	}
 	return "✓ LuckyLillia 已卸载。", saveLuckyState(luckyState{})
+}
+
+func luckyForget(confirmed bool) (string, error) {
+	if err := requireLuckyConfirmation(confirmed, "取消关联 LuckyLillia"); err != nil {
+		return "", err
+	}
+	state, err := loadLuckyState()
+	if err != nil {
+		return "", err
+	}
+	if state.Managed {
+		return "", errors.New("受管安装不能取消关联；请使用卸载")
+	}
+	if processAlive(state.PID) {
+		return "", errors.New("关联的 LuckyLillia 仍在运行，请先自行停止")
+	}
+	return "✓ 已取消外部 LuckyLillia CLI 关联，未删除任何文件。", saveLuckyState(luckyState{})
 }
 func luckyLog(params map[string]string) (string, error) {
 	lines, err := linesParam(params)
@@ -681,12 +1098,19 @@ func luckyOneBotConfig() (string, error) {
 	return "? 尚未找到 LuckyLillia OneBot 配置；保存连接配置将创建默认配置。", nil
 }
 
-func luckySetOneBotConfig(params map[string]string) (string, error) {
+func luckySetOneBotConfig(params map[string]string, confirmed bool) (string, error) {
+	if err := requireLuckyConfirmation(confirmed, "保存 LuckyLillia OneBot 配置"); err != nil {
+		return "", err
+	}
 	if err := requireLuckyVerified("配置写入"); err != nil {
 		return "", err
 	}
-	if !luckySupported() {
-		return "", errors.New("LuckyLillia 自动配置仅支持 Linux ARM64")
+	state, err := loadLuckyState()
+	if err != nil {
+		return "", err
+	}
+	if err := requireManagedLucky(state, "写入 OneBot 配置"); err != nil {
+		return "", err
 	}
 	port, err := portParam(params)
 	if err != nil {
@@ -750,21 +1174,8 @@ func luckySetOneBotConfig(params map[string]string) (string, error) {
 	if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
 		return "", err
 	}
-	if err := os.WriteFile(file, append(data, '\n'), 0o600); err != nil {
+	if err := atomicPrivateJSON(file, append(data, '\n')); err != nil {
 		return "", err
 	}
 	return fmt.Sprintf("✓ 已更新 LuckyLillia OneBot WebSocket（端口 %d）。\n✓ 重启 LuckyLillia 后生效。", port), nil
-}
-
-func requireNode22() error {
-	output, err := exec.Command("node", "--version").Output()
-	if err != nil {
-		return errors.New("LuckyLillia 需要 Node.js 22 或更高版本")
-	}
-	version := strings.TrimSpace(strings.TrimPrefix(string(output), "v"))
-	major, err := strconv.Atoi(strings.Split(version, ".")[0])
-	if err != nil || major < 22 {
-		return fmt.Errorf("LuckyLillia 需要 Node.js 22+，当前为 %s", version)
-	}
-	return nil
 }

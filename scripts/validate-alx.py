@@ -15,7 +15,7 @@ import sys
 MAX_MANIFEST = 64 * 1024
 ID_RE = re.compile(r"^[a-z][a-z0-9-]{1,63}$")
 RUN_TIMES = {"", "binary", "node", "go"}
-PLATFORM_KEYS = {"darwin-arm64", "darwin-amd64", "linux-amd64", "windows-amd64"}
+PLATFORM_KEYS = {"darwin-arm64", "darwin-amd64", "linux-amd64", "linux-arm64", "windows-amd64"}
 
 
 def report(errors):

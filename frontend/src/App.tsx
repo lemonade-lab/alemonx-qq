@@ -65,7 +65,7 @@ function ResultPanel({
         </strong>
       </header>
       {state === 'failed' && result?.error && (
-        <div className="rounded-md bg-[var(--theme-danger-soft)] px-2 py-1.5 font-semibold text-[var(--theme-danger-text)]">
+        <div className="whitespace-pre-wrap rounded-md bg-[var(--theme-danger-soft)] px-2 py-1.5 font-semibold leading-5 text-[var(--theme-danger-text)]">
           {result.error}
         </div>
       )}
@@ -121,6 +121,15 @@ function Field({
       )}
     </label>
   )
+}
+
+function ActionField({ label = '操作', children }: { label?: string; children: ReactNode }) {
+	return (
+		<label className="grid min-w-[180px] flex-1 gap-1 text-xs font-semibold text-[var(--theme-text-secondary)] [&_button]:w-full">
+			<span>{label}</span>
+			{children}
+		</label>
+	)
 }
 
 function ConfirmModal({
@@ -244,13 +253,24 @@ export default function App() {
 		? napcatQRCodeURL(liveStatus.qrCodeUpdatedAt)
 		: ''
 	const luckyAction = (action: string) => `luckylillia-${action}`
+	const luckyManaged = liveStatus?.managed === true
+	const luckyInstalled = liveStatus?.installed === true
+	const napcatManagedActions = engine === 'napcat' && liveStatus?.managedActions === true
+	const [napcatQQ, setNapcatQQ] = useState('')
+	const selectedNapcatAccount = liveStatus?.accounts?.find(account => account.qq === (napcatQQ || liveStatus.selectedAccount))
+	const selectedOneBotReady = engine === 'napcat' ? Boolean(selectedNapcatAccount?.oneBotReady) : Boolean(liveStatus?.oneBotReady)
+	const selectedOneBotURL = engine === 'napcat'
+		? selectedNapcatAccount?.oneBotUrl
+		: liveStatus?.oneBotUrl
 
   const run = async (action: string, params: Record<string, string> = {}, confirm = false) => {
 	setActiveAction(action)
     setState('running')
     setResult(undefined)
     try {
-      const outcome = await runActionAndPoll(action, params, confirm)
+      const outcome = await runActionAndPoll(action, params, confirm, task => {
+		setResult({ output: task.output || (task.progress ? `正在执行（${task.progress}%）` : '正在执行…') })
+	  })
       setResult(outcome)
       setState(outcome.error ? 'failed' : 'done')
     } catch (reason) {
@@ -261,26 +281,37 @@ export default function App() {
     }
   }
 
-	// NapCat login QR codes are short-lived. Poll faster while this core is
-	// selected so a regenerated QR is reflected without opening WebUI.
+	// Login QR codes are short-lived. Poll the read-only endpoint faster only
+	// while login is pending; hidden pages do not need background refreshes.
   useEffect(() => {
     let stopped = false
+		let timer: ReturnType<typeof setTimeout> | undefined
     const tick = async () => {
+			if (document.hidden) return
 		try {
 			const status = await fetchStatus(engine)
 			const nextServices = await fetchLocalServices()
-			if (!stopped) { setLiveStatus(status); setServices(nextServices) }
+			if (!stopped) {
+				setLiveStatus(status)
+				setServices(nextServices)
+				setNapcatQQ(current => current || status.selectedAccount || '')
+			}
       } catch {
 		// Probe failed; keep last known status.
       }
+		if (!stopped) timer = setTimeout(tick, liveStatus?.loginPending ? 2000 : 5000)
     }
     void tick()
-		const timer = setInterval(tick, engine === 'napcat' ? 2000 : 5000)
+		const onVisibility = () => {
+			if (!document.hidden) void tick()
+		}
+		document.addEventListener('visibilitychange', onVisibility)
     return () => {
       stopped = true
-      clearInterval(timer)
+		if (timer) clearTimeout(timer)
+		 document.removeEventListener('visibilitychange', onVisibility)
     }
-	}, [engine])
+	}, [engine, liveStatus?.loginPending])
 
 	useEffect(() => {
 		void fetchRobotProjects().then(setProjects).catch(() => setProjects([]))
@@ -292,8 +323,19 @@ export default function App() {
 
 	const guide = useMemo(() => {
 		if (!liveStatus) return null
-		if (engine === 'luckylillia' && !liveStatus.verified) return { title: '实验能力等待验证', description: 'LuckyLillia 尚未通过真实 Linux ARM64 验证，当前不开放安装或启动。', label: '查看状态', action: () => void run(luckyAction('status')) }
+		if (engine === 'napcat' && liveStatus.platform === 'darwin-external' && !liveStatus.installed) return {
+			title: '关联现有 NapCat',
+			description: 'macOS 的 NapCat 通过 QQ 注入运行。工作台不会修改 QQ、停止 QQ 或删除注入文件；请关联现有目录后查看状态、二维码与 WebUI。',
+			label: '关联目录',
+			action: () => document.getElementById('napcat-association')?.scrollIntoView({ behavior: 'smooth', block: 'center' }),
+		}
+		if (engine === 'napcat' && !liveStatus.installed && !liveStatus.verified) return { title: '自动安装等待真实验证', description: `${liveStatus.platform || '当前平台'} 尚未注入与官方来源匹配的 E2E 验证证据，自动安装、启动与配置写入保持锁定。`, label: '查看状态', action: () => void run('napcat-status') }
+		if (engine === 'napcat' && liveStatus.installed && !liveStatus.managed) return { title: '已关联外部 NapCat', description: '工作台只显示状态、登录二维码和内嵌 WebUI，不会启动、停止、更新、写配置或删除外部目录。', label: webUrl ? '打开管理面板' : '查看状态', action: () => webUrl ? setView('webui') : void run('napcat-status') }
+		if (engine === 'napcat' && liveStatus.installed && !liveStatus.managedActions) return { title: '受管操作等待验证', description: '当前安装没有与本机平台完全匹配的真实 E2E 证据；为保护已有 QQ 环境，自动操作仍然锁定。', label: '查看状态', action: () => void run('napcat-status') }
+		if (engine === 'luckylillia' && liveStatus.supported === false) return { title: '当前平台不支持 LuckyLillia CLI', description: 'MVP 仅支持 Windows x64、macOS Apple Silicon、Linux x64 与 Linux ARM64。', label: '查看状态', action: () => void run(luckyAction('status')) }
+		if (engine === 'luckylillia' && !liveStatus.verified) return { title: '实验能力等待验证', description: `${liveStatus.platform || '当前平台'} 的官方包已识别，但尚未通过真实端到端验证，当前不开放安装或启动。`, label: '查看状态', action: () => void run(luckyAction('status')) }
 		if (!liveStatus.installed) return { title: '第一步：安装核心', description: '下载官方组件并准备本机运行环境。', label: engine === 'napcat' ? '安装 NapCat' : '安装 LuckyLillia', action: () => confirm('安装 QQ 核心', '将下载并安装官方组件；安装过程可能需要几分钟。', () => run(engine === 'napcat' ? 'install' : luckyAction('install'), {}, true)) }
+		if (engine === 'luckylillia' && !liveStatus.managed) return { title: '已关联外部 LuckyLillia', description: '工作台仅显示状态和内嵌 WebUI；不会替你启动、更新、写配置或删除外部目录。', label: webUrl ? '打开管理面板' : '查看状态', action: () => webUrl ? setView('webui') : void run(luckyAction('status')) }
 		if (!liveStatus.running) return { title: '第二步：启动服务', description: '启动后将自动等待 QQ 登录二维码。', label: engine === 'napcat' ? '启动 NapCat' : '启动 LuckyLillia', action: () => confirm('启动 QQ 核心', '启动后台服务并等待登录。', () => run(engine === 'napcat' ? 'start' : luckyAction('start'), {}, true)) }
 		if (liveStatus.loginPending) return { title: '第三步：使用手机 QQ 扫码', description: '二维码会自动刷新；完成登录后状态会自动进入下一步。', label: webUrl ? '打开管理面板' : '等待二维码', action: () => webUrl ? setView('webui') : undefined }
 		if (!liveStatus.oneBotReady) return { title: '正在等待 OneBot 服务', description: 'QQ 登录后的服务初始化可能需要片刻，请保持此页面打开。', label: '刷新状态', action: () => void run(engine === 'napcat' ? 'napcat-status' : luckyAction('status')) }
@@ -351,7 +393,7 @@ export default function App() {
 				{liveStatus && <SetupSteps status={liveStatus} engine={engine} />}
 			</section>
 		  )}
-          {liveStatus && (
+		  {liveStatus && (
             <section className="grid gap-2 rounded-panel border p-3 text-xs"
               style={{ borderColor: 'var(--theme-border-default)', background: 'var(--theme-surface-panel)' }}
             >
@@ -382,14 +424,14 @@ export default function App() {
                 </p>
               )}
 				{liveStatus.diagnosticHint && <p className="m-0 rounded-md bg-[var(--theme-warning-soft)] px-2 py-1.5 text-[var(--theme-warning-text)]">{liveStatus.diagnosticHint}</p>}
-				{engine === 'luckylillia' && liveStatus.verified === false && <p className="m-0 rounded-md bg-[var(--theme-warning-soft)] px-2 py-1.5 text-[var(--theme-warning-text)]">LuckyLillia 实验能力未验证；正式版暂不提供安装、更新、启动或配置写入。</p>}
-				{liveStatus.supported === false && <p className="m-0 rounded-md bg-[var(--theme-warning-soft)] px-2 py-1.5 text-[var(--theme-warning-text)]">当前平台不支持 LuckyLillia 自动安装。</p>}
-			  {engine === 'napcat' && liveStatus.installed && !liveStatus.running && (
+				{engine === 'luckylillia' && liveStatus.installMode === 'verified-release' && liveStatus.verified === false && <p className="m-0 rounded-md bg-[var(--theme-warning-soft)] px-2 py-1.5 text-[var(--theme-warning-text)]">{liveStatus.platform || '当前平台'} 的自动安装仍待真实验证；正式版暂不提供安装、更新、启动或配置写入。</p>}
+				{engine === 'luckylillia' && liveStatus.assetName && <p className="m-0 text-xs text-[var(--theme-text-muted)]">官方 CLI 包：<code>{liveStatus.assetName}</code>{liveStatus.entrypoint ? ` · 启动入口 ${liveStatus.entrypoint}` : ''}</p>}
+			  {engine === 'napcat' && napcatManagedActions && liveStatus.installed && !liveStatus.running && (
                 <div className="flex gap-2">
                   <ActionButton label="一键重启" running={state === 'running'} onClick={() => void run('restart', {}, true)} />
                 </div>
               )}
-				{engine === 'napcat' && <div className="flex items-center gap-2 border-t border-[var(--theme-border-default)] pt-2">
+				{engine === 'napcat' && napcatManagedActions && <div className="flex items-center gap-2 border-t border-[var(--theme-border-default)] pt-2">
                 <span className="text-[var(--theme-text-muted)]">
                   守护模式（自动拉起）：
                 </span>
@@ -399,33 +441,67 @@ export default function App() {
                   <ActionButton label="开启守护" variant="secondary" running={state === 'running'} onClick={() => confirm('开启守护模式', 'NapCat 异常退出后约 15 秒会自动拉起。', () => run('watchdog-on', {}, true))} />
                 )}
 				</div>}
-            </section>
-          )}
+			</section>
+		  )}
+
+		  {engine === 'luckylillia' && liveStatus?.supported !== false && !liveStatus?.installed && (
+			<section className="grid gap-3 rounded-panel border border-[var(--theme-border-default)] bg-[var(--theme-surface-panel)] p-3">
+				<div className="grid gap-1">
+					<strong className="text-sm font-semibold text-[var(--theme-text-strong)]">关联已解压的官方 CLI</strong>
+					<p className="m-0 text-xs leading-5 text-[var(--theme-text-muted)]">可选：关联已解压的同平台官方 CLI 包。系统只接受当前平台的标准启动入口。</p>
+				</div>
+				<form className="grid grid-cols-[minmax(0,1fr)_180px] gap-3 max-sm:grid-cols-1" onSubmit={(event) => {
+					event.preventDefault()
+					const installDir = String(new FormData(event.currentTarget).get('installDir') || '')
+					confirm('关联 LuckyLillia CLI', '工作台将校验当前平台的官方 CLI 启动入口并保存目录。', () => run(luckyAction('adopt'), { installDir }, true))
+				}}>
+					<Field label="CLI 解压目录" name="installDir" hint="请输入绝对路径，例如 /opt/LLBot 或 D:\\LLBot。" />
+					<ActionField><button className="primary-button min-h-9" type="submit">关联目录</button></ActionField>
+				</form>
+			</section>
+		  )}
+
+		  {engine === 'napcat' && !liveStatus?.managed && (
+			<section id="napcat-association" className="grid gap-3 rounded-panel border border-[var(--theme-border-default)] bg-[var(--theme-surface-panel)] p-3">
+				<div className="grid gap-1">
+					<strong className="text-sm font-semibold text-[var(--theme-text-strong)]">关联现有 NapCat</strong>
+					<p className="m-0 text-xs leading-5 text-[var(--theme-text-muted)]">仅保存目录与指纹，用于状态、二维码和内嵌 WebUI。不会修改此目录；macOS 留空可使用 QQ 注入目录。</p>
+				</div>
+				<form className="grid grid-cols-[minmax(0,1fr)_180px] gap-3 max-sm:grid-cols-1" onSubmit={(event) => {
+					event.preventDefault()
+					const installDir = String(new FormData(event.currentTarget).get('installDir') || '')
+					confirm('关联外部 NapCat', '工作台只读取该目录的状态和登录信息，不会获取删除或运行权限。', () => run('napcat-adopt', { installDir }, true))
+				}}>
+					<Field label="NapCat 安装目录" name="installDir" hint="请输入绝对路径；macOS 可留空以自动定位 QQ 注入目录。" />
+					<ActionField><button className="primary-button min-h-9" type="submit">关联目录</button></ActionField>
+				</form>
+			</section>
+		  )}
 
 		  <details className="rounded-panel border border-[var(--theme-border-default)] bg-[var(--theme-surface-panel)] p-3">
 			<summary className="cursor-pointer text-xs font-semibold text-[var(--theme-text-secondary)]">其他操作与诊断（更新、日志、重启、卸载）</summary>
 			<div className="mt-3 flex flex-wrap gap-2">
 			{engine === 'napcat' ? <>
 				<ActionButton label="查看状态" variant="secondary" running={state === 'running'} onClick={() => void run('napcat-status')} />
-				<ActionButton label="安装" running={state === 'running'} onClick={() => confirm('安装 NapCat', '会自动下载并解压 NapCat 到本机（首次较大，请耐心）。', () => run('install', {}, true))} />
-				<ActionButton label="启动" variant="secondary" running={state === 'running'} onClick={() => confirm('启动 NapCat', '启动后台进程，用手机 QQ 扫码登录。', () => run('start', {}, true))} />
-				<ActionButton label="停止" variant="secondary" running={state === 'running'} onClick={() => confirm('停止 NapCat', '停止后台的 NapCat 进程。', () => run('stop', {}, true))} />
-				<ActionButton label="重启" variant="secondary" running={state === 'running'} onClick={() => confirm('重启 NapCat', '停止后重新启动。', () => run('restart', {}, true))} />
-				<ActionButton label="卸载" variant="danger" running={state === 'running'} onClick={() => confirm('卸载 NapCat', '会停止并删除已安装的 NapCat。', () => run('uninstall', {}, true))} />
+				<ActionButton label="安装" running={state === 'running'} disabled={!liveStatus?.verified || liveStatus?.installed} onClick={() => confirm('安装 NapCat', '会下载经真实 E2E 证据绑定的官方组件。', () => run('install', {}, true))} />
+				<ActionButton label="启动" variant="secondary" running={state === 'running'} disabled={!napcatManagedActions || !liveStatus?.installed} onClick={() => confirm('启动 NapCat', '启动工作台受管的后台进程，用手机 QQ 扫码登录。', () => run('start', {}, true))} />
+				<ActionButton label="停止" variant="secondary" running={state === 'running'} disabled={!napcatManagedActions || !liveStatus?.running} onClick={() => confirm('停止 NapCat', '停止工作台受管的 NapCat 进程组。', () => run('stop', {}, true))} />
+				<ActionButton label="重启" variant="secondary" running={state === 'running'} disabled={!napcatManagedActions || !liveStatus?.installed} onClick={() => confirm('重启 NapCat', '停止后重新启动工作台受管的 NapCat。', () => run('restart', {}, true))} />
+				{liveStatus?.installed && !liveStatus?.managed ? <ActionButton label="取消关联" variant="danger" running={state === 'running'} onClick={() => confirm('取消关联 NapCat', '不会删除或修改外部目录。', () => run('napcat-forget', {}, true))} /> : <ActionButton label="卸载" variant="danger" running={state === 'running'} disabled={!napcatManagedActions} onClick={() => confirm('卸载 NapCat', '会停止并删除工作台受管目录。', () => run('uninstall', {}, true))} />}
 				<ActionButton label="看日志" variant="secondary" running={state === 'running'} onClick={() => void run('log')} />
 				<ActionButton label="检查更新" variant="secondary" running={state === 'running'} onClick={() => void run('update-check')} />
-				<ActionButton label="更新" variant="secondary" running={state === 'running'} onClick={() => confirm('更新 NapCat', '会先停止 NapCat，下载新版，再让你重新启动。', () => run('update', {}, true))} />
+				<ActionButton label="更新" variant="secondary" running={state === 'running'} disabled={!napcatManagedActions} onClick={() => confirm('更新 NapCat', '会停止旧进程，原子替换；失败时恢复旧目录与原运行状态。', () => run('update', {}, true))} />
 			</> : <>
 				<ActionButton label="查看状态" variant="secondary" running={state === 'running'} onClick={() => void run(luckyAction('status'))} />
-				<ActionButton label="安装" running={state === 'running'} disabled={!liveStatus?.verified} onClick={() => confirm('安装 LuckyLillia', '将从官方 Release 下载并验证 Linux ARM64 安装包。', () => run(luckyAction('install'), {}, true))} />
-				<ActionButton label="重装" variant="secondary" running={state === 'running'} disabled={!liveStatus?.verified} onClick={() => confirm('重装 LuckyLillia', '会停止旧进程，原子替换并在失败时回滚。', () => run(luckyAction('reinstall'), {}, true))} />
-				<ActionButton label="启动" variant="secondary" running={state === 'running'} disabled={!liveStatus?.verified} onClick={() => confirm('启动 LuckyLillia', '将检查 Node.js 22+，然后启动并等待 WebUI。', () => run(luckyAction('start'), {}, true))} />
-				<ActionButton label="停止" variant="secondary" running={state === 'running'} onClick={() => confirm('停止 LuckyLillia', '停止后台 LuckyLillia 进程。', () => run(luckyAction('stop'), {}, true))} />
-				<ActionButton label="重启" variant="secondary" running={state === 'running'} disabled={!liveStatus?.verified} onClick={() => confirm('重启 LuckyLillia', '会使用 LuckyLillia 专属停止与启动流程。', () => run(luckyAction('restart'), {}, true))} />
-				<ActionButton label="卸载" variant="danger" running={state === 'running'} onClick={() => confirm('卸载 LuckyLillia', '会停止并删除 LuckyLillia 安装目录。', () => run(luckyAction('uninstall'), {}, true))} />
+				<ActionButton label="安装" running={state === 'running'} disabled={!liveStatus?.verified || luckyInstalled} onClick={() => confirm('安装 LuckyLillia', `将从官方 Release 下载并验证 ${liveStatus?.assetName || '当前平台安装包'}。`, () => run(luckyAction('install'), {}, true))} />
+				<ActionButton label="重装" variant="secondary" running={state === 'running'} disabled={!liveStatus?.verified || !luckyManaged} onClick={() => confirm('重装 LuckyLillia', '会停止旧进程，原子替换并在失败时回滚。', () => run(luckyAction('reinstall'), {}, true))} />
+				<ActionButton label="启动" variant="secondary" running={state === 'running'} disabled={!liveStatus?.verified || !luckyManaged || !luckyInstalled} onClick={() => confirm('启动 LuckyLillia', '将启动官方 CLI 并等待 WebUI（3080）就绪。', () => run(luckyAction('start'), {}, true))} />
+				<ActionButton label="停止" variant="secondary" running={state === 'running'} disabled={!luckyManaged || !liveStatus?.running} onClick={() => confirm('停止 LuckyLillia', '停止由工作台管理的 LuckyLillia 进程。', () => run(luckyAction('stop'), {}, true))} />
+				<ActionButton label="重启" variant="secondary" running={state === 'running'} disabled={!liveStatus?.verified || !luckyManaged || !luckyInstalled} onClick={() => confirm('重启 LuckyLillia', '会使用 LuckyLillia 专属停止与启动流程。', () => run(luckyAction('restart'), {}, true))} />
+				{luckyInstalled && (luckyManaged ? <ActionButton label="卸载" variant="danger" running={state === 'running'} onClick={() => confirm('卸载 LuckyLillia', '会停止并删除工作台安装的 LuckyLillia。', () => run(luckyAction('uninstall'), {}, true))} /> : <ActionButton label="取消关联" variant="danger" running={state === 'running'} onClick={() => confirm('取消关联 LuckyLillia', '不会删除外部目录或修改其中的文件。', () => run(luckyAction('forget'), {}, true))} />)}
 				<ActionButton label="看日志" variant="secondary" running={state === 'running'} onClick={() => void run(luckyAction('log'))} />
-				<ActionButton label="检查更新" variant="secondary" running={state === 'running'} disabled={!liveStatus?.verified} onClick={() => void run(luckyAction('update-check'))} />
-				<ActionButton label="更新" variant="secondary" running={state === 'running'} disabled={!liveStatus?.verified} onClick={() => confirm('更新 LuckyLillia', '会停止旧进程，下载新版并在失败时恢复旧版本与进程。', () => run(luckyAction('update'), {}, true))} />
+				<ActionButton label="检查更新" variant="secondary" running={state === 'running'} disabled={!liveStatus?.verified || !luckyManaged} onClick={() => void run(luckyAction('update-check'))} />
+				<ActionButton label="更新" variant="secondary" running={state === 'running'} disabled={!liveStatus?.verified || !luckyManaged} onClick={() => confirm('更新 LuckyLillia', '会停止旧进程，下载新版并在失败时恢复旧版本与进程。', () => run(luckyAction('update'), {}, true))} />
 			</>}
 			</div>
 		  </details>
@@ -466,13 +542,13 @@ export default function App() {
 
       {view === 'config' && (
         <div className="grid gap-3">
-		  <section className="grid gap-1 rounded-panel border border-[var(--theme-border-default)] bg-[var(--theme-surface-panel)] p-3 text-xs">
-			<strong className="text-sm text-[var(--theme-text-strong)]">OneBot 连接健康</strong>
-			<p className="m-0 text-[var(--theme-text-muted)]">{liveStatus?.oneBotReady ? `核心已在 ${liveStatus.oneBotUrl || '本机 WebSocket 地址'} 就绪。选择机器人并输入 Token 后即可同步。` : '核心 OneBot 尚未就绪。请先完成 QQ 登录，再同步到机器人。'}</p>
+		  <section className="flex flex-wrap items-center justify-between gap-3 rounded-panel border border-[var(--theme-border-default)] bg-[var(--theme-surface-panel)] p-3 text-xs">
+			<div className="grid gap-1">
+				<strong className="text-sm text-[var(--theme-text-strong)]">OneBot 连接健康</strong>
+				<p className="m-0 text-[var(--theme-text-muted)]">{liveStatus?.oneBotReady ? `核心已在 ${liveStatus.oneBotUrl || '本机 WebSocket 地址'} 就绪。选择机器人并输入 Token 后即可同步。` : '核心 OneBot 尚未就绪。请先完成 QQ 登录，再同步到机器人。'}</p>
+			</div>
+			<ActionButton label="读取当前配置" variant="secondary" running={state === 'running'} onClick={() => void run(engine === 'napcat' ? 'onebot-config' : luckyAction('onebot-config'), engine === 'napcat' && napcatQQ ? { qq: napcatQQ } : {})} />
 		  </section>
-          <div className="flex flex-wrap gap-2">
-			<ActionButton label="读取当前配置" variant="secondary" running={state === 'running'} onClick={() => void run(engine === 'napcat' ? 'onebot-config' : luckyAction('onebot-config'))} />
-          </div>
           <ResultPanel state={state} result={result} />
 
           {engine === 'napcat' ? <><form
@@ -480,7 +556,8 @@ export default function App() {
             onSubmit={(event) => {
               event.preventDefault()
               const data = new FormData(event.currentTarget)
-              const params = {
+			  const params = {
+				qq: napcatQQ,
                 port: String(data.get('httpPort') || '3000'),
                 enable: String(data.get('httpEnable') || 'true'),
                 token: String(data.get('httpToken') || '')
@@ -491,6 +568,7 @@ export default function App() {
             <h2 className="col-span-full m-0 text-sm font-semibold text-[var(--theme-text-strong)]">
               HTTP 服务
             </h2>
+			{(liveStatus?.accounts?.length || 0) > 1 && <Field label="QQ 账号" name="httpQQ"><select className={inputClass} value={napcatQQ} onChange={event => setNapcatQQ(event.target.value)}><option value="">请选择账号</option>{liveStatus?.accounts?.map(account => <option key={account.qq} value={account.qq}>{account.qq}</option>)}</select></Field>}
             <Field label="启用" name="httpEnable" defaultValue="true">
               <select className={inputClass} name="httpEnable" defaultValue="true">
                 <option value="true">是</option>
@@ -499,7 +577,7 @@ export default function App() {
             </Field>
             <Field label="端口" name="httpPort" type="number" defaultValue="3000" hint="默认 3000。" />
             <Field label="Token" name="httpToken" hint="留空不改动；填 **** 也视为不改动。" />
-            <button className="primary-button self-end" type="submit">保存 HTTP</button>
+			<ActionField><button className="primary-button min-h-9" type="submit" disabled={!napcatManagedActions || ((liveStatus?.accounts?.length || 0) > 1 && !napcatQQ)}>保存 HTTP</button></ActionField>
           </form>
 
           <form
@@ -507,7 +585,8 @@ export default function App() {
             onSubmit={(event) => {
               event.preventDefault()
               const data = new FormData(event.currentTarget)
-              const params = {
+			  const params = {
+				qq: napcatQQ,
                 port: String(data.get('wsPort') || '3001'),
                 enable: String(data.get('wsEnable') || 'true'),
                 token: String(data.get('wsToken') || '')
@@ -518,6 +597,7 @@ export default function App() {
             <h2 className="col-span-full m-0 text-sm font-semibold text-[var(--theme-text-strong)]">
               WebSocket 服务
             </h2>
+			{(liveStatus?.accounts?.length || 0) > 1 && <Field label="QQ 账号" name="wsQQ"><select className={inputClass} value={napcatQQ} onChange={event => setNapcatQQ(event.target.value)}><option value="">请选择账号</option>{liveStatus?.accounts?.map(account => <option key={account.qq} value={account.qq}>{account.qq}</option>)}</select></Field>}
             <Field label="启用" name="wsEnable" defaultValue="true">
               <select className={inputClass} name="wsEnable" defaultValue="true">
                 <option value="true">是</option>
@@ -526,7 +606,7 @@ export default function App() {
             </Field>
             <Field label="端口" name="wsPort" type="number" defaultValue="3001" hint="默认 3001。" />
             <Field label="Token" name="wsToken" hint="留空不改动；填 **** 也视为不改动。" />
-            <button className="primary-button self-end" type="submit">保存 WebSocket</button>
+			<ActionField><button className="primary-button min-h-9" type="submit" disabled={!napcatManagedActions || ((liveStatus?.accounts?.length || 0) > 1 && !napcatQQ)}>保存 WebSocket</button></ActionField>
 		  </form></> : <form
 			className="grid grid-cols-[repeat(auto-fit,minmax(180px,1fr))] gap-3 rounded-panel border border-[var(--theme-border-default)] bg-[var(--theme-surface-panel)] p-3"
 			onSubmit={(event) => {
@@ -539,7 +619,7 @@ export default function App() {
 			<Field label="启用" name="enable"><select className={inputClass} name="enable" defaultValue="true"><option value="true">是</option><option value="false">否</option></select></Field>
 			<Field label="端口" name="port" type="number" defaultValue="7199" hint="默认 7199。" />
 			<Field label="Token" name="token" hint="留空不改动；Token 不会在状态中显示。" />
-			<button className="primary-button self-end" type="submit" disabled={!liveStatus?.verified}>保存连接</button>
+			<ActionField><button className="primary-button min-h-9" type="submit" disabled={!liveStatus?.verified || !liveStatus?.managed}>保存连接</button></ActionField>
 		  </form>}
 
 		  <section className="grid gap-3 rounded-panel border border-[var(--theme-border-default)] bg-[var(--theme-surface-panel)] p-3">
@@ -552,15 +632,15 @@ export default function App() {
 				<label className="grid gap-1 text-xs font-semibold text-[var(--theme-text-secondary)]">OneBot Token
 					<input className={inputClass} type="password" value={syncToken} onChange={event => setSyncToken(event.target.value)} placeholder="输入当前内核的 Token" />
 				</label>
-				<ActionButton label="同步连接" running={state === 'running'} disabled={!syncToken.trim()} onClick={() => confirm('同步 OneBot 配置', '将写入目标机器人的 OneBot URL、Token 并切换登录连接；不会重启机器人。', async () => {
+				<ActionField><ActionButton label="同步连接" running={state === 'running'} disabled={!syncToken.trim() || !selectedOneBotReady} onClick={() => confirm('同步 OneBot 配置', '将写入目标机器人的 OneBot URL、Token 并切换登录连接；不会重启机器人。', async () => {
 					if (!robotRoot) { setResult({ output: '', error: '请选择目标机器人。' }); setState('failed'); return }
 					if (!syncToken.trim()) { setResult({ output: '', error: '必须显式输入非空 OneBot Token。' }); setState('failed'); return }
-					const url = liveStatus?.oneBotUrl || (engine === 'napcat' ? 'ws://127.0.0.1:3001' : 'ws://127.0.0.1:7199')
+					const url = selectedOneBotURL || (engine === 'napcat' ? 'ws://127.0.0.1:3001' : 'ws://127.0.0.1:7199')
 					try {
 						await syncRobotOneBot(robotRoot, url, syncToken)
 						setResult({ output: '✓ OneBot 配置已同步到目标机器人。请按需重启机器人使连接生效。' }); setState('done')
 					} catch (reason) { setResult({ output: '', error: reason instanceof Error ? reason.message : String(reason) }); setState('failed') }
-				})} />
+				})} /></ActionField>
 			</div>
 		  </section>
         </div>

@@ -2,6 +2,7 @@ SHELL := /bin/bash
 
 BINARIES := \
 	dist/alemonx-qq-linux-amd64 \
+	dist/alemonx-qq-linux-arm64 \
 	dist/alemonx-qq-windows-amd64.exe \
 	dist/alemonx-qq-darwin-arm64 \
 	dist/alemonx-qq-darwin-amd64
@@ -32,6 +33,9 @@ build: $(BINARIES)
 dist/alemonx-qq-linux-amd64:
 	GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o $@ ./runner
 
+dist/alemonx-qq-linux-arm64:
+	GOOS=linux GOARCH=arm64 go build -trimpath -ldflags "-s -w" -o $@ ./runner
+
 dist/alemonx-qq-windows-amd64.exe:
 	GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o $@ ./runner
 
@@ -45,7 +49,7 @@ dist/alemonx-qq-darwin-amd64:
 # (alx.json + dist/ + web/), matching the CI release artifact layout.
 dist: build web
 	mkdir -p release
-	for target in linux-amd64 windows-amd64 darwin-arm64 darwin-amd64; do \
+	for target in linux-amd64 linux-arm64 windows-amd64 darwin-arm64 darwin-amd64; do \
 		case "$$target" in \
 			windows-amd64) binary="dist/alemonx-qq-windows-amd64.exe" ;; \
 			*) binary="dist/alemonx-qq-$$target" ;; \
