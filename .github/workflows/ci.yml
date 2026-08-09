@@ -27,13 +27,16 @@ jobs:
           GOOS=darwin GOARCH=arm64 go build -trimpath -o /tmp/alemonx-qq-darwin ./runner
       - name: Validate alx.json
         run: python3 scripts/validate-alx.py alx.json
+      - name: Set manifest version from tag
+        run: python3 scripts/set-version.py "$GITHUB_REF_NAME"
+      - name: Validate release version
+        run: test "$(python3 -c 'import json; print(json.load(open("alx.json"))["version"])')" = "${GITHUB_REF_NAME#v}"
       - uses: actions/setup-node@v4
         with:
           node-version: 22
       - run: corepack enable
       - run: yarn install --non-interactive && yarn build
         working-directory: frontend
-
   web:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: verify
@@ -74,6 +77,8 @@ jobs:
         with:
           name: web-dist
           path: web
+      - name: Set manifest version from tag
+        run: python3 scripts/set-version.py "$GITHUB_REF_NAME"
       - name: Build plugin bundle
         run: |
           mkdir -p "bundle/alemonx-qq/dist" release
