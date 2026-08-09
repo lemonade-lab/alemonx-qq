@@ -21,6 +21,12 @@ validate:
 web:
 	cd frontend && yarn install --non-interactive && yarn build
 
+dev-fe:
+	cd frontend && yarn dev
+
+build-fe:
+	cd frontend && yarn build
+
 build: $(BINARIES)
 
 dist/alemonx-qq-linux-amd64:
@@ -45,6 +51,7 @@ dist: build web
 			*) binary="dist/alemonx-qq-$$target" ;; \
 		esac; \
 		stage="release/alemonx-qq-$$target/alemonx-qq"; \
+		rm -f "release/alemonx-qq-$$target.zip"; \
 		mkdir -p "$$stage/dist"; \
 		cp alx.json "$$stage/alx.json"; \
 		cp -r web "$$stage/web"; \

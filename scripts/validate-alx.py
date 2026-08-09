@@ -85,6 +85,30 @@ def main(path):
         if ".." in root.split("/"):
             errors.append("web.root must not contain ..")
 
+    services = manifest.get("services", [])
+    if not isinstance(services, list):
+        errors.append("services must be an array")
+    else:
+        service_ids = set()
+        for service in services:
+            if not isinstance(service, dict):
+                errors.append("service must be an object")
+                continue
+            service_id = service.get("id", "")
+            if not ID_RE.match(service_id) or service_id in service_ids:
+                errors.append("service id must be unique and valid")
+            service_ids.add(service_id)
+            if not isinstance(service.get("name"), str) or not service["name"].strip():
+                errors.append(f"service {service_id!r} name is required")
+            if service.get("host") not in {"127.0.0.1", "localhost"}:
+                errors.append(f"service {service_id!r} host must be loopback")
+            if not isinstance(service.get("port"), int) or not 1 <= service["port"] <= 65535:
+                errors.append(f"service {service_id!r} port must be valid")
+            for key in ("basePath", "healthPath"):
+                value = service.get(key, "/")
+                if not isinstance(value, str) or not value.startswith("/") or ".." in value or "\\" in value:
+                    errors.append(f"service {service_id!r} {key} must be an absolute safe path")
+
     return report(errors)
 
 

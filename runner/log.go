@@ -11,6 +11,10 @@ func tailLog(lines int) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	return tailLogAt(path, lines)
+}
+
+func tailLogAt(path string, lines int) (string, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {

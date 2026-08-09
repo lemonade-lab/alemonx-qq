@@ -52,8 +52,8 @@ func findQQConfig() (qqConfig, error) {
 // onebotConfig is the generic shape we read/write.
 type onebotConfig struct {
 	Network struct {
-		HTTPServers        []map[string]any `json:"httpServers"`
-		WebsocketServers   []map[string]any `json:"websocketServers"`
+		HTTPServers      []map[string]any `json:"httpServers"`
+		WebsocketServers []map[string]any `json:"websocketServers"`
 	} `json:"network"`
 }
 

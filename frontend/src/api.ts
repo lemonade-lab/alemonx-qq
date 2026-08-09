@@ -71,19 +71,60 @@ export async function runActionAndPoll(
 }
 
 export type StatusPayload = {
+	engine: 'napcat' | 'luckylillia'
   installed: boolean
+	installHealthy?: boolean
   running: boolean
   portReachable: boolean
+	webUiReady?: boolean
+	oneBotReady?: boolean
+	loginPending?: boolean
   watchdog: boolean
   version?: string
+	pid?: number
+	webUiUrl?: string
+	oneBotUrl?: string
+	qrCodeAvailable?: boolean
+	qrCodeUpdatedAt?: string
+	logPath?: string
+	diagnosticHint?: string
+	supported?: boolean
+	verified?: boolean
+	state?: 'not-installed' | 'installing' | 'starting' | 'running' | 'login-pending' | 'stopped' | 'failed' | 'unsupported'
+	updatedAt?: string
   error?: string
 }
 
+export type RobotProject = { root: string; name: string }
+export type LocalService = { pluginId: string; id: string; name: string; reachable: boolean; proxyUrl: string; embed: boolean }
+
+export function napcatQRCodeURL(updatedAt?: string): string {
+	return `/api/v1/setup/plugins/${PLUGIN_ID}/qrcode?updatedAt=${encodeURIComponent(updatedAt || '')}`
+}
+
+export async function fetchLocalServices(): Promise<LocalService[]> {
+	const payload = await json<{ items: LocalService[] }>(await fetch(`/api/v1/services?plugin=${PLUGIN_ID}`))
+	return payload.items
+}
+
 // fetchStatus runs the structured `status` action and parses its JSON output.
-export async function fetchStatus(): Promise<StatusPayload> {
-  const result = await runActionAndPoll('status', {})
+export async function fetchStatus(engine: 'napcat' | 'luckylillia' = 'napcat'): Promise<StatusPayload> {
+	const result = await runActionAndPoll(engine === 'napcat' ? 'napcat-status' : 'luckylillia-status', {})
   if (result.error) {
     throw new Error(result.error)
   }
-  return JSON.parse(result.output) as StatusPayload
+	return JSON.parse(result.output) as StatusPayload
+}
+
+export async function fetchRobotProjects(refresh = false): Promise<RobotProject[]> {
+	const payload = await json<{ items: RobotProject[] }>(await fetch(`/api/v1/robot/projects${refresh ? '?refresh=true' : ''}`))
+	return payload.items
+}
+
+export async function syncRobotOneBot(root: string, url: string, token: string): Promise<void> {
+	if (!token.trim()) throw new Error('必须显式输入非空 OneBot Token，空 Token 不会覆盖机器人配置。')
+	await json(await fetch('/api/v1/robot/onebot-sync', {
+		method: 'POST', headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ root, url, token })
+	}))
 }

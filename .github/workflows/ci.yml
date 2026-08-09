@@ -3,6 +3,18 @@ name: CI
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      luckylillia_e2e:
+        description: 'Run the real LuckyLillia validation on the dedicated Linux ARM64 host'
+        required: false
+        type: boolean
+        default: false
+      napcat_runtime_check:
+        description: 'Validate a running NapCat instance on the dedicated host without changing its QQ session'
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -10,6 +22,8 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    outputs:
+      lucky_evidence: ${{ steps.lucky-evidence.outputs.value }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -31,6 +45,17 @@ jobs:
         run: python3 scripts/set-version.py "$GITHUB_REF_NAME"
       - name: Validate release version
         run: test "$(python3 -c 'import json; print(json.load(open("alx.json"))["version"])')" = "${GITHUB_REF_NAME#v}"
+      - name: Validate LuckyLillia runtime evidence
+        id: lucky-evidence
+        run: |
+          python3 scripts/validate-runtime-evidence.py
+          if [ -n "$LUCKYLILLIA_VALIDATION_EVIDENCE" ]; then
+            printf 'value=sha256:%s\n' "$(printf '%s' "$LUCKYLILLIA_VALIDATION_EVIDENCE" | sha256sum | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+          else
+            echo 'value=' >> "$GITHUB_OUTPUT"
+          fi
+        env:
+          LUCKYLILLIA_VALIDATION_EVIDENCE: ${{ vars.LUCKYLILLIA_VALIDATION_EVIDENCE }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -85,7 +110,7 @@ jobs:
           cp alx.json "bundle/alemonx-qq/alx.json"
           cp -r web "bundle/alemonx-qq/web"
           CGO_ENABLED=0 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} \
-            go build -trimpath -ldflags "-s -w" -o "bundle/alemonx-qq/dist/${{ matrix.binary }}" ./runner
+            go build -trimpath -ldflags "-s -w -X main.luckyReleaseValidationEvidence=${{ needs.verify.outputs.lucky_evidence }}" -o "bundle/alemonx-qq/dist/${{ matrix.binary }}" ./runner
           (cd bundle && zip -r "../release/${{ matrix.bundle }}" alemonx-qq)
           (cd release && sha256sum "${{ matrix.bundle }}" > "${{ matrix.bundle }}.sha256")
       - uses: actions/upload-artifact@v4
@@ -112,3 +137,29 @@ jobs:
           gh release create "${GITHUB_REF_NAME}" release/*.zip release/SHA256SUMS --generate-notes
         env:
           GH_TOKEN: ${{ github.token }}
+
+  luckylillia-e2e:
+    if: github.event_name == 'workflow_dispatch' && inputs.luckylillia_e2e
+    runs-on: [self-hosted, linux, arm64, luckylillia-e2e]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify official package and record runtime evidence
+        run: scripts/verify-luckylillia-e2e.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: luckylillia-linux-arm64-validation
+          path: artifacts/luckylillia-validation.json
+
+  napcat-runtime-check:
+    if: github.event_name == 'workflow_dispatch' && inputs.napcat_runtime_check
+    runs-on: [self-hosted, napcat-e2e]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate installed NapCat runtime
+        run: scripts/verify-napcat-runtime.sh
+        env:
+          ALX_QQ_RUNNER: ${{ vars.NAPCAT_VALIDATION_RUNNER }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: napcat-runtime-validation
+          path: artifacts/napcat-runtime-validation.json

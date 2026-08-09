@@ -12,10 +12,10 @@ import (
 // read-only (for example when installed next to the alx executable).
 
 type State struct {
-	Version      string `json:"version,omitempty"`
-	InstallDir   string `json:"installDir,omitempty"`
-	PID          int    `json:"pid,omitempty"`
-	WatchdogPID  int    `json:"watchdogPid,omitempty"`
+	Version     string `json:"version,omitempty"`
+	InstallDir  string `json:"installDir,omitempty"`
+	PID         int    `json:"pid,omitempty"`
+	WatchdogPID int    `json:"watchdogPid,omitempty"`
 }
 
 // userConfigDir is a seam for tests; production code uses os.UserConfigDir.

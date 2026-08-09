@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -13,6 +14,35 @@ func TestCollectStatusNotInstalled(t *testing.T) {
 	}
 	if payload.Error == "" {
 		t.Fatal("uninstalled must carry an error reason")
+	}
+}
+
+func TestNapCatQRCodeActionReadsOnlyKnownCacheFile(t *testing.T) {
+	original := userConfigDir
+	dir := t.TempDir()
+	userConfigDir = func() (string, error) { return dir, nil }
+	t.Cleanup(func() { userConfigDir = original })
+	install := filepath.Join(dir, "napcat-install")
+	if err := os.MkdirAll(filepath.Join(install, "cache"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// PNG signature plus a minimal payload is sufficient for the guarded reader.
+	if err := os.WriteFile(filepath.Join(install, "cache", "qrcode.png"), append([]byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'}, []byte("qr")...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := saveState(State{InstallDir: install}); err != nil {
+		t.Fatal(err)
+	}
+	output, err := napcatQRCodeAction()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload napcatQRCode
+	if err := json.Unmarshal([]byte(output), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if !payload.Available || payload.PNG == "" || payload.UpdatedAt == "" {
+		t.Fatalf("unexpected QR payload: %+v", payload)
 	}
 }
 

@@ -21,8 +21,9 @@ const (
 )
 
 type releaseAsset struct {
-	Name string `json:"name"`
-	URL  string `json:"browser_download_url"`
+	Name   string `json:"name"`
+	URL    string `json:"browser_download_url"`
+	Digest string `json:"digest,omitempty"`
 }
 
 type githubRelease struct {

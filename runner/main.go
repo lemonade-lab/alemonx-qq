@@ -52,6 +52,12 @@ func run(action string, params map[string]string) (string, error) {
 	switch action {
 	case "status":
 		return statusAction()
+	case "napcat-status":
+		return statusAction()
+	case "napcat-qrcode":
+		return napcatQRCodeAction()
+	case "luckylillia-status":
+		return luckyStatus()
 	case "install":
 		return installAction()
 	case "uninstall":
@@ -78,6 +84,28 @@ func run(action string, params map[string]string) (string, error) {
 		return checkUpdate()
 	case "update":
 		return update()
+	case "luckylillia-install":
+		return luckyInstall(false)
+	case "luckylillia-reinstall":
+		return luckyInstall(true)
+	case "luckylillia-start":
+		return luckyStart()
+	case "luckylillia-stop":
+		return luckyStop()
+	case "luckylillia-restart":
+		return luckyRestart()
+	case "luckylillia-uninstall":
+		return luckyUninstall()
+	case "luckylillia-update-check":
+		return luckyUpdateCheck()
+	case "luckylillia-update":
+		return luckyInstall(true)
+	case "luckylillia-log":
+		return luckyLog(params)
+	case "luckylillia-onebot-config":
+		return luckyOneBotConfig()
+	case "luckylillia-onebot-set":
+		return luckySetOneBotConfig(params)
 	case "watchdog-on":
 		return watchdogOnAction()
 	case "watchdog-off":

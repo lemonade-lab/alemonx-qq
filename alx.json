@@ -24,6 +24,30 @@
   "web": {
     "root": "web"
   },
+  "services": [
+    {
+      "id": "napcat-webui",
+      "name": "NapCat WebUI",
+      "host": "127.0.0.1",
+      "port": 6099,
+      "basePath": "/webui",
+      "healthPath": "/",
+      "embed": true,
+      "rewriteHtml": true,
+      "sse": true
+    },
+    {
+      "id": "luckylillia-webui",
+      "name": "LuckyLillia WebUI",
+      "host": "127.0.0.1",
+      "port": 3080,
+      "basePath": "/",
+      "healthPath": "/",
+      "embed": true,
+      "rewriteHtml": true,
+      "sse": true
+    }
+  ],
   "navigation": {
     "label": "QQ 机器人",
     "icon": "qq",
