@@ -13,7 +13,8 @@ def main() -> int:
         return 2
     tag = sys.argv[1].strip()
     version = tag[1:] if tag.startswith("v") else tag
-    if not re.fullmatch(r"0|[1-9]\d*(?:\.\d+){0,2}(?:[-+][0-9A-Za-z.-]+)?", version):
+    # Accept SemVer-style release versions, including valid 0.x.y releases.
+    if not re.fullmatch(r"(?:0|[1-9]\d*)(?:\.(?:0|[1-9]\d*)){1,2}(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?", version):
         print(f"invalid release tag: {tag}", file=sys.stderr)
         return 1
     path = Path(__file__).resolve().parent.parent / "alx.json"
