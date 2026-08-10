@@ -115,3 +115,19 @@ func TestNapCatStatusKeepsOneBotAccountsSeparate(t *testing.T) {
 		t.Fatalf("accounts=%+v selected=%q url=%q", payload.Accounts, payload.SelectedAccount, payload.OneBotURL)
 	}
 }
+
+func TestNapcatLinuxDependencyPreflight(t *testing.T) {
+	lookup := func(name string) (string, error) {
+		if name == "apt-get" || name == "xvfb-run" {
+			return "/usr/bin/" + name, nil
+		}
+		return "", os.ErrNotExist
+	}
+	status := napcatLinuxDependenciesFor("linux", lookup, func(name string) bool { return name == "libnss3" })
+	if status == nil || !status.Supported || status.Ready || len(status.Missing) != 1 || status.Missing[0] != "libgbm1" {
+		t.Fatalf("dependency preflight = %#v", status)
+	}
+	if got := napcatLinuxDependenciesFor("darwin", lookup, func(string) bool { return true }); got != nil {
+		t.Fatalf("non-Linux dependencies = %#v, want nil", got)
+	}
+}

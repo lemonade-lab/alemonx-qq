@@ -326,8 +326,31 @@ func linuxInstallerURL(commit string) string {
 	return "https://raw.githubusercontent.com/NapNeko/NapCat-Installer/" + commit + "/script/install.sh"
 }
 
-func linuxInstallCommand(commit string) string {
-	return "curl -fsSL " + linuxInstallerURL(commit) + " -o napcat-install.sh && sha256sum napcat-install.sh && bash napcat-install.sh --docker n --cli n --proxy 0"
+// rejectPrivilegedInstaller is deliberately conservative. A setup-plugin
+// runner has no controlling terminal and must never forward, read or prompt
+// for a sudo password. The reviewed Linux path is rootless: if the pinned
+// upstream script contains an attempt to invoke sudo, refuse it before any
+// existing managed installation is moved aside.
+func rejectPrivilegedInstaller(path string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		// Ignore whole-line comments, but otherwise treat every shell token
+		// named sudo as a privilege request, including $(sudo ...).
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		for _, token := range strings.Fields(line) {
+			token = strings.Trim(token, "`$(){}[];|&\\\"'")
+			if token == "sudo" {
+				return errors.New("已拒绝执行包含 sudo 的 NapCat 安装器：工作台不会读取、传递或交互式请求管理员密码。请先在终端完成系统依赖；Linux 自动安装将在经过真实 E2E 审核的完全 rootless 安装器可用后开放")
+			}
+		}
+	}
+	return nil
 }
 
 func installLinuxNapCat(evidence napcatEvidence) (napcatInstallation, error) {
@@ -355,6 +378,9 @@ func installLinuxNapCat(evidence napcatEvidence) (napcatInstallation, error) {
 	defer os.Remove(script)
 	if !strings.EqualFold(digest, evidence.InstallerSHA256) {
 		return napcatInstallation{}, errors.New("NapCat rootless 安装器 SHA-256 校验失败")
+	}
+	if err := rejectPrivilegedInstaller(script); err != nil {
+		return napcatInstallation{}, err
 	}
 	root, err := managedInstallDir()
 	if err != nil {

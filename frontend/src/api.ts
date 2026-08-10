@@ -12,6 +12,7 @@ type Task = {
 }
 
 export type ActionResult = { output: string; error?: string }
+export type HostPrivilegeStatus = { privilege: { enabled: boolean; mode: string; reason?: string; policyVersion: string } }
 
 async function json<T>(response: Response): Promise<T> {
   if (!response.ok) {
@@ -97,6 +98,20 @@ export async function runActionAndPoll(
   return pollTask(id, onUpdate)
 }
 
+// NapCat's only password-bearing operation belongs to the host, not the
+// plugin action forwarder. Keep the credential out of the generic API.
+export async function runNapcatDependenciesAndPoll(
+  sudoPassword: string,
+  onUpdate?: (task: Task) => void
+): Promise<ActionResult> {
+  const payload = await json<{ id: string }>(await fetch('/api/v1/system/privileged/napcat-dependencies', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'napcat-install-dependencies', confirm: true, sudoPassword })
+  }))
+  return pollTask(payload.id, onUpdate)
+}
+
 export type StatusPayload = {
 	engine: 'napcat' | 'luckylillia'
   installed: boolean
@@ -123,6 +138,14 @@ export type StatusPayload = {
 	installMode?: 'verified-release' | 'managed' | 'external'
 	managed?: boolean
 	managedActions?: boolean
+	linuxDependencies?: {
+		supported: boolean
+		ready: boolean
+		packageManager?: string
+		systemAccount?: string
+		missing?: string[]
+		hint?: string
+	}
 	releaseTag?: string
 	archiveSha256?: string
 	fingerprint?: string
@@ -144,6 +167,10 @@ export function napcatQRCodeURL(updatedAt?: string): string {
 export async function fetchLocalServices(): Promise<LocalService[]> {
 	const payload = await json<{ items: LocalService[] }>(await fetch(`/api/v1/services?plugin=${PLUGIN_ID}`))
 	return payload.items
+}
+
+export async function fetchHostPrivilegeStatus(): Promise<HostPrivilegeStatus> {
+	return json<HostPrivilegeStatus>(await fetch('/api/v1/system/privileged/status'))
 }
 
 // fetchStatus uses the workbench's read-only status endpoint. Unlike actions,

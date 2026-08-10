@@ -1,8 +1,8 @@
 {
   "id": "alemonx-qq",
-  "name": "QQ 机器人（NapCat）",
+  "name": "QQ",
   "version": "0.0.1",
-  "description": "安装、启动与管理 NapCat，让 QQ 机器人协议跑起来。",
+  "description": "管理 NapCat 与 LuckyLillia，连接到 AlemonJS OneBot。",
   "platforms": [
     "darwin",
     "linux",
@@ -50,7 +50,7 @@
     }
   ],
   "navigation": {
-    "label": "QQ 机器人",
+    "label": "QQ",
     "icon": "qq",
     "order": -90
   }

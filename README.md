@@ -1,4 +1,4 @@
-# QQ 机器人
+# QQ
 
 [![CI](https://github.com/lemonade-lab/alemonx-qq/actions/workflows/ci.yml/badge.svg)](https://github.com/lemonade-lab/alemonx-qq/actions/workflows/ci.yml)
 
@@ -19,7 +19,7 @@ NapCat 支持 Windows、Linux 和 macOS；LuckyLillia 自动安装仅支持 Linu
 
 ## 安装插件
 
-把 `alemonx-qq` 文件夹放进 ALemonX 的插件目录（同 ALemonX 其它插件），打开 ALemonX → 插件 → 点「QQ 机器人」。
+把 `alemonx-qq` 文件夹放进 ALemonX 的插件目录（同 ALemonX 其它插件），打开 ALemonX → 插件 → 点「QQ」。
 
 ## 第一次使用
 
