@@ -1,0 +1,121 @@
+//go:build linux
+
+package main
+
+import (
+	"errors"
+	"fmt"
+	"net"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"time"
+)
+
+// startNapCat manages the X display server and QQ directly, without a shell
+// wrapper or any package-provided script.
+func startNapCat(state State) (napcatProcess, error) {
+	qq, err := linuxQQBinary(state)
+	if err != nil {
+		return napcatProcess{}, err
+	}
+	if _, err := exec.LookPath("Xvfb"); err != nil {
+		return napcatProcess{}, errors.New("未找到 Xvfb；请在工作台点击“安装 NapCat”补齐 Linux 图形运行依赖")
+	}
+	logFile, err := logPath()
+	if err != nil {
+		return napcatProcess{}, err
+	}
+	if err := os.MkdirAll(filepath.Dir(logFile), 0o755); err != nil {
+		return napcatProcess{}, err
+	}
+	logHandle, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return napcatProcess{}, err
+	}
+	defer logHandle.Close()
+	display, err := availableXDisplay()
+	if err != nil {
+		return napcatProcess{}, err
+	}
+	xvfb := exec.Command("Xvfb", display, "-screen", "0", "1280x720x24", "-nolisten", "tcp", "-ac")
+	xvfb.Stdout, xvfb.Stderr, xvfb.Stdin = logHandle, logHandle, nil
+	detachProcess(xvfb)
+	if err := xvfb.Start(); err != nil {
+		return napcatProcess{}, fmt.Errorf("启动 Xvfb 失败：%w", err)
+	}
+	groupID := xvfb.Process.Pid
+	stopXvfb := func() { stopManagedProcess(groupID) }
+	if !waitXDisplay(display, 5*time.Second) {
+		stopXvfb()
+		return napcatProcess{}, errors.New("Xvfb 未能在 5 秒内就绪，请查看 NapCat 日志")
+	}
+	qqCommand := exec.Command(qq, "--no-sandbox")
+	qqCommand.Dir = filepath.Dir(qq)
+	qqCommand.Env = append(os.Environ(), "DISPLAY="+display)
+	qqCommand.Stdout, qqCommand.Stderr, qqCommand.Stdin = logHandle, logHandle, nil
+	joinProcessGroup(qqCommand, groupID)
+	if err := qqCommand.Start(); err != nil {
+		stopXvfb()
+		return napcatProcess{}, fmt.Errorf("启动 QQ/NapCat 失败：%w", err)
+	}
+	pid := qqCommand.Process.Pid
+	_ = xvfb.Process.Release()
+	_ = qqCommand.Process.Release()
+	return napcatProcess{PID: pid, ProcessGroupID: groupID}, nil
+}
+
+func linuxQQBinary(state State) (string, error) {
+	if state.InstallDir == "" {
+		return "", errors.New("未记录 NapCat Linux 安装目录")
+	}
+	qq := filepath.Join(state.InstallDir, "opt", "QQ", "qq")
+	info, err := os.Stat(qq)
+	if err != nil || info.IsDir() {
+		return "", errors.New("未找到受管 QQ 启动文件：" + qq)
+	}
+	return qq, nil
+}
+
+func availableXDisplay() (string, error) {
+	for number := 90; number < 190; number++ {
+		path := filepath.Join("/tmp/.X11-unix", "X"+strconv.Itoa(number))
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			return ":" + strconv.Itoa(number), nil
+		}
+	}
+	return "", errors.New("没有可用的本地 Xvfb 显示编号")
+}
+
+func waitXDisplay(display string, timeout time.Duration) bool {
+	path := filepath.Join("/tmp/.X11-unix", "X"+display[1:])
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		connection, err := net.DialTimeout("unix", path, 200*time.Millisecond)
+		if err == nil {
+			_ = connection.Close()
+			return true
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return false
+}
+
+func stopProcess(pid int) { stopManagedProcess(pid) }
+
+// isRunning deliberately checks QQ rather than the Xvfb helper: a crashed QQ
+// must be reported as stopped even when its display server still exists.
+func isRunning(state State) bool { return processAlive(state.PID) }
+
+func platformInstallDir() (string, error) { return managedInstallDir() }
+
+func macInstallGuide() (string, error) {
+	return "", fmt.Errorf("当前系统不支持 macOS 安装方式")
+}
+func macNapcatVersion() string { return "" }
+func macQQInstalled() bool     { return false }
+func macNapcatInjected() bool  { return false }
+func macInstallDir() (string, error) {
+	return "", fmt.Errorf("当前系统不支持 macOS 安装方式")
+}

@@ -35,11 +35,7 @@ func makeManagedNapcatForConfig(t *testing.T, napcat string) {
 		t.Fatal(err)
 	}
 	state := State{InstallDir: napcat, Managed: true, Platform: platform.Key, InstallMode: "managed", Fingerprint: fingerprint}
-	if platform.Key == "windows-amd64" {
-		state.ReleaseTag, state.Asset, state.ArchiveSHA256 = "v1.0.0", windowsAsset, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-	} else {
-		state.ReleaseTag, state.Asset, state.ArchiveSHA256 = "main", "NapCat-Installer/install.sh", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-	}
+	state.ReleaseTag, state.Asset, state.ArchiveSHA256 = "v1.0.0", windowsAsset, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	if err := saveState(state); err != nil {
 		t.Fatal(err)
 	}

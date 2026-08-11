@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // napcatReleaseValidationEvidence is optional release metadata. It may be
@@ -42,6 +43,11 @@ func napcatStateVerified(state State) bool {
 	}
 	if state.ReleaseTag == "" || state.Asset == "" || !validSHA(state.ArchiveSHA256) {
 		return false
+	}
+	if platform.Key == "linux-amd64" || platform.Key == "linux-arm64" {
+		if state.RuntimeAsset == "" || !validSHA(state.RuntimeArchiveSHA256) || !strings.Contains(state.Asset, "+"+state.RuntimeAsset) {
+			return false
+		}
 	}
 	fingerprint, err := napcatFingerprint(state.InstallDir)
 	return err == nil && fingerprint == state.Fingerprint

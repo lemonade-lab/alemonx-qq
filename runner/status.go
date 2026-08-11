@@ -17,39 +17,41 @@ import (
 // the web UI can poll and render it precisely. Other actions keep returning
 // plain ✓/!? text.
 type statusPayload struct {
-	Engine             string                 `json:"engine"`
-	Installed          bool                   `json:"installed"`
-	InstallHealthy     bool                   `json:"installHealthy"`
-	Running            bool                   `json:"running"`
-	PortReachable      bool                   `json:"portReachable"`
-	WebUIReady         bool                   `json:"webUiReady"`
-	OneBotReady        bool                   `json:"oneBotReady"`
-	LoginPending       bool                   `json:"loginPending"`
-	Watchdog           bool                   `json:"watchdog"`
-	Version            string                 `json:"version,omitempty"`
-	PID                int                    `json:"pid,omitempty"`
-	WebUIURL           string                 `json:"webUiUrl,omitempty"`
-	OneBotURL          string                 `json:"oneBotUrl,omitempty"`
-	QRCodeAvailable    bool                   `json:"qrCodeAvailable"`
-	QRCodeUpdatedAt    string                 `json:"qrCodeUpdatedAt,omitempty"`
-	DiagnosticHint     string                 `json:"diagnosticHint,omitempty"`
-	Supported          bool                   `json:"supported"`
-	Managed            bool                   `json:"managed"`
-	Platform           string                 `json:"platform,omitempty"`
-	InstallMode        string                 `json:"installMode,omitempty"`
-	ReleaseTag         string                 `json:"releaseTag,omitempty"`
-	Asset              string                 `json:"asset,omitempty"`
-	ArchiveSHA256      string                 `json:"archiveSha256,omitempty"`
-	Fingerprint        string                 `json:"fingerprint,omitempty"`
-	ValidatedAt        string                 `json:"validatedAt,omitempty"`
-	Verified           bool                   `json:"verified"`
-	VerificationReason string                 `json:"verificationReason,omitempty"`
-	ManagedActions     bool                   `json:"managedActions"`
-	LinuxDependencies  *linuxDependencyStatus `json:"linuxDependencies,omitempty"`
-	Accounts           []napcatAccount        `json:"accounts,omitempty"`
-	SelectedAccount    string                 `json:"selectedAccount,omitempty"`
-	UpdatedAt          string                 `json:"updatedAt"`
-	Error              string                 `json:"error,omitempty"`
+	Engine               string                 `json:"engine"`
+	Installed            bool                   `json:"installed"`
+	InstallHealthy       bool                   `json:"installHealthy"`
+	Running              bool                   `json:"running"`
+	PortReachable        bool                   `json:"portReachable"`
+	WebUIReady           bool                   `json:"webUiReady"`
+	OneBotReady          bool                   `json:"oneBotReady"`
+	LoginPending         bool                   `json:"loginPending"`
+	Watchdog             bool                   `json:"watchdog"`
+	Version              string                 `json:"version,omitempty"`
+	PID                  int                    `json:"pid,omitempty"`
+	WebUIURL             string                 `json:"webUiUrl,omitempty"`
+	OneBotURL            string                 `json:"oneBotUrl,omitempty"`
+	QRCodeAvailable      bool                   `json:"qrCodeAvailable"`
+	QRCodeUpdatedAt      string                 `json:"qrCodeUpdatedAt,omitempty"`
+	DiagnosticHint       string                 `json:"diagnosticHint,omitempty"`
+	Supported            bool                   `json:"supported"`
+	Managed              bool                   `json:"managed"`
+	Platform             string                 `json:"platform,omitempty"`
+	InstallMode          string                 `json:"installMode,omitempty"`
+	ReleaseTag           string                 `json:"releaseTag,omitempty"`
+	Asset                string                 `json:"asset,omitempty"`
+	ArchiveSHA256        string                 `json:"archiveSha256,omitempty"`
+	RuntimeAsset         string                 `json:"runtimeAsset,omitempty"`
+	RuntimeArchiveSHA256 string                 `json:"runtimeArchiveSha256,omitempty"`
+	Fingerprint          string                 `json:"fingerprint,omitempty"`
+	ValidatedAt          string                 `json:"validatedAt,omitempty"`
+	Verified             bool                   `json:"verified"`
+	VerificationReason   string                 `json:"verificationReason,omitempty"`
+	ManagedActions       bool                   `json:"managedActions"`
+	LinuxDependencies    *linuxDependencyStatus `json:"linuxDependencies,omitempty"`
+	Accounts             []napcatAccount        `json:"accounts,omitempty"`
+	SelectedAccount      string                 `json:"selectedAccount,omitempty"`
+	UpdatedAt            string                 `json:"updatedAt"`
+	Error                string                 `json:"error,omitempty"`
 }
 
 type napcatAccount struct {
@@ -73,7 +75,7 @@ func collectStatus(state State) statusPayload {
 	payload := statusPayload{
 		Engine: "napcat", Version: state.Version, PID: state.PID,
 		Managed: state.Managed, InstallMode: state.InstallMode, ReleaseTag: state.ReleaseTag,
-		Asset: state.Asset, ArchiveSHA256: state.ArchiveSHA256, Fingerprint: state.Fingerprint,
+		Asset: state.Asset, ArchiveSHA256: state.ArchiveSHA256, RuntimeAsset: state.RuntimeAsset, RuntimeArchiveSHA256: state.RuntimeArchiveSHA256, Fingerprint: state.Fingerprint,
 		ValidatedAt: state.ValidatedAt, UpdatedAt: time.Now().UTC().Format(time.RFC3339),
 	}
 	if platform != nil {
@@ -153,21 +155,28 @@ func napcatLinuxDependenciesFor(goos string, lookPath func(string) (string, erro
 	if goos != "linux" {
 		return nil
 	}
-	if _, err := lookPath("apt-get"); err != nil {
-		return &linuxDependencyStatus{Hint: "未检测到 APT；工作台的受控依赖安装目前仅支持 Debian/Ubuntu。"}
+	packageManager := ""
+	if _, err := lookPath("apt-get"); err == nil {
+		packageManager = "apt"
+	} else if _, err := lookPath("dnf"); err == nil {
+		packageManager = "dnf"
+	} else {
+		return &linuxDependencyStatus{Hint: "未检测到 APT 或 DNF；当前 Linux 发行版暂不能自动补齐 NapCat 依赖。"}
 	}
-	missing := make([]string, 0, 3)
-	if _, err := lookPath("xvfb-run"); err != nil {
+	missing := make([]string, 0, 8)
+	if _, err := lookPath("Xvfb"); err != nil {
 		missing = append(missing, "xvfb")
 	}
-	for _, packageName := range []string{"libnss3", "libgbm1"} {
-		if !installed(packageName) {
-			missing = append(missing, packageName)
+	if packageManager == "apt" {
+		for _, packageName := range []string{"libnss3", "libgbm1"} {
+			if !installed(packageName) {
+				missing = append(missing, packageName)
+			}
 		}
 	}
-	status := &linuxDependencyStatus{Supported: true, Ready: len(missing) == 0, PackageManager: "apt", SystemAccount: currentSystemAccount(), Missing: missing}
+	status := &linuxDependencyStatus{Supported: true, Ready: len(missing) == 0, PackageManager: packageManager, SystemAccount: currentSystemAccount(), Missing: missing}
 	if !status.Ready {
-		status.Hint = "安装 NapCat 前需要补齐 Linux 图形运行依赖。工作台会通过一次 sudo 授权安装固定的 APT 软件包。"
+		status.Hint = "安装 NapCat 前需要补齐 Linux 图形运行依赖。工作台会通过一次 sudo 授权安装固定的系统软件包，并自动继续安装。"
 	}
 	return status
 }
@@ -181,8 +190,25 @@ func currentSystemAccount() string {
 }
 
 func dpkgPackageInstalled(packageName string) bool {
-	output, err := exec.Command("dpkg-query", "-W", "-f=${db:Status-Status}", packageName).Output()
-	return err == nil && strings.TrimSpace(string(output)) == "installed"
+	data, err := os.ReadFile("/var/lib/dpkg/status")
+	if err != nil {
+		return false
+	}
+	for _, paragraph := range strings.Split(string(data), "\n\n") {
+		name, status := "", ""
+		for _, line := range strings.Split(paragraph, "\n") {
+			if value, ok := strings.CutPrefix(line, "Package: "); ok {
+				name = strings.TrimSpace(value)
+			}
+			if value, ok := strings.CutPrefix(line, "Status: "); ok {
+				status = strings.TrimSpace(value)
+			}
+		}
+		if name == packageName && status == "install ok installed" {
+			return true
+		}
+	}
+	return false
 }
 
 func napcatAccounts(state State) ([]napcatAccount, error) {

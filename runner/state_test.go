@@ -16,7 +16,7 @@ func TestStateRoundTrip(t *testing.T) {
 		t.Fatalf("expected empty state, got %+v", state)
 	}
 
-	saved := State{Version: "4.18.18", InstallDir: dir + "/napcat", PID: 1234}
+	saved := State{Version: "4.18.18", InstallDir: dir + "/napcat", PID: 1234, RuntimeAsset: "QQ_3.2.31_260710_amd64_01.deb", RuntimeArchiveSHA256: "02f677feb1ce01ed293a3c7761e5dd85bd79936f57dcaa4cdb53178ae30e3d6d"}
 	if err := saveState(saved); err != nil {
 		t.Fatalf("save failed: %v", err)
 	}
@@ -24,7 +24,7 @@ func TestStateRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reload failed: %v", err)
 	}
-	if reloaded.Version != saved.Version || reloaded.InstallDir != saved.InstallDir || reloaded.PID != saved.PID {
+	if reloaded.Version != saved.Version || reloaded.InstallDir != saved.InstallDir || reloaded.PID != saved.PID || reloaded.RuntimeAsset != saved.RuntimeAsset || reloaded.RuntimeArchiveSHA256 != saved.RuntimeArchiveSHA256 {
 		t.Fatalf("round-trip mismatch: got %+v want %+v", reloaded, saved)
 	}
 }

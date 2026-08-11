@@ -201,7 +201,7 @@ func installAction(confirmed bool) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	state = State{Version: installation.Version, InstallDir: installation.InstallDir, Managed: true, Platform: napcatPlatform().Key, InstallMode: "managed", ReleaseTag: installation.ReleaseTag, Asset: installation.Asset, ArchiveSHA256: installation.ArchiveSHA256, Fingerprint: installation.Fingerprint}
+	state = State{Version: installation.Version, InstallDir: installation.InstallDir, Managed: true, Platform: napcatPlatform().Key, InstallMode: "managed", ReleaseTag: installation.ReleaseTag, Asset: installation.Asset, ArchiveSHA256: installation.ArchiveSHA256, RuntimeAsset: installation.RuntimeAsset, RuntimeArchiveSHA256: installation.RuntimeArchiveSHA256, Fingerprint: installation.Fingerprint}
 	if err := saveState(state); err != nil {
 		_ = rollbackNapcatInstallation(installation)
 		return "", err
@@ -263,20 +263,20 @@ func startAction(confirmed bool) (string, error) {
 		return "? NapCat 已经在运行中。", nil
 	}
 	reportNapcatProgress("start", 85, "启动 NapCat 受管进程组")
-	pid, err := startNapCat(state)
+	process, err := startNapCat(state)
 	if err != nil {
 		return "", err
 	}
-	state.PID, state.ProcessGroupID = pid, pid
+	state.PID, state.ProcessGroupID = process.PID, process.ProcessGroupID
 	if err := saveState(state); err != nil {
-		stopProcess(pid)
+		stopProcess(process.ProcessGroupID)
 		return "", err
 	}
 	timeWait(1500)
 	if url := webUIBridge(); url != "" {
-		return fmt.Sprintf("✓ NapCat 已启动（PID %d）。\n✓ 管理面板可访问：%s\n✓ 用手机 QQ 扫码登录后即可使用。", pid, url), nil
+		return fmt.Sprintf("✓ NapCat 已启动（PID %d）。\n✓ 管理面板可访问：%s\n✓ 用手机 QQ 扫码登录后即可使用。", process.PID, url), nil
 	}
-	return fmt.Sprintf("✓ NapCat 已启动（PID %d）。\n? 管理面板（6099）尚未就绪，请稍等片刻后查看状态。", pid), nil
+	return fmt.Sprintf("✓ NapCat 已启动（PID %d）。\n? 管理面板（6099）尚未就绪，请稍等片刻后查看状态。", process.PID), nil
 }
 
 func stopAction(confirmed bool) (string, error) {
@@ -321,17 +321,17 @@ func restartAction(confirmed bool) (string, error) {
 			return "", errors.New("NapCat 进程组未能停止，已取消重启")
 		}
 	}
-	pid, err := startNapCat(state)
+	process, err := startNapCat(state)
 	if err != nil {
 		return "", err
 	}
-	state.PID, state.ProcessGroupID = pid, pid
+	state.PID, state.ProcessGroupID = process.PID, process.ProcessGroupID
 	if err := saveState(state); err != nil {
-		stopProcess(pid)
+		stopProcess(process.ProcessGroupID)
 		return "", err
 	}
 	timeWait(1500)
-	return fmt.Sprintf("✓ NapCat 已重启（PID %d）。\n%s", pid, statusLine(state)), nil
+	return fmt.Sprintf("✓ NapCat 已重启（PID %d）。\n%s", process.PID, statusLine(state)), nil
 }
 
 func updateNapcat(confirmed bool) (string, error) {
@@ -355,36 +355,36 @@ func updateNapcat(confirmed bool) (string, error) {
 	installation, installErr := installNapCat()
 	if installErr != nil {
 		if wasRunning {
-			if pid, startErr := startNapCat(state); startErr == nil {
-				state.PID, state.ProcessGroupID = pid, pid
+			if process, startErr := startNapCat(state); startErr == nil {
+				state.PID, state.ProcessGroupID = process.PID, process.ProcessGroupID
 				_ = saveState(state)
 			}
 		}
 		return "", installErr
 	}
-	updated := State{Version: installation.Version, InstallDir: installation.InstallDir, Managed: true, Platform: napcatPlatform().Key, InstallMode: "managed", ReleaseTag: installation.ReleaseTag, Asset: installation.Asset, ArchiveSHA256: installation.ArchiveSHA256, Fingerprint: installation.Fingerprint, WatchdogPID: state.WatchdogPID}
+	updated := State{Version: installation.Version, InstallDir: installation.InstallDir, Managed: true, Platform: napcatPlatform().Key, InstallMode: "managed", ReleaseTag: installation.ReleaseTag, Asset: installation.Asset, ArchiveSHA256: installation.ArchiveSHA256, RuntimeAsset: installation.RuntimeAsset, RuntimeArchiveSHA256: installation.RuntimeArchiveSHA256, Fingerprint: installation.Fingerprint, WatchdogPID: state.WatchdogPID}
 	if wasRunning {
 		reportNapcatProgress("restart", 90, "恢复更新后的 NapCat 运行状态")
-		pid, startErr := startNapCat(updated)
+		process, startErr := startNapCat(updated)
 		if startErr != nil {
 			if rollbackErr := rollbackNapcatInstallation(installation); rollbackErr != nil {
 				return "", fmt.Errorf("更新后的 NapCat 无法启动（%v），且回滚失败：%w", startErr, rollbackErr)
 			}
-			if pid, oldStartErr := startNapCat(state); oldStartErr == nil {
-				state.PID, state.ProcessGroupID = pid, pid
+			if process, oldStartErr := startNapCat(state); oldStartErr == nil {
+				state.PID, state.ProcessGroupID = process.PID, process.ProcessGroupID
 				_ = saveState(state)
 			}
 			return "", fmt.Errorf("更新后的 NapCat 无法启动，已恢复旧版本：%w", startErr)
 		}
-		updated.PID, updated.ProcessGroupID = pid, pid
+		updated.PID, updated.ProcessGroupID = process.PID, process.ProcessGroupID
 	}
 	if err := saveState(updated); err != nil {
 		if wasRunning {
 			stopProcess(napcatProcessGroup(updated))
 		}
 		if rollbackErr := rollbackNapcatInstallation(installation); rollbackErr == nil && wasRunning {
-			if pid, oldStartErr := startNapCat(state); oldStartErr == nil {
-				state.PID, state.ProcessGroupID = pid, pid
+			if process, oldStartErr := startNapCat(state); oldStartErr == nil {
+				state.PID, state.ProcessGroupID = process.PID, process.ProcessGroupID
 				_ = saveState(state)
 			}
 		}

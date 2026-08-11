@@ -1,5 +1,3 @@
-SHELL := /bin/bash
-
 BINARIES := \
 	dist/alemonx-qq-linux-amd64 \
 	dist/alemonx-qq-linux-arm64 \
@@ -7,18 +5,18 @@ BINARIES := \
 	dist/alemonx-qq-darwin-arm64 \
 	dist/alemonx-qq-darwin-amd64
 
-RUNNER_SOURCES := $(shell find runner -type f -name '*.go' -print) go.mod go.sum
+RUNNER_SOURCES := $(shell find runner internal -type f -name '*.go' -print) go.mod go.sum
 
 .PHONY: test vet validate web build dist check
 
 test:
-	go test ./runner/...
+	go test ./...
 
 vet:
-	go vet ./runner/...
+	go vet ./...
 
 validate:
-	python3 scripts/validate-alx.py alx.json
+	go run ./cmd/alx-ci validate-manifest alx.json
 
 # Build the plugin web UI (React + Tailwind, alx design tokens) into ../web.
 web:

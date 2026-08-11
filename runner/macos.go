@@ -6,10 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
-	"time"
 )
 
 // macOS runs NapCat by injecting it into the installed QQ app (Electron), so
@@ -106,46 +104,24 @@ func macInstallGuide() (string, error) {
 	return "", fmt.Errorf("%s\n（完成上述步骤后重试本操作）", hint)
 }
 
-// macStartNapCat opens QQ; NapCat (injected) starts along with it.
+// macStartNapCat is intentionally unavailable. macOS NapCat is only an
+// external association: the workbench never drives QQ through AppleScript.
 func macStartNapCat() error {
-	output, err := exec.Command("open", "-a", "QQ").CombinedOutput()
-	if err != nil {
-		text := strings.TrimSpace(string(output))
-		if text == "" {
-			text = err.Error()
-		}
-		return fmt.Errorf("启动 QQ 失败：%s", text)
-	}
-	// Wait briefly for NapCat's WebUI (6099) to come up.
-	for i := 0; i < 20; i++ {
-		if webUIBridge() != "" {
-			return nil
-		}
-		time.Sleep(500 * time.Millisecond)
-	}
-	return nil
+	return fmt.Errorf("macOS NapCat 是外部关联实例，请从 QQ 自身启动；工作台不会执行外部脚本或自动化 QQ")
 }
 
-// macStopNapCat quits QQ via AppleScript.
+// macStopNapCat never sends AppleScript to QQ for the same reason.
 func macStopNapCat() error {
-	output, err := exec.Command("osascript", "-e", `tell application "QQ" to quit`).CombinedOutput()
-	if err != nil {
-		text := strings.TrimSpace(string(output))
-		if text == "" {
-			text = err.Error()
-		}
-		return fmt.Errorf("退出 QQ 失败：%s", text)
-	}
-	return nil
+	return fmt.Errorf("macOS NapCat 是外部关联实例，请从 QQ 自身停止；工作台不会执行外部脚本或自动化 QQ")
 }
 
 // startNapCat opens QQ on macOS (NapCat runs inside it). No PID is tracked
 // because QQ is a foreground app, not a detached process.
-func startNapCat(state State) (int, error) {
+func startNapCat(state State) (napcatProcess, error) {
 	if err := macStartNapCat(); err != nil {
-		return 0, err
+		return napcatProcess{}, err
 	}
-	return 0, nil
+	return napcatProcess{}, nil
 }
 
 // stopProcess quits QQ on macOS.

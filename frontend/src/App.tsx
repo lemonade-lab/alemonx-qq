@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { fetchLocalServices, fetchRobotProjects, fetchStatus, napcatQRCodeURL, preflightPrivilege, runActionAndPoll, runNapcatDependenciesAndPoll, syncRobotOneBot, type ActionResult, type LocalService, type PrivilegePreflight, type RobotProject, type StatusPayload } from './api'
+import { chooseSystemPath, fetchLocalServices, fetchRobotProjects, fetchStatus, napcatQRCodeURL, preflightPrivilege, runActionAndPoll, runNapcatDependenciesAndPoll, syncRobotOneBot, type ActionResult, type LocalService, type PrivilegePreflight, type RobotProject, type StatusPayload } from './api'
 import { splitStatusLines, type StatusLine } from './status'
 
 type View = 'manage' | 'config' | 'webui'
@@ -125,7 +125,7 @@ function Field({
 
 function ActionField({ label = '操作', children }: { label?: string; children: ReactNode }) {
 	return (
-		<label className="grid min-w-[180px] flex-1 gap-1 text-xs font-semibold text-[var(--theme-text-secondary)] [&_button]:w-full">
+		<label className="grid min-w-[180px] flex-1 gap-1 text-xs font-semibold text-[var(--theme-text-secondary)] [&>button]:w-full">
 			<span>{label}</span>
 			{children}
 		</label>
@@ -179,20 +179,14 @@ function SudoPasswordModal({
 	serverError?: string
 }) {
   const [password, setPassword] = useState('')
-  const [confirmation, setConfirmation] = useState('')
   const [error, setError] = useState('')
   const submit = () => {
     if (!password) {
       setError('请输入当前系统账户的 sudo 密码。')
       return
     }
-    if (password !== confirmation) {
-      setError('两次输入的密码不一致。')
-      return
-    }
     const value = password
     setPassword('')
-    setConfirmation('')
     onSubmit(value)
   }
   const unavailable = !preflight?.available || !preflight.intentId || preflight.authorization !== 'password'
@@ -208,13 +202,10 @@ function SudoPasswordModal({
           <label className="grid gap-1 text-xs font-semibold text-[var(--theme-text-secondary)]">sudo 密码
             <input autoFocus className={inputClass} type="password" autoComplete="current-password" value={password} onChange={event => { setPassword(event.target.value); setError('') }} />
           </label>
-          <label className="grid gap-1 text-xs font-semibold text-[var(--theme-text-secondary)]">确认 sudo 密码
-            <input className={inputClass} type="password" autoComplete="current-password" value={confirmation} onChange={event => { setConfirmation(event.target.value); setError('') }} onKeyDown={event => { if (event.key === 'Enter') submit() }} />
-          </label>
         </>}
         {(error || serverError) && <p className="m-0 rounded-md bg-[var(--theme-danger-soft)] px-2 py-1.5 text-xs text-[var(--theme-danger-text)]">{error || serverError}</p>}
         <div className="flex justify-end gap-2">
-          <button className="secondary-button" onClick={() => { setPassword(''); setConfirmation(''); onCancel() }}>取消</button>
+          <button className="secondary-button" onClick={() => { setPassword(''); onCancel() }}>取消</button>
           {!unavailable && <button className="danger-button" onClick={submit}>确认授权</button>}
         </div>
       </div>
@@ -321,11 +312,26 @@ export default function App() {
 	const luckyInstalled = liveStatus?.installed === true
 	const napcatManagedActions = engine === 'napcat' && liveStatus?.managedActions === true
 	const [napcatQQ, setNapcatQQ] = useState('')
+	const [napcatInstallDir, setNapcatInstallDir] = useState('')
+	const [luckyInstallDir, setLuckyInstallDir] = useState('')
+	const [systemPickerBusy, setSystemPickerBusy] = useState<string | null>(null)
 	const selectedNapcatAccount = liveStatus?.accounts?.find(account => account.qq === (napcatQQ || liveStatus.selectedAccount))
 	const selectedOneBotReady = engine === 'napcat' ? Boolean(selectedNapcatAccount?.oneBotReady) : Boolean(liveStatus?.oneBotReady)
 	const selectedOneBotURL = engine === 'napcat'
 		? selectedNapcatAccount?.oneBotUrl
 		: liveStatus?.oneBotUrl
+
+	const selectSystemDirectory = async (pickerId: string, setValue: (value: string) => void) => {
+		setSystemPickerBusy(pickerId)
+		try {
+			setValue(await chooseSystemPath(pickerId))
+		} catch (reason) {
+			setResult({ output: '', error: reason instanceof Error ? reason.message : String(reason) })
+			setState('failed')
+		} finally {
+			setSystemPickerBusy(null)
+		}
+	}
 
 	const run = async (action: string, params: Record<string, string> = {}, confirm = false) => {
 	setActiveAction(action)
@@ -466,7 +472,7 @@ export default function App() {
 		if (engine === 'napcat' && liveStatus.installed && !liveStatus.managedActions) return { title: '需要修复受管安装', description: '安装目录或运行文件与记录不一致。为保护已有 QQ 环境，请重装，或改为关联外部实例。', label: '查看状态', action: () => void run('napcat-status') }
 		if (engine === 'luckylillia' && liveStatus.supported === false) return { title: '当前平台不支持 LuckyLillia CLI', description: 'MVP 仅支持 Windows x64、macOS Apple Silicon、Linux x64 与 Linux ARM64。', label: '查看状态', action: () => void run(luckyAction('status')) }
 		if (engine === 'luckylillia' && !liveStatus.verified) return { title: '当前平台暂不支持自动安装', description: `${liveStatus.platform || '当前平台'} 没有可用的 LuckyLillia 官方 CLI 包。可使用官方方式安装后再关联目录。`, label: '查看状态', action: () => void run(luckyAction('status')) }
-		if (!liveStatus.installed) return { title: '第一步：安装核心', description: '下载官方组件并准备本机运行环境。', label: engine === 'napcat' ? '安装 NapCat' : '安装 LuckyLillia', action: () => confirm('安装 QQ 核心', engine === 'napcat' && liveStatus.linuxDependencies && !liveStatus.linuxDependencies.ready ? '将先通过一次 sudo 授权补齐固定 Linux 依赖，成功后自动继续安装 NapCat。' : '将下载并安装官方组件；安装过程可能需要几分钟。', () => engine === 'napcat' ? requestNapcatInstall() : run(luckyAction('install'), {}, true)) }
+		if (!liveStatus.installed) return { title: '第一步：安装核心', description: '下载官方组件并准备本机运行环境。', label: engine === 'napcat' ? '安装 NapCat' : '安装 LuckyLillia', action: () => engine === 'napcat' ? void requestNapcatInstall() : confirm('安装 QQ 核心', '将下载并安装官方组件；安装过程可能需要几分钟。', () => run(luckyAction('install'), {}, true)) }
 		if (engine === 'luckylillia' && !liveStatus.managed) return { title: '已关联外部 LuckyLillia', description: '工作台仅显示状态和内嵌 WebUI；不会替你启动、更新、写配置或删除外部目录。', label: webUrl ? '打开管理面板' : '查看状态', action: () => webUrl ? setView('webui') : void run(luckyAction('status')) }
 		if (!liveStatus.running) return { title: '第二步：启动服务', description: '启动后将自动等待 QQ 登录二维码。', label: engine === 'napcat' ? '启动 NapCat' : '启动 LuckyLillia', action: () => confirm('启动 QQ 核心', '启动后台服务并等待登录。', () => run(engine === 'napcat' ? 'start' : luckyAction('start'), {}, true)) }
 		if (liveStatus.loginPending) return { title: '第三步：使用手机 QQ 扫码', description: '二维码会自动刷新；完成登录后状态会自动进入下一步。', label: webUrl ? '打开管理面板' : '等待二维码', action: () => webUrl ? setView('webui') : undefined }
@@ -592,13 +598,15 @@ export default function App() {
 					<strong className="text-sm font-semibold text-[var(--theme-text-strong)]">关联已解压的官方 CLI</strong>
 					<p className="m-0 text-xs leading-5 text-[var(--theme-text-muted)]">可选：关联已解压的同平台官方 CLI 包。系统只接受当前平台的标准启动入口。</p>
 				</div>
-				<form className="grid grid-cols-[minmax(0,1fr)_180px] gap-3 max-sm:grid-cols-1" onSubmit={(event) => {
+				<form className="grid grid-cols-[minmax(0,1fr)_auto] gap-3 max-sm:grid-cols-1" onSubmit={(event) => {
 					event.preventDefault()
-					const installDir = String(new FormData(event.currentTarget).get('installDir') || '')
-					confirm('关联 LuckyLillia CLI', '工作台将校验当前平台的官方 CLI 启动入口并保存目录。', () => run(luckyAction('adopt'), { installDir }, true))
+					confirm('关联 LuckyLillia CLI', '工作台将校验当前平台的官方 CLI 启动入口并保存目录。', () => run(luckyAction('adopt'), { installDir: luckyInstallDir }, true))
 				}}>
-					<Field label="CLI 解压目录" name="installDir" hint="请输入绝对路径，例如 /opt/LLBot 或 D:\\LLBot。" />
-					<ActionField><button className="primary-button min-h-9" type="submit">关联目录</button></ActionField>
+					<div className="grid min-w-[180px] flex-1 gap-1 text-xs font-semibold text-[var(--theme-text-secondary)]"><span>CLI 解压目录</span>
+						<output className="min-h-9 break-all rounded-control border border-[var(--theme-border-default)] bg-[var(--theme-surface-input)] px-2.5 py-2 text-sm font-normal text-[var(--theme-text-primary)]">{luckyInstallDir || '尚未选择目录'}</output>
+						<span className="font-normal leading-4 text-[var(--theme-text-muted)]">只能通过工作台系统目录选择器选择。</span>
+					</div>
+					<ActionField><div className="flex gap-2"><button className="secondary-button min-h-9" type="button" disabled={systemPickerBusy !== null} onClick={() => void selectSystemDirectory('luckylillia-directory', setLuckyInstallDir)}>{systemPickerBusy === 'luckylillia-directory' ? '正在打开…' : '选择目录'}</button><button className="primary-button min-h-9" type="submit" disabled={!luckyInstallDir.trim()}>关联目录</button></div></ActionField>
 				</form>
 			</section>
 		  )}
@@ -607,15 +615,17 @@ export default function App() {
 			<section id="napcat-association" className="grid gap-3 rounded-panel border border-[var(--theme-border-default)] bg-[var(--theme-surface-panel)] p-3">
 				<div className="grid gap-1">
 					<strong className="text-sm font-semibold text-[var(--theme-text-strong)]">关联现有 NapCat</strong>
-					<p className="m-0 text-xs leading-5 text-[var(--theme-text-muted)]">仅保存目录与指纹，用于状态、二维码和内嵌 WebUI。不会修改此目录；macOS 留空可使用 QQ 注入目录。</p>
+					<p className="m-0 text-xs leading-5 text-[var(--theme-text-muted)]">仅保存目录与指纹，用于状态、二维码和内嵌 WebUI。不会修改此目录；macOS 仅在检测到已校验的 QQ 注入实例后允许确认关联。</p>
 				</div>
-				<form className="grid grid-cols-[minmax(0,1fr)_180px] gap-3 max-sm:grid-cols-1" onSubmit={(event) => {
+				<form className="grid grid-cols-[minmax(0,1fr)_auto] gap-3 max-sm:grid-cols-1" onSubmit={(event) => {
 					event.preventDefault()
-					const installDir = String(new FormData(event.currentTarget).get('installDir') || '')
-					confirm('关联外部 NapCat', '工作台只读取该目录的状态和登录信息，不会获取删除或运行权限。', () => run('napcat-adopt', { installDir }, true))
+					confirm('关联外部 NapCat', '工作台只读取该目录的状态和登录信息，不会获取删除或运行权限。', () => run('napcat-adopt', { installDir: napcatInstallDir }, true))
 				}}>
-					<Field label="NapCat 安装目录" name="installDir" hint="请输入绝对路径；macOS 可留空以自动定位 QQ 注入目录。" />
-					<ActionField><button className="primary-button min-h-9" type="submit">关联目录</button></ActionField>
+					<div className="grid min-w-[180px] flex-1 gap-1 text-xs font-semibold text-[var(--theme-text-secondary)]"><span>NapCat 安装目录</span>
+						<output className="min-h-9 break-all rounded-control border border-[var(--theme-border-default)] bg-[var(--theme-surface-input)] px-2.5 py-2 text-sm font-normal text-[var(--theme-text-primary)]">{napcatInstallDir || (liveStatus?.platform === 'darwin-external' ? (liveStatus?.installed ? '已检测到 QQ 容器中的 NapCat 实例' : '尚未检测到 QQ 容器中的 NapCat 实例') : '尚未选择目录')}</output>
+						<span className="font-normal leading-4 text-[var(--theme-text-muted)]">其他系统请通过工作台系统目录选择器选择。macOS 只可关联已检测并校验通过的 QQ 注入实例。</span>
+					</div>
+					<ActionField><div className="flex gap-2"><button className="secondary-button min-h-9" type="button" disabled={systemPickerBusy !== null} onClick={() => void selectSystemDirectory('napcat-directory', setNapcatInstallDir)}>{systemPickerBusy === 'napcat-directory' ? '正在打开…' : '选择目录'}</button><button className="primary-button min-h-9" type="submit" disabled={!napcatInstallDir && (liveStatus?.platform !== 'darwin-external' || !liveStatus?.installed)}>{liveStatus?.platform === 'darwin-external' && !napcatInstallDir ? '关联已检测到的实例' : '关联目录'}</button></div></ActionField>
 				</form>
 			</section>
 		  )}
@@ -625,7 +635,7 @@ export default function App() {
 			<div className="mt-3 flex flex-wrap gap-2">
 			{engine === 'napcat' ? <>
 				<ActionButton label="查看状态" variant="secondary" running={state === 'running'} onClick={() => void run('napcat-status')} />
-				<ActionButton label="安装" running={state === 'running'} disabled={!liveStatus?.verified || liveStatus?.installed} onClick={() => confirm('安装 NapCat', liveStatus?.linuxDependencies && !liveStatus.linuxDependencies.ready ? '将先通过一次 sudo 授权补齐固定 Linux 依赖，成功后自动继续安装 NapCat。' : '会下载并校验官方组件，然后完成安装。', requestNapcatInstall)} />
+				<ActionButton label="安装" running={state === 'running'} disabled={!liveStatus?.verified || liveStatus?.installed} onClick={() => void requestNapcatInstall()} />
 				<ActionButton label="启动" variant="secondary" running={state === 'running'} disabled={!napcatManagedActions || !liveStatus?.installed} onClick={() => confirm('启动 NapCat', '启动工作台受管的后台进程，用手机 QQ 扫码登录。', () => run('start', {}, true))} />
 				<ActionButton label="停止" variant="secondary" running={state === 'running'} disabled={!napcatManagedActions || !liveStatus?.running} onClick={() => confirm('停止 NapCat', '停止工作台受管的 NapCat 进程组。', () => run('stop', {}, true))} />
 				<ActionButton label="重启" variant="secondary" running={state === 'running'} disabled={!napcatManagedActions || !liveStatus?.installed} onClick={() => confirm('重启 NapCat', '停止后重新启动工作台受管的 NapCat。', () => run('restart', {}, true))} />

@@ -183,6 +183,20 @@ export async function fetchHostPrivilegeStatus(): Promise<HostPrivilegeStatus> {
 	return json<HostPrivilegeStatus>(await fetch('/api/v1/system/privileged/status'))
 }
 
+// The host resolves the picker from this plugin's installed manifest. The
+// browser never submits a filesystem path or native-dialog command.
+export async function chooseSystemPath(pickerId: string): Promise<string> {
+	const payload = await json<{ paths: string[] }>(await fetch('/api/v1/system/picker', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ pluginId: PLUGIN_ID, pickerId })
+	}))
+	if (!Array.isArray(payload.paths) || payload.paths.length !== 1 || !payload.paths[0]) {
+		throw new Error('请选择一个目录。')
+	}
+	return payload.paths[0]
+}
+
 // fetchStatus uses the workbench's read-only status endpoint. Unlike actions,
 // it does not allocate or persist an operation task on each refresh.
 export async function fetchStatus(engine: 'napcat' | 'luckylillia' = 'napcat'): Promise<StatusPayload> {

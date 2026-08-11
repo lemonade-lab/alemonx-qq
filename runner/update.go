@@ -62,7 +62,7 @@ func checkUpdate() (string, error) {
 		return "? 当前受管安装不完整或文件已变化，自动更新已锁定。", nil
 	}
 	if state.Platform != "windows-amd64" {
-		return "✓ 当前为 Linux rootless 安装。点击「更新」会重新执行官方安装器并保留原配置；失败时自动回滚。", nil
+		return "✓ 当前为 Linux 受管安装。点击「更新」会下载官方 Release 并保留原配置；失败时自动回滚。", nil
 	}
 	release, err := fetchLatest()
 	if err != nil {

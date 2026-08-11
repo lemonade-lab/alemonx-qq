@@ -122,10 +122,10 @@ func TestLuckyPlatformMatrixUsesOfficialAssetNames(t *testing.T) {
 		goos, goarch, asset, entry string
 		auto                       bool
 	}{
-		{"linux", "arm64", "LLBot-CLI-linux-arm64.zip", "start.sh", true},
-		{"linux", "amd64", "LLBot-CLI-linux-x64.zip", "start.sh", true},
+		{"linux", "arm64", "LLBot-CLI-linux-arm64.zip", "llbot", true},
+		{"linux", "amd64", "LLBot-CLI-linux-x64.zip", "llbot", true},
 		{"windows", "amd64", "LLBot-CLI-win-x64.zip", "llbot.exe", true},
-		{"darwin", "arm64", "LLBot-CLI-macos-arm64.tar.xz", "start.sh", true},
+		{"darwin", "arm64", "LLBot-CLI-macos-arm64.tar.xz", "llbot", true},
 	}
 	for _, test := range cases {
 		platform := luckyPlatformFor(test.goos, test.goarch)
@@ -197,21 +197,32 @@ func TestExtractLuckyTarXZRejectsEscapingEntry(t *testing.T) {
 func TestLuckyEntrypointUsesExactPlatformContract(t *testing.T) {
 	root := t.TempDir()
 	linux := luckyPlatformFor("linux", "amd64")
-	if err := os.WriteFile(filepath.Join(root, "start.sh"), []byte("#!/bin/sh"), 0o700); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "llbot"), []byte("native-cli"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	if got := luckyEntryPointFor(linux, root); got == "" {
-		t.Fatal("Linux CLI must accept start.sh")
+		t.Fatal("Linux CLI must accept the native llbot executable")
 	}
 	windows := luckyPlatformFor("windows", "amd64")
 	if got := luckyEntryPointFor(windows, root); got != "" {
-		t.Fatal("Windows CLI must not accept start.sh")
+		t.Fatal("Windows CLI must not accept a Unix llbot executable")
 	}
 	if err := os.WriteFile(filepath.Join(root, "llbot.exe"), []byte("fixture"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	if got := luckyEntryPointFor(windows, root); got == "" {
 		t.Fatal("Windows CLI must accept llbot.exe")
+	}
+}
+
+func TestLuckyStartCommandUsesNativeExecutable(t *testing.T) {
+	entry := filepath.Join(t.TempDir(), "llbot")
+	command, err := luckyStartCommand(luckyPlatformFor("linux", "amd64"), filepath.Dir(entry), entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if command.Path != entry || len(command.Args) != 1 || command.Args[0] != entry {
+		t.Fatalf("Lucky start command must execute native entrypoint directly: %#v", command.Args)
 	}
 }
 

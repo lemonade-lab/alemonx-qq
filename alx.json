@@ -25,6 +25,18 @@
   "web": {
     "root": "web"
   },
+  "systemPickers": [
+    {
+      "id": "napcat-directory",
+      "kind": "directory",
+      "title": "选择现有 NapCat 安装目录"
+    },
+    {
+      "id": "luckylillia-directory",
+      "kind": "directory",
+      "title": "选择 LuckyLillia CLI 解压目录"
+    }
+  ],
   "services": [
     {
       "id": "napcat-webui",

@@ -121,8 +121,8 @@ func watchdogMain() int {
 			return 0
 		}
 		if needsRestart(state) {
-			if pid, startErr := startNapCat(state); startErr == nil {
-				state.PID, state.ProcessGroupID = pid, pid
+			if process, startErr := startNapCat(state); startErr == nil {
+				state.PID, state.ProcessGroupID = process.PID, process.ProcessGroupID
 				_ = saveState(state)
 			}
 		}

@@ -29,9 +29,9 @@ jobs:
           go-version: '1.23.x'
           cache: true
       - name: Test
-        run: go test ./runner/...
+        run: go test ./...
       - name: Vet
-        run: go vet ./runner/...
+        run: go vet ./...
       - name: Cross-compile check
         run: |
           GOOS=linux GOARCH=amd64 go build -trimpath -o /tmp/alemonx-qq-linux ./runner
@@ -39,17 +39,17 @@ jobs:
           GOOS=windows GOARCH=amd64 go build -trimpath -o /tmp/alemonx-qq-windows.exe ./runner
           GOOS=darwin GOARCH=arm64 go build -trimpath -o /tmp/alemonx-qq-darwin ./runner
       - name: Validate alx.json
-        run: python3 scripts/validate-alx.py alx.json
+        run: go run ./cmd/alx-ci validate-manifest alx.json
       - name: Set manifest version from tag
         if: startsWith(github.ref, 'refs/tags/v')
-        run: python3 scripts/set-version.py "$GITHUB_REF_NAME"
+        run: go run ./cmd/alx-ci set-version "$GITHUB_REF_NAME"
       - name: Validate release version
         if: startsWith(github.ref, 'refs/tags/v')
-        run: test "$(python3 -c 'import json; print(json.load(open("alx.json"))["version"])')" = "${GITHUB_REF_NAME#v}"
+        run: go run ./cmd/alx-ci verify-version "$GITHUB_REF_NAME"
       - name: Validate reviewed runtime evidence
         run: |
-          python3 scripts/release-evidence.py --check-tree
-          python3 scripts/test_release_evidence.py
+          go run ./cmd/alx-ci evidence check-tree
+          go test ./cmd/alx-ci
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -98,13 +98,13 @@ jobs:
           name: web-dist
           path: web
       - name: Set manifest version from tag
-        run: python3 scripts/set-version.py "$GITHUB_REF_NAME"
+        run: go run ./cmd/alx-ci set-version "$GITHUB_REF_NAME"
       - name: Build plugin bundle
         run: |
           mkdir -p "bundle/alemonx-qq/dist" release
-          lucky_evidence="$(python3 scripts/release-evidence.py --core luckylillia --platform ${{ matrix.lucky_platform }} --encode)"
-          napcat_evidence="$(python3 scripts/release-evidence.py --core napcat --platform ${{ matrix.napcat_platform }} --encode)"
-          python3 scripts/release-evidence.py --prepare-manifest --platform ${{ matrix.bundle_platform }} --input alx.json --output "bundle/alemonx-qq/alx.json"
+          lucky_evidence="$(go run ./cmd/alx-ci evidence encode luckylillia ${{ matrix.lucky_platform }})"
+          napcat_evidence="$(go run ./cmd/alx-ci evidence encode napcat ${{ matrix.napcat_platform }})"
+          go run ./cmd/alx-ci evidence prepare-manifest ${{ matrix.bundle_platform }} alx.json "bundle/alemonx-qq/alx.json"
           cp -r web "bundle/alemonx-qq/web"
           CGO_ENABLED=0 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} \
             go build -trimpath -ldflags "-s -w -X main.luckyReleaseValidationEvidence=$lucky_evidence -X main.napcatReleaseValidationEvidence=$napcat_evidence" -o "bundle/alemonx-qq/dist/${{ matrix.binary }}" ./runner
@@ -140,11 +140,14 @@ jobs:
     runs-on: [self-hosted, linux, arm64, luckylillia-e2e]
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
       - name: Verify official package and record runtime evidence
-        run: scripts/verify-luckylillia-e2e.sh
+        run: go run ./cmd/alx-ci verify-lucky-e2e
         env:
           LUCKYLILLIA_PLATFORM: linux-arm64
-          LUCKYLILLIA_E2E_COMMAND: ${{ vars.LUCKYLILLIA_E2E_COMMAND_LINUX_ARM64 }}
+          LUCKYLILLIA_E2E_COMMAND_JSON: ${{ vars.LUCKYLILLIA_E2E_COMMAND_JSON_LINUX_ARM64 }}
       - uses: actions/upload-artifact@v4
         with:
           name: luckylillia-linux-arm64-validation
@@ -155,10 +158,13 @@ jobs:
     runs-on: [self-hosted, linux, x64, luckylillia-e2e]
     steps:
       - uses: actions/checkout@v4
-      - run: scripts/verify-luckylillia-e2e.sh
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+      - run: go run ./cmd/alx-ci verify-lucky-e2e
         env:
           LUCKYLILLIA_PLATFORM: linux-amd64
-          LUCKYLILLIA_E2E_COMMAND: ${{ vars.LUCKYLILLIA_E2E_COMMAND_LINUX_AMD64 }}
+          LUCKYLILLIA_E2E_COMMAND_JSON: ${{ vars.LUCKYLILLIA_E2E_COMMAND_JSON_LINUX_AMD64 }}
       - uses: actions/upload-artifact@v4
         with:
           name: luckylillia-linux-amd64-validation
@@ -169,10 +175,13 @@ jobs:
     runs-on: [self-hosted, windows, x64, luckylillia-e2e]
     steps:
       - uses: actions/checkout@v4
-      - run: bash scripts/verify-luckylillia-e2e.sh
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+      - run: go run ./cmd/alx-ci verify-lucky-e2e
         env:
           LUCKYLILLIA_PLATFORM: windows-amd64
-          LUCKYLILLIA_E2E_COMMAND: ${{ vars.LUCKYLILLIA_E2E_COMMAND_WINDOWS_AMD64 }}
+          LUCKYLILLIA_E2E_COMMAND_JSON: ${{ vars.LUCKYLILLIA_E2E_COMMAND_JSON_WINDOWS_AMD64 }}
       - uses: actions/upload-artifact@v4
         with:
           name: luckylillia-windows-amd64-validation
@@ -183,10 +192,13 @@ jobs:
     runs-on: [self-hosted, macos, arm64, luckylillia-e2e]
     steps:
       - uses: actions/checkout@v4
-      - run: scripts/verify-luckylillia-e2e.sh
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+      - run: go run ./cmd/alx-ci verify-lucky-e2e
         env:
           LUCKYLILLIA_PLATFORM: darwin-arm64
-          LUCKYLILLIA_E2E_COMMAND: ${{ vars.LUCKYLILLIA_E2E_COMMAND_DARWIN_ARM64 }}
+          LUCKYLILLIA_E2E_COMMAND_JSON: ${{ vars.LUCKYLILLIA_E2E_COMMAND_JSON_DARWIN_ARM64 }}
       - uses: actions/upload-artifact@v4
         with:
           name: luckylillia-darwin-arm64-validation
@@ -197,11 +209,14 @@ jobs:
     runs-on: [self-hosted, windows, x64, napcat-e2e]
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
       - name: Run full Windows NapCat lifecycle validation
-        run: bash scripts/verify-napcat-e2e.sh
+        run: go run ./cmd/alx-ci verify-napcat-e2e
         env:
           NAPCAT_PLATFORM: windows-amd64
-          NAPCAT_E2E_COMMAND: ${{ vars.NAPCAT_E2E_COMMAND_WINDOWS_AMD64 }}
+          NAPCAT_E2E_COMMAND_JSON: ${{ vars.NAPCAT_E2E_COMMAND_JSON_WINDOWS_AMD64 }}
       - uses: actions/upload-artifact@v4
         with:
           name: napcat-windows-amd64-validation
@@ -212,11 +227,14 @@ jobs:
     runs-on: [self-hosted, linux, x64, napcat-e2e]
     steps:
       - uses: actions/checkout@v4
-      - name: Run full Linux x64 rootless NapCat lifecycle validation
-        run: scripts/verify-napcat-e2e.sh
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+      - name: Run full Linux x64 NapCat lifecycle validation
+        run: go run ./cmd/alx-ci verify-napcat-e2e
         env:
           NAPCAT_PLATFORM: linux-amd64
-          NAPCAT_E2E_COMMAND: ${{ vars.NAPCAT_E2E_COMMAND_LINUX_AMD64 }}
+          NAPCAT_E2E_COMMAND_JSON: ${{ vars.NAPCAT_E2E_COMMAND_JSON_LINUX_AMD64 }}
       - uses: actions/upload-artifact@v4
         with:
           name: napcat-linux-amd64-validation
@@ -227,11 +245,14 @@ jobs:
     runs-on: [self-hosted, linux, arm64, napcat-e2e]
     steps:
       - uses: actions/checkout@v4
-      - name: Run full Linux ARM64 rootless NapCat lifecycle validation
-        run: scripts/verify-napcat-e2e.sh
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+      - name: Run full Linux ARM64 NapCat lifecycle validation
+        run: go run ./cmd/alx-ci verify-napcat-e2e
         env:
           NAPCAT_PLATFORM: linux-arm64
-          NAPCAT_E2E_COMMAND: ${{ vars.NAPCAT_E2E_COMMAND_LINUX_ARM64 }}
+          NAPCAT_E2E_COMMAND_JSON: ${{ vars.NAPCAT_E2E_COMMAND_JSON_LINUX_ARM64 }}
       - uses: actions/upload-artifact@v4
         with:
           name: napcat-linux-arm64-validation

@@ -25,16 +25,14 @@ func webUIBridge() string {
 	return "http://127.0.0.1:" + strconv.Itoa(webUIPort) + "/webui"
 }
 
-// napcatCommand builds the command that launches NapCat in the background
-// (Windows / Linux). macOS overrides start/stop in macos.go.
+// napcatCommand builds the verified Windows launcher command. Linux starts
+// Xvfb and QQ directly in process_linux.go, while macOS is external-only.
 func napcatCommand(state State) (*exec.Cmd, error) {
 	switch runtime.GOOS {
 	case "windows":
 		return windowsNapcatCommand(state)
-	case "linux":
-		return linuxNapcatCommand(state)
 	default:
-		return nil, fmt.Errorf("当前系统暂不支持独立 NapCat 进程")
+		return nil, fmt.Errorf("当前系统不使用 Windows NapCat 启动器")
 	}
 }
 
@@ -71,28 +69,9 @@ func dirExists(path string) bool {
 }
 
 func windowsNapcatCommand(state State) (*exec.Cmd, error) {
-	launcher := filepath.Join(state.InstallDir, "launcher.bat")
+	launcher := filepath.Join(state.InstallDir, "launcher.exe")
 	if _, err := os.Stat(launcher); err != nil {
-		exe := filepath.Join(state.InstallDir, "launcher.exe")
-		if _, statErr := os.Stat(exe); statErr != nil {
-			return nil, errors.New("未找到 NapCat 启动器（launcher.bat / launcher.exe）")
-		}
-		return exec.Command(exe), nil
+		return nil, errors.New("未找到受管 NapCat 原生启动器 launcher.exe")
 	}
-	return exec.Command("cmd", "/c", launcher), nil
-}
-
-func linuxNapcatCommand(state State) (*exec.Cmd, error) {
-	root := state.InstallDir
-	if root == "" {
-		return nil, errors.New("未记录 NapCat rootless 安装目录")
-	}
-	qq := filepath.Join(root, "opt", "QQ", "qq")
-	if _, err := os.Stat(qq); err != nil {
-		return nil, errors.New("未找到 rootless QQ 启动入口：" + qq)
-	}
-	if _, err := exec.LookPath("xvfb-run"); err != nil {
-		return nil, errors.New("未找到 xvfb-run；请先安装 Linux 图形运行依赖")
-	}
-	return exec.Command("xvfb-run", "-a", qq, "--no-sandbox"), nil
+	return exec.Command(launcher), nil
 }

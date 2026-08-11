@@ -16,20 +16,22 @@ import (
 // read-only (for example when installed next to the alx executable).
 
 type State struct {
-	Version        string `json:"version,omitempty"`
-	InstallDir     string `json:"installDir,omitempty"`
-	PID            int    `json:"pid,omitempty"`
-	ProcessGroupID int    `json:"processGroupId,omitempty"`
-	WatchdogPID    int    `json:"watchdogPid,omitempty"`
-	Managed        bool   `json:"managed"`
-	Platform       string `json:"platform,omitempty"`
-	InstallMode    string `json:"installMode,omitempty"`
-	ReleaseTag     string `json:"releaseTag,omitempty"`
-	Asset          string `json:"asset,omitempty"`
-	ArchiveSHA256  string `json:"archiveSha256,omitempty"`
-	Fingerprint    string `json:"fingerprint,omitempty"`
-	ValidatedAt    string `json:"validatedAt,omitempty"`
-	SelectedQQ     string `json:"selectedQq,omitempty"`
+	Version              string `json:"version,omitempty"`
+	InstallDir           string `json:"installDir,omitempty"`
+	PID                  int    `json:"pid,omitempty"`
+	ProcessGroupID       int    `json:"processGroupId,omitempty"`
+	WatchdogPID          int    `json:"watchdogPid,omitempty"`
+	Managed              bool   `json:"managed"`
+	Platform             string `json:"platform,omitempty"`
+	InstallMode          string `json:"installMode,omitempty"`
+	ReleaseTag           string `json:"releaseTag,omitempty"`
+	Asset                string `json:"asset,omitempty"`
+	ArchiveSHA256        string `json:"archiveSha256,omitempty"`
+	RuntimeAsset         string `json:"runtimeAsset,omitempty"`
+	RuntimeArchiveSHA256 string `json:"runtimeArchiveSha256,omitempty"`
+	Fingerprint          string `json:"fingerprint,omitempty"`
+	ValidatedAt          string `json:"validatedAt,omitempty"`
+	SelectedQQ           string `json:"selectedQq,omitempty"`
 }
 
 type napcatPlatformSpec struct {

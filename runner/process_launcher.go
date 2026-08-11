@@ -1,4 +1,4 @@
-//go:build !darwin
+//go:build windows
 
 package main
 
@@ -8,24 +8,23 @@ import (
 	"path/filepath"
 )
 
-// startNapCat spawns NapCat detached from the runner's process group
-// (Windows and Linux). macOS overrides this in macos.go because NapCat runs
-// inside the QQ app there.
-func startNapCat(state State) (int, error) {
+// startNapCat starts the verified Windows launcher executable. Linux has its
+// own Go-managed Xvfb implementation in process_linux.go.
+func startNapCat(state State) (napcatProcess, error) {
 	command, err := napcatCommand(state)
 	if err != nil {
-		return 0, err
+		return napcatProcess{}, err
 	}
 	logFile, err := logPath()
 	if err != nil {
-		return 0, err
+		return napcatProcess{}, err
 	}
 	if err := os.MkdirAll(filepath.Dir(logFile), 0755); err != nil {
-		return 0, err
+		return napcatProcess{}, err
 	}
 	handle, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
 	if err != nil {
-		return 0, err
+		return napcatProcess{}, err
 	}
 	defer handle.Close()
 	command.Stdin = nil
@@ -33,22 +32,19 @@ func startNapCat(state State) (int, error) {
 	command.Stderr = handle
 	detachProcess(command)
 	if err := command.Start(); err != nil {
-		return 0, err
+		return napcatProcess{}, err
 	}
 	pid := command.Process.Pid
 	_ = command.Process.Release()
-	return pid, nil
+	return napcatProcess{PID: pid, ProcessGroupID: pid}, nil
 }
 
 func stopProcess(pid int) {
 	stopManagedProcess(pid)
 }
 
-// isRunning on Windows/Linux means the tracked PID is alive.
+// isRunning on Windows means the tracked application runtime is alive.
 func isRunning(state State) bool {
-	if state.ProcessGroupID > 0 {
-		return processAlive(state.ProcessGroupID)
-	}
 	return processAlive(state.PID)
 }
 

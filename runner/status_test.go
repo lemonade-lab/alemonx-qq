@@ -129,7 +129,7 @@ func TestNapCatStatusKeepsOneBotAccountsSeparate(t *testing.T) {
 
 func TestNapcatLinuxDependencyPreflight(t *testing.T) {
 	lookup := func(name string) (string, error) {
-		if name == "apt-get" || name == "xvfb-run" {
+		if name == "apt-get" || name == "Xvfb" {
 			return "/usr/bin/" + name, nil
 		}
 		return "", os.ErrNotExist

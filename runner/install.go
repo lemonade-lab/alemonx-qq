@@ -22,9 +22,7 @@ const (
 	downloadTimeout        = 30 * time.Minute
 	maxNapcatArchiveSize   = int64(300 << 20)
 	maxNapcatExtractedSize = int64(500 << 20)
-	maxInstallerSize       = int64(4 << 20)
 	windowsAsset           = "NapCat.Shell.Windows.OneKey.zip"
-	linuxInstallerRef      = "main"
 )
 
 type releaseAsset struct {
@@ -39,13 +37,15 @@ type githubRelease struct {
 }
 
 type napcatInstallation struct {
-	Version       string
-	InstallDir    string
-	ReleaseTag    string
-	Asset         string
-	ArchiveSHA256 string
-	Fingerprint   string
-	PreviousDir   string
+	Version              string
+	InstallDir           string
+	ReleaseTag           string
+	Asset                string
+	ArchiveSHA256        string
+	RuntimeAsset         string
+	RuntimeArchiveSHA256 string
+	Fingerprint          string
+	PreviousDir          string
 }
 
 func fetchLatest() (githubRelease, error) {
@@ -185,9 +185,6 @@ func unzipLimited(srcZip, destDir string) error {
 
 func napcatExtractRoot(stage string) string {
 	for _, candidate := range []string{stage, filepath.Join(stage, "NapCat.Shell.Windows.OneKey")} {
-		if _, err := os.Stat(filepath.Join(candidate, "launcher.bat")); err == nil {
-			return candidate
-		}
 		if _, err := os.Stat(filepath.Join(candidate, "launcher.exe")); err == nil {
 			return candidate
 		}
@@ -199,9 +196,6 @@ func napcatExtractRoot(stage string) string {
 	for _, entry := range entries {
 		if entry.IsDir() {
 			candidate := filepath.Join(stage, entry.Name())
-			if _, err := os.Stat(filepath.Join(candidate, "launcher.bat")); err == nil {
-				return candidate
-			}
 			if _, err := os.Stat(filepath.Join(candidate, "launcher.exe")); err == nil {
 				return candidate
 			}
@@ -282,7 +276,7 @@ func installWindowsNapCat() (napcatInstallation, error) {
 	}
 	extracted := napcatExtractRoot(stage)
 	if extracted == "" {
-		return napcatInstallation{}, errors.New("NapCat Release 缺少 launcher.bat 或 launcher.exe")
+		return napcatInstallation{}, errors.New("NapCat Release 缺少受管原生启动器 launcher.exe")
 	}
 	fingerprint, err := napcatFingerprint(extracted)
 	if err != nil {
@@ -321,42 +315,25 @@ func installWindowsNapCat() (napcatInstallation, error) {
 	return installation, nil
 }
 
-func linuxInstallerURL(commit string) string {
-	return "https://raw.githubusercontent.com/NapNeko/NapCat-Installer/" + commit + "/script/install.sh"
-}
-
-// rejectPrivilegedInstaller is deliberately conservative. A setup-plugin
-// runner has no controlling terminal and must never forward, read or prompt
-// for a sudo password. The reviewed Linux path is rootless: if the pinned
-// upstream script contains an attempt to invoke sudo, refuse it before any
-// existing managed installation is moved aside.
-func rejectPrivilegedInstaller(path string) error {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-	for _, line := range strings.Split(string(data), "\n") {
-		// Ignore whole-line comments, but otherwise treat every shell token
-		// named sudo as a privilege request, including $(sudo ...).
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		for _, token := range strings.Fields(line) {
-			token = strings.Trim(token, "`$(){}[];|&\\\"'")
-			if token == "sudo" {
-				return errors.New("已拒绝执行包含 sudo 的 NapCat 安装器：工作台只执行当前用户可运行的 rootless 安装器。请先通过工作台的「安装系统依赖」完成固定依赖安装后重试")
-			}
-		}
-	}
-	return nil
-}
-
 func installLinuxNapCat() (napcatInstallation, error) {
-	for _, command := range []string{"bash", "xvfb-run"} {
-		if _, err := exec.LookPath(command); err != nil {
-			return napcatInstallation{}, fmt.Errorf("缺少 %s；请先在终端安装 Linux 依赖后重试。\n建议：sudo apt-get install -y xvfb libnss3 libgbm1", command)
-		}
+	if _, err := exec.LookPath("Xvfb"); err != nil {
+		return napcatInstallation{}, errors.New("缺少 Linux 图形运行依赖 Xvfb；请在工作台点击“安装 NapCat”，授权后会自动补齐并继续")
+	}
+	release, err := fetchLatest()
+	if err != nil {
+		return napcatInstallation{}, err
+	}
+	shellAsset, err := releaseAssetByName(release, linuxShellAsset)
+	if err != nil {
+		return napcatInstallation{}, err
+	}
+	shellDigest := normalizedSHA(shellAsset.Digest)
+	if !validSHA(shellDigest) {
+		return napcatInstallation{}, errors.New("官方 NapCat Linux Release 未提供有效 SHA-256 校验和")
+	}
+	qqAsset, err := linuxQQReleaseAsset()
+	if err != nil {
+		return napcatInstallation{}, err
 	}
 	stateRoot, err := stateDir()
 	if err != nil {
@@ -365,15 +342,25 @@ func installLinuxNapCat() (napcatInstallation, error) {
 	if err := os.MkdirAll(stateRoot, 0o700); err != nil {
 		return napcatInstallation{}, err
 	}
-	script := filepath.Join(stateRoot, "napcat-rootless-install.sh")
-	reportNapcatProgress("download", 25, "下载官方 NapCat rootless 安装器")
-	digest, err := downloadFileLimited(linuxInstallerURL(linuxInstallerRef), script, maxInstallerSize)
+	shellArchive := filepath.Join(stateRoot, "napcat-shell.zip")
+	qqArchive := filepath.Join(stateRoot, qqAsset.Name)
+	reportNapcatProgress("download", 20, "下载官方 NapCat Linux Release 包")
+	digest, err := downloadFileLimited(shellAsset.URL, shellArchive, maxNapcatArchiveSize)
 	if err != nil {
 		return napcatInstallation{}, err
 	}
-	defer os.Remove(script)
-	if err := rejectPrivilegedInstaller(script); err != nil {
+	defer os.Remove(shellArchive)
+	if !strings.EqualFold(digest, shellDigest) {
+		return napcatInstallation{}, errors.New("NapCat Linux Release SHA-256 校验失败")
+	}
+	reportNapcatProgress("download", 35, "下载官方 Linux QQ 运行时")
+	qqDigest, err := downloadFileLimited(qqAsset.URL, qqArchive, maxNapcatArchiveSize)
+	if err != nil {
 		return napcatInstallation{}, err
+	}
+	defer os.Remove(qqArchive)
+	if !strings.EqualFold(qqDigest, qqAsset.SHA256) {
+		return napcatInstallation{}, errors.New("官方 Linux QQ 运行时 SHA-256 校验失败")
 	}
 	root, err := managedInstallDir()
 	if err != nil {
@@ -381,7 +368,7 @@ func installLinuxNapCat() (napcatInstallation, error) {
 	}
 	backup := root + ".backup"
 	if _, err := os.Stat(backup); err == nil {
-		return napcatInstallation{}, errors.New("检测到未清理的 NapCat rootless 备份目录")
+		return napcatInstallation{}, errors.New("检测到未清理的 NapCat 旧安装备份目录")
 	}
 	hadPrevious := dirExists(root)
 	if hadPrevious {
@@ -396,20 +383,46 @@ func installLinuxNapCat() (napcatInstallation, error) {
 		}
 		return napcatInstallation{}, cause
 	}
-	reportNapcatProgress("install", 60, "以当前用户执行 NapCat rootless 安装")
-	output, runErr := exec.Command("bash", script, "--docker", "n", "--cli", "n", "--proxy", "0").CombinedOutput()
-	if runErr != nil {
-		message := strings.TrimSpace(string(output))
-		if strings.Contains(strings.ToLower(message), "sudo") || strings.Contains(strings.ToLower(message), "permission denied") {
-			return rollback(fmt.Errorf("NapCat rootless 安装需要系统前置依赖或目录权限；工作台不会读取或传递 sudo 密码。请在终端完成管理员前置安装后重试，例如：sudo apt-get install -y xvfb libnss3 libgbm1\n安装器输出：%s", message))
-		}
-		return rollback(fmt.Errorf("NapCat rootless 安装失败：%s", message))
-	}
-	fingerprint, err := napcatFingerprint(root)
+	stage, err := os.MkdirTemp(stateRoot, "napcat-linux-stage-*")
 	if err != nil {
 		return rollback(err)
 	}
-	installation := napcatInstallation{Version: "rootless", InstallDir: root, ReleaseTag: linuxInstallerRef, Asset: "NapCat-Installer", ArchiveSHA256: digest, Fingerprint: fingerprint}
+	defer os.RemoveAll(stage)
+	reportNapcatProgress("extract", 55, "安全解压 NapCat Shell 与 Linux QQ")
+	if err := unzipLimited(shellArchive, stage); err != nil {
+		return rollback(err)
+	}
+	switch qqAsset.Kind {
+	case "deb":
+		err = extractDebQQ(qqArchive, stage)
+	case "rpm":
+		err = extractRPMQQ(qqArchive, stage)
+	default:
+		err = errors.New("未知 Linux QQ 安装包格式")
+	}
+	if err != nil {
+		return rollback(err)
+	}
+	reportNapcatProgress("verify", 68, "写入 NapCat 启动入口")
+	if _, err := os.Stat(filepath.Join(stage, "napcat", "napcat.mjs")); err != nil {
+		return rollback(errors.New("NapCat Shell Release 缺少 napcat/napcat.mjs 启动模块"))
+	}
+	if err := patchLinuxQQEntrypoint(stage, root); err != nil {
+		return rollback(err)
+	}
+	fingerprint, err := napcatFingerprint(stage)
+	if err != nil {
+		return rollback(err)
+	}
+	if err := os.Rename(stage, root); err != nil {
+		return rollback(err)
+	}
+	if hadPrevious {
+		if err := copyNapcatConfig(backup, root); err != nil {
+			return rollback(err)
+		}
+	}
+	installation := napcatInstallation{Version: strings.TrimPrefix(release.TagName, "v"), InstallDir: root, ReleaseTag: release.TagName, Asset: shellAsset.Name + "+" + qqAsset.Name, ArchiveSHA256: digest, RuntimeAsset: qqAsset.Name, RuntimeArchiveSHA256: qqDigest, Fingerprint: fingerprint}
 	if hadPrevious {
 		installation.PreviousDir = backup
 	}
