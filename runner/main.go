@@ -60,6 +60,11 @@ func run(action string, params map[string]string, confirmed bool) (string, error
 		return napcatAdopt(params, confirmed)
 	case "napcat-forget":
 		return napcatForget(confirmed)
+	case "napcat-macos-installer-download":
+		if err := requireNapcatConfirmation(confirmed, "下载 macOS NapCat 安装器"); err != nil {
+			return "", err
+		}
+		return downloadMacNapcatInstaller()
 	case "install":
 		return installAction(confirmed)
 	case "uninstall":

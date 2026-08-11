@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/klauspost/compress/zstd"
 )
@@ -72,6 +73,26 @@ func TestDownloadFileLimitedReportsProgressAndHash(t *testing.T) {
 	data, err := os.ReadFile(destination)
 	if err != nil || !bytes.Equal(data, payload) {
 		t.Fatalf("downloaded payload mismatch: %v", err)
+	}
+}
+
+func TestOfficialReleaseHTTPClientUsesHostGitHubMirror(t *testing.T) {
+	var requestedURL, authorization string
+	broker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestedURL = r.URL.Query().Get("url")
+		authorization = r.Header.Get("Authorization")
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer broker.Close()
+	t.Setenv("ALX_PLUGIN_DOWNLOAD_BROKER", broker.URL)
+	t.Setenv("ALX_PLUGIN_DOWNLOAD_TOKEN", "one-time-token")
+	response, err := officialReleaseHTTPClient(5 * time.Second).Get("https://api.github.com/repos/NapNeko/NapCatQQ/releases/latest")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusNoContent || requestedURL != "https://api.github.com/repos/NapNeko/NapCatQQ/releases/latest" || authorization != "Bearer one-time-token" {
+		t.Fatalf("broker response=%d url=%q authorization=%q", response.StatusCode, requestedURL, authorization)
 	}
 }
 

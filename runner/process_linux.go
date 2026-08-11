@@ -113,6 +113,9 @@ func platformInstallDir() (string, error) { return managedInstallDir() }
 func macInstallGuide() (string, error) {
 	return "", fmt.Errorf("当前系统不支持 macOS 安装方式")
 }
+func downloadMacNapcatInstaller() (string, error) {
+	return "", fmt.Errorf("当前系统不支持 macOS NapCat 安装器")
+}
 func macNapcatVersion() string { return "" }
 func macQQInstalled() bool     { return false }
 func macNapcatInjected() bool  { return false }

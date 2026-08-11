@@ -21,7 +21,8 @@ import (
 )
 
 const (
-	latestReleaseURL = "https://api.github.com/repos/NapNeko/NapCatQQ/releases/latest"
+	latestReleaseURL       = "https://api.github.com/repos/NapNeko/NapCatQQ/releases/latest"
+	macInstallerReleaseURL = "https://api.github.com/repos/NapNeko/NapCat-Mac-Installer/releases/latest"
 	// Linux needs to download the official QQ runtime in addition to NapCat.
 	// Its package is currently about 190 MB, so this must not use the short
 	// timeout appropriate for ordinary API calls. Connection and idle timeouts
@@ -60,18 +61,22 @@ type napcatInstallation struct {
 }
 
 func fetchLatest() (githubRelease, error) {
-	client := &http.Client{Timeout: metadataTimeout}
-	response, err := client.Get(latestReleaseURL)
+	return fetchRelease(latestReleaseURL, "NapCat")
+}
+
+func fetchRelease(releaseURL, name string) (githubRelease, error) {
+	client := officialReleaseHTTPClient(metadataTimeout)
+	response, err := client.Get(releaseURL)
 	if err != nil {
-		return githubRelease{}, fmt.Errorf("无法访问 NapCat 发布信息：%w", err)
+		return githubRelease{}, fmt.Errorf("无法访问 %s 发布信息：%w", name, err)
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return githubRelease{}, fmt.Errorf("NapCat 发布信息请求失败（%s）", response.Status)
+		return githubRelease{}, fmt.Errorf("%s 发布信息请求失败（%s）", name, response.Status)
 	}
 	var release githubRelease
 	if err := json.NewDecoder(io.LimitReader(response.Body, 4<<20)).Decode(&release); err != nil {
-		return githubRelease{}, fmt.Errorf("NapCat 发布信息解析失败：%w", err)
+		return githubRelease{}, fmt.Errorf("%s 发布信息解析失败：%w", name, err)
 	}
 	return release, nil
 }
@@ -119,16 +124,7 @@ func downloadFileLimitedWithProgress(url, dest string, limit int64, progress dow
 	if err != nil {
 		return "", fmt.Errorf("创建下载请求失败：%w", err)
 	}
-	transport := &http.Transport{
-		Proxy:                 http.ProxyFromEnvironment,
-		DialContext:           (&net.Dialer{Timeout: downloadDialTimeout, KeepAlive: 30 * time.Second}).DialContext,
-		ForceAttemptHTTP2:     true,
-		IdleConnTimeout:       45 * time.Second,
-		TLSHandshakeTimeout:   downloadDialTimeout,
-		ResponseHeaderTimeout: downloadHeaderTimeout,
-		ExpectContinueTimeout: time.Second,
-	}
-	client := &http.Client{Transport: transport}
+	client := officialReleaseHTTPClient(0)
 	response, err := client.Do(request)
 	if err != nil {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
@@ -175,6 +171,45 @@ func downloadFileLimitedWithProgress(url, dest string, limit int64, progress dow
 		return "", err
 	}
 	return hex.EncodeToString(hash.Sum(nil)), nil
+}
+
+// officialReleaseHTTPClient sends official NapCat, LuckyLillia and QQ runtime
+// downloads through the host broker when a formal plugin Release provides one.
+// The runner never receives the workbench proxy URL or its credentials.
+func officialReleaseHTTPClient(timeout time.Duration) *http.Client {
+	if endpoint := strings.TrimSpace(os.Getenv("ALX_PLUGIN_DOWNLOAD_BROKER")); endpoint != "" && strings.TrimSpace(os.Getenv("ALX_PLUGIN_DOWNLOAD_TOKEN")) != "" {
+		return &http.Client{Timeout: timeout, Transport: pluginDownloadBrokerTransport{endpoint: endpoint, token: os.Getenv("ALX_PLUGIN_DOWNLOAD_TOKEN")}}
+	}
+	transport := &http.Transport{
+		Proxy:                 http.ProxyFromEnvironment,
+		DialContext:           (&net.Dialer{Timeout: downloadDialTimeout, KeepAlive: 30 * time.Second}).DialContext,
+		ForceAttemptHTTP2:     true,
+		IdleConnTimeout:       45 * time.Second,
+		TLSHandshakeTimeout:   downloadDialTimeout,
+		ResponseHeaderTimeout: downloadHeaderTimeout,
+		ExpectContinueTimeout: time.Second,
+	}
+	return &http.Client{Timeout: timeout, Transport: transport}
+}
+
+type pluginDownloadBrokerTransport struct {
+	endpoint string
+	token    string
+}
+
+func (t pluginDownloadBrokerTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	if request == nil || request.URL == nil || request.Method != http.MethodGet {
+		return nil, errors.New("官方下载代理只支持 GET 请求")
+	}
+	broker, err := http.NewRequestWithContext(request.Context(), http.MethodGet, t.endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	query := broker.URL.Query()
+	query.Set("url", request.URL.String())
+	broker.URL.RawQuery = query.Encode()
+	broker.Header.Set("Authorization", "Bearer "+t.token)
+	return http.DefaultTransport.RoundTrip(broker)
 }
 
 type downloadProgressWriter struct {

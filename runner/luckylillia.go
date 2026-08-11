@@ -362,7 +362,7 @@ func luckyStatus() (string, error) {
 }
 
 func luckyRelease() (githubRelease, error) {
-	response, err := (&http.Client{Timeout: 20 * time.Second}).Get(luckyReleaseURL)
+	response, err := officialReleaseHTTPClient(20 * time.Second).Get(luckyReleaseURL)
 	if err != nil {
 		return githubRelease{}, fmt.Errorf("无法访问 LuckyLillia 发布信息：%w", err)
 	}
@@ -582,7 +582,7 @@ func downloadLuckyAsset(asset releaseAsset, destination string, limit int64) err
 }
 
 func downloadLimited(url, destination string, limit int64) error {
-	response, err := (&http.Client{Timeout: downloadTimeout}).Get(url)
+	response, err := officialReleaseHTTPClient(downloadTimeout).Get(url)
 	if err != nil {
 		return fmt.Errorf("下载失败：%w", err)
 	}

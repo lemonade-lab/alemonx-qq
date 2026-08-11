@@ -176,6 +176,7 @@ export type StatusPayload = {
 
 export type RobotProject = { root: string; name: string }
 export type LocalService = { pluginId: string; id: string; name: string; reachable: boolean; proxyUrl: string; embed: boolean }
+type HostContext = { robot?: RobotProject | null }
 
 export function napcatQRCodeURL(updatedAt?: string): string {
 	return `/api/v1/setup/plugins/${PLUGIN_ID}/qrcode?updatedAt=${encodeURIComponent(updatedAt || '')}`
@@ -190,10 +191,10 @@ export async function fetchHostPrivilegeStatus(): Promise<HostPrivilegeStatus> {
 	return json<HostPrivilegeStatus>(await fetch('/api/v1/system/privileged/status'))
 }
 
-// The host resolves the picker from this plugin's installed manifest. The
-// browser never submits a filesystem path or native-dialog command.
+// Finder is a host capability. The browser only names this plugin's declared
+// picker; it never submits a filesystem path or native-dialog command.
 export async function chooseSystemPath(pickerId: string): Promise<string> {
-	const payload = await json<{ paths: string[] }>(await fetch('/api/v1/system/picker', {
+	const payload = await json<{ paths: string[] }>(await fetch('/api/v1/system/capabilities/finder', {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({ pluginId: PLUGIN_ID, pickerId })
@@ -214,6 +215,14 @@ export async function fetchStatus(engine: 'napcat' | 'luckylillia' = 'napcat'): 
 export async function fetchRobotProjects(refresh = false): Promise<RobotProject[]> {
 	const payload = await json<{ items: RobotProject[] }>(await fetch(`/api/v1/robot/projects${refresh ? '?refresh=true' : ''}`))
 	return payload.items
+}
+
+// The host owns the active workspace selection. A plugin may use this narrow,
+// validated context as a default but still lets the user choose another
+// managed robot for an explicit sync action.
+export async function fetchHostRobotContext(): Promise<RobotProject | null> {
+	const payload = await json<HostContext>(await fetch(`/api/v1/system/capabilities/context?${new URLSearchParams({ pluginId: PLUGIN_ID, keys: 'robot' })}`))
+	return payload.robot ?? null
 }
 
 export async function syncRobotOneBot(root: string, url: string, token: string): Promise<void> {

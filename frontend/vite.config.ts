@@ -4,8 +4,8 @@ import tailwindcss from '@tailwindcss/vite'
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
-  // The plugin web UI is served by alx under /api/v1/setup/plugins/web/<id>/.
-  // Relative base keeps Vite's asset URLs inside that mount.
+  // The host proxy owns the browser-facing plugin mount and HMR route. Vite
+  // must keep serving its own root path for its startup health check.
   base: './',
   server: {
     proxy: {

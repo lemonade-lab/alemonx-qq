@@ -20,6 +20,20 @@
     "runtime": "go",
     "entry": {
       "go": "runner/main.go"
+    },
+    "web": {
+      "mode": "dev-server",
+      "root": "web",
+      "build": {
+        "program": "yarn",
+        "args": ["--cwd", "frontend", "build"]
+      },
+      "dev": {
+        "program": "yarn",
+        "args": ["--cwd", "frontend", "dev", "--host", "127.0.0.1", "--port", "${ALX_PLUGIN_DEV_PORT}"]
+      },
+      "healthPath": "/",
+      "hmr": true
     }
   },
   "web": {
@@ -36,6 +50,11 @@
       "kind": "directory",
       "title": "选择 LuckyLillia CLI 解压目录"
     }
+  ],
+  "hostCapabilities": [
+    "finder",
+    "robot-context",
+    "network-context"
   ],
   "services": [
     {
