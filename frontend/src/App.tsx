@@ -382,7 +382,7 @@ export default function App() {
 
 	const requestNapcatInstall = async () => {
 		if (!liveStatus?.verified) {
-			setResult({ output: '', error: liveStatus?.verificationReason || '当前平台尚未通过真实 E2E 验证，不能自动安装 NapCat。' })
+			setResult({ output: '', error: liveStatus?.verificationReason || '当前平台暂不支持自动安装 NapCat。' })
 			setState('failed')
 			return
 		}
@@ -461,11 +461,11 @@ export default function App() {
 			label: '关联目录',
 			action: () => document.getElementById('napcat-association')?.scrollIntoView({ behavior: 'smooth', block: 'center' }),
 		}
-		if (engine === 'napcat' && !liveStatus.installed && !liveStatus.verified) return { title: '自动安装等待真实验证', description: liveStatus.verificationReason || `${liveStatus.platform || '当前平台'} 尚未注入与官方来源匹配的 E2E 验证证据，自动安装、启动与配置写入保持锁定。`, label: '查看状态', action: () => void run('napcat-status') }
+		if (engine === 'napcat' && !liveStatus.installed && !liveStatus.verified) return { title: '当前平台暂不支持自动安装', description: liveStatus.verificationReason || '请使用当前系统的官方安装方式，或关联已有 NapCat。', label: '查看状态', action: () => void run('napcat-status') }
 		if (engine === 'napcat' && liveStatus.installed && !liveStatus.managed) return { title: '已关联外部 NapCat', description: '工作台只显示状态、登录二维码和内嵌 WebUI，不会启动、停止、更新、写配置或删除外部目录。', label: webUrl ? '打开管理面板' : '查看状态', action: () => webUrl ? setView('webui') : void run('napcat-status') }
-		if (engine === 'napcat' && liveStatus.installed && !liveStatus.managedActions) return { title: '受管操作等待验证', description: '当前安装没有与本机平台完全匹配的真实 E2E 证据；为保护已有 QQ 环境，自动操作仍然锁定。', label: '查看状态', action: () => void run('napcat-status') }
+		if (engine === 'napcat' && liveStatus.installed && !liveStatus.managedActions) return { title: '需要修复受管安装', description: '安装目录或运行文件与记录不一致。为保护已有 QQ 环境，请重装，或改为关联外部实例。', label: '查看状态', action: () => void run('napcat-status') }
 		if (engine === 'luckylillia' && liveStatus.supported === false) return { title: '当前平台不支持 LuckyLillia CLI', description: 'MVP 仅支持 Windows x64、macOS Apple Silicon、Linux x64 与 Linux ARM64。', label: '查看状态', action: () => void run(luckyAction('status')) }
-		if (engine === 'luckylillia' && !liveStatus.verified) return { title: '实验能力等待验证', description: `${liveStatus.platform || '当前平台'} 的官方包已识别，但尚未通过真实端到端验证，当前不开放安装或启动。`, label: '查看状态', action: () => void run(luckyAction('status')) }
+		if (engine === 'luckylillia' && !liveStatus.verified) return { title: '当前平台暂不支持自动安装', description: `${liveStatus.platform || '当前平台'} 没有可用的 LuckyLillia 官方 CLI 包。可使用官方方式安装后再关联目录。`, label: '查看状态', action: () => void run(luckyAction('status')) }
 		if (!liveStatus.installed) return { title: '第一步：安装核心', description: '下载官方组件并准备本机运行环境。', label: engine === 'napcat' ? '安装 NapCat' : '安装 LuckyLillia', action: () => confirm('安装 QQ 核心', engine === 'napcat' && liveStatus.linuxDependencies && !liveStatus.linuxDependencies.ready ? '将先通过一次 sudo 授权补齐固定 Linux 依赖，成功后自动继续安装 NapCat。' : '将下载并安装官方组件；安装过程可能需要几分钟。', () => engine === 'napcat' ? requestNapcatInstall() : run(luckyAction('install'), {}, true)) }
 		if (engine === 'luckylillia' && !liveStatus.managed) return { title: '已关联外部 LuckyLillia', description: '工作台仅显示状态和内嵌 WebUI；不会替你启动、更新、写配置或删除外部目录。', label: webUrl ? '打开管理面板' : '查看状态', action: () => webUrl ? setView('webui') : void run(luckyAction('status')) }
 		if (!liveStatus.running) return { title: '第二步：启动服务', description: '启动后将自动等待 QQ 登录二维码。', label: engine === 'napcat' ? '启动 NapCat' : '启动 LuckyLillia', action: () => confirm('启动 QQ 核心', '启动后台服务并等待登录。', () => run(engine === 'napcat' ? 'start' : luckyAction('start'), {}, true)) }
@@ -556,8 +556,6 @@ export default function App() {
                 </p>
               )}
 				{liveStatus.diagnosticHint && <p className="m-0 rounded-md bg-[var(--theme-warning-soft)] px-2 py-1.5 text-[var(--theme-warning-text)]">{liveStatus.diagnosticHint}</p>}
-				{engine === 'napcat' && liveStatus.verificationReason && <p className="m-0 text-xs leading-5 text-[var(--theme-text-muted)]">自动安装保持锁定，不会尝试下载或执行上游安装脚本。</p>}
-				{engine === 'luckylillia' && liveStatus.installMode === 'verified-release' && liveStatus.verified === false && <p className="m-0 rounded-md bg-[var(--theme-warning-soft)] px-2 py-1.5 text-[var(--theme-warning-text)]">{liveStatus.platform || '当前平台'} 的自动安装仍待真实验证；正式版暂不提供安装、更新、启动或配置写入。</p>}
 				{engine === 'luckylillia' && liveStatus.assetName && <p className="m-0 text-xs text-[var(--theme-text-muted)]">官方 CLI 包：<code>{liveStatus.assetName}</code>{liveStatus.entrypoint ? ` · 启动入口 ${liveStatus.entrypoint}` : ''}</p>}
 			  {engine === 'napcat' && napcatManagedActions && liveStatus.installed && !liveStatus.running && (
                 <div className="flex gap-2">
@@ -627,7 +625,7 @@ export default function App() {
 			<div className="mt-3 flex flex-wrap gap-2">
 			{engine === 'napcat' ? <>
 				<ActionButton label="查看状态" variant="secondary" running={state === 'running'} onClick={() => void run('napcat-status')} />
-				<ActionButton label="安装" running={state === 'running'} disabled={!liveStatus?.verified || liveStatus?.installed} onClick={() => confirm('安装 NapCat', liveStatus?.linuxDependencies && !liveStatus.linuxDependencies.ready ? '将先通过一次 sudo 授权补齐固定 Linux 依赖，成功后自动继续安装 NapCat。' : '会下载经真实 E2E 证据绑定的官方组件。', requestNapcatInstall)} />
+				<ActionButton label="安装" running={state === 'running'} disabled={!liveStatus?.verified || liveStatus?.installed} onClick={() => confirm('安装 NapCat', liveStatus?.linuxDependencies && !liveStatus.linuxDependencies.ready ? '将先通过一次 sudo 授权补齐固定 Linux 依赖，成功后自动继续安装 NapCat。' : '会下载并校验官方组件，然后完成安装。', requestNapcatInstall)} />
 				<ActionButton label="启动" variant="secondary" running={state === 'running'} disabled={!napcatManagedActions || !liveStatus?.installed} onClick={() => confirm('启动 NapCat', '启动工作台受管的后台进程，用手机 QQ 扫码登录。', () => run('start', {}, true))} />
 				<ActionButton label="停止" variant="secondary" running={state === 'running'} disabled={!napcatManagedActions || !liveStatus?.running} onClick={() => confirm('停止 NapCat', '停止工作台受管的 NapCat 进程组。', () => run('stop', {}, true))} />
 				<ActionButton label="重启" variant="secondary" running={state === 'running'} disabled={!napcatManagedActions || !liveStatus?.installed} onClick={() => confirm('重启 NapCat', '停止后重新启动工作台受管的 NapCat。', () => run('restart', {}, true))} />

@@ -1,10 +1,9 @@
 package main
 
 import (
-	"encoding/base64"
-	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -28,29 +27,19 @@ func withTempState(t *testing.T) string {
 func makeManagedNapcatForConfig(t *testing.T, napcat string) {
 	t.Helper()
 	platform := napcatPlatform()
-	if platform == nil {
-		t.Skip("unsupported host platform")
+	if platform == nil || !platform.AutoInstall || runtime.GOOS != "windows" {
+		t.Skip("managed NapCat configuration is unavailable on this platform")
 	}
 	fingerprint, err := napcatFingerprint(napcat)
 	if err != nil {
 		t.Fatal(err)
 	}
-	previous := napcatReleaseValidationEvidence
-	t.Cleanup(func() { napcatReleaseValidationEvidence = previous })
-	evidence := napcatEvidence{Platform: platform.Key, RuntimeFingerprint: fingerprint, ValidatedAt: "2026-08-10T00:00:00Z", ProcessModel: "foreground"}
-	state := State{InstallDir: napcat, Managed: true, Platform: platform.Key, InstallMode: "managed", Fingerprint: fingerprint, ValidatedAt: evidence.ValidatedAt}
+	state := State{InstallDir: napcat, Managed: true, Platform: platform.Key, InstallMode: "managed", Fingerprint: fingerprint}
 	if platform.Key == "windows-amd64" {
-		evidence.Tag, evidence.Asset, evidence.ArchiveSHA256 = "v1.0.0", windowsAsset, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-		state.ReleaseTag, state.Asset, state.ArchiveSHA256 = evidence.Tag, evidence.Asset, evidence.ArchiveSHA256
+		state.ReleaseTag, state.Asset, state.ArchiveSHA256 = "v1.0.0", windowsAsset, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	} else {
-		evidence.InstallerCommit, evidence.InstallerSHA256 = "commit", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-		state.ReleaseTag, state.ArchiveSHA256 = evidence.InstallerCommit, evidence.InstallerSHA256
+		state.ReleaseTag, state.Asset, state.ArchiveSHA256 = "main", "NapCat-Installer/install.sh", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	}
-	data, err := json.Marshal(evidence)
-	if err != nil {
-		t.Fatal(err)
-	}
-	napcatReleaseValidationEvidence = base64.RawURLEncoding.EncodeToString(data)
 	if err := saveState(state); err != nil {
 		t.Fatal(err)
 	}

@@ -59,10 +59,10 @@ func checkUpdate() (string, error) {
 		return "? 当前 NapCat 是外部关联实例；请使用其原始管理方式检查更新。", nil
 	}
 	if !napcatStateVerified(state) {
-		return "? 当前平台未注入匹配的真实 E2E 验证证据，自动更新已锁定。", nil
+		return "? 当前受管安装不完整或文件已变化，自动更新已锁定。", nil
 	}
 	if state.Platform != "windows-amd64" {
-		return "? Linux rootless 受管安装只在对应验证证据更新后开放升级；当前请保持现有安装。", nil
+		return "✓ 当前为 Linux rootless 安装。点击「更新」会重新执行官方安装器并保留原配置；失败时自动回滚。", nil
 	}
 	release, err := fetchLatest()
 	if err != nil {

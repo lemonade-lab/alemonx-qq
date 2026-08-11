@@ -24,6 +24,7 @@ const (
 	maxNapcatExtractedSize = int64(500 << 20)
 	maxInstallerSize       = int64(4 << 20)
 	windowsAsset           = "NapCat.Shell.Windows.OneKey.zip"
+	linuxInstallerRef      = "main"
 )
 
 type releaseAsset struct {
@@ -236,7 +237,7 @@ func copyNapcatConfig(source, target string) error {
 	return nil
 }
 
-func installWindowsNapCat(evidence napcatEvidence) (napcatInstallation, error) {
+func installWindowsNapCat() (napcatInstallation, error) {
 	release, err := fetchLatest()
 	if err != nil {
 		return napcatInstallation{}, err
@@ -245,8 +246,9 @@ func installWindowsNapCat(evidence napcatEvidence) (napcatInstallation, error) {
 	if err != nil {
 		return napcatInstallation{}, err
 	}
-	if evidence.Tag != release.TagName || evidence.Asset != asset.Name || !validSHA(evidence.ArchiveSHA256) || normalizedSHA(asset.Digest) != strings.ToLower(evidence.ArchiveSHA256) {
-		return napcatInstallation{}, errors.New("官方 NapCat Release 与当前平台验证证据不匹配")
+	expectedDigest := normalizedSHA(asset.Digest)
+	if !validSHA(expectedDigest) {
+		return napcatInstallation{}, errors.New("官方 NapCat Release 未提供有效 SHA-256 校验和")
 	}
 	root, err := managedInstallDir()
 	if err != nil {
@@ -260,13 +262,13 @@ func installWindowsNapCat(evidence napcatEvidence) (napcatInstallation, error) {
 		return napcatInstallation{}, err
 	}
 	archive := filepath.Join(stateRoot, "napcat-windows.zip")
-	reportNapcatProgress("download", 25, "下载已验证的 NapCat Windows Release 包")
+	reportNapcatProgress("download", 25, "下载官方 NapCat Windows Release 包")
 	digest, err := downloadFileLimited(asset.URL, archive, maxNapcatArchiveSize)
 	if err != nil {
 		return napcatInstallation{}, err
 	}
 	defer os.Remove(archive)
-	if !strings.EqualFold(digest, evidence.ArchiveSHA256) {
+	if !strings.EqualFold(digest, expectedDigest) {
 		return napcatInstallation{}, errors.New("NapCat Release SHA-256 校验失败")
 	}
 	stage, err := os.MkdirTemp(stateRoot, "napcat-stage-*")
@@ -285,9 +287,6 @@ func installWindowsNapCat(evidence napcatEvidence) (napcatInstallation, error) {
 	fingerprint, err := napcatFingerprint(extracted)
 	if err != nil {
 		return napcatInstallation{}, err
-	}
-	if fingerprint != evidence.RuntimeFingerprint {
-		return napcatInstallation{}, errors.New("NapCat 运行时指纹与验证证据不匹配")
 	}
 	backup := root + ".backup"
 	if _, err := os.Stat(backup); err == nil {
@@ -346,17 +345,14 @@ func rejectPrivilegedInstaller(path string) error {
 		for _, token := range strings.Fields(line) {
 			token = strings.Trim(token, "`$(){}[];|&\\\"'")
 			if token == "sudo" {
-				return errors.New("已拒绝执行包含 sudo 的 NapCat 安装器：工作台不会读取、传递或交互式请求管理员密码。请先在终端完成系统依赖；Linux 自动安装将在经过真实 E2E 审核的完全 rootless 安装器可用后开放")
+				return errors.New("已拒绝执行包含 sudo 的 NapCat 安装器：工作台只执行当前用户可运行的 rootless 安装器。请先通过工作台的「安装系统依赖」完成固定依赖安装后重试")
 			}
 		}
 	}
 	return nil
 }
 
-func installLinuxNapCat(evidence napcatEvidence) (napcatInstallation, error) {
-	if evidence.InstallerCommit == "" || !validSHA(evidence.InstallerSHA256) {
-		return napcatInstallation{}, errors.New("Linux NapCat 验证证据缺少固定安装器 commit 或 SHA-256")
-	}
+func installLinuxNapCat() (napcatInstallation, error) {
 	for _, command := range []string{"bash", "xvfb-run"} {
 		if _, err := exec.LookPath(command); err != nil {
 			return napcatInstallation{}, fmt.Errorf("缺少 %s；请先在终端安装 Linux 依赖后重试。\n建议：sudo apt-get install -y xvfb libnss3 libgbm1", command)
@@ -370,15 +366,12 @@ func installLinuxNapCat(evidence napcatEvidence) (napcatInstallation, error) {
 		return napcatInstallation{}, err
 	}
 	script := filepath.Join(stateRoot, "napcat-rootless-install.sh")
-	reportNapcatProgress("download", 25, "下载固定 commit 的 NapCat rootless 安装器")
-	digest, err := downloadFileLimited(linuxInstallerURL(evidence.InstallerCommit), script, maxInstallerSize)
+	reportNapcatProgress("download", 25, "下载官方 NapCat rootless 安装器")
+	digest, err := downloadFileLimited(linuxInstallerURL(linuxInstallerRef), script, maxInstallerSize)
 	if err != nil {
 		return napcatInstallation{}, err
 	}
 	defer os.Remove(script)
-	if !strings.EqualFold(digest, evidence.InstallerSHA256) {
-		return napcatInstallation{}, errors.New("NapCat rootless 安装器 SHA-256 校验失败")
-	}
 	if err := rejectPrivilegedInstaller(script); err != nil {
 		return napcatInstallation{}, err
 	}
@@ -416,10 +409,7 @@ func installLinuxNapCat(evidence napcatEvidence) (napcatInstallation, error) {
 	if err != nil {
 		return rollback(err)
 	}
-	if fingerprint != evidence.RuntimeFingerprint {
-		return rollback(errors.New("NapCat rootless 运行时指纹与验证证据不匹配"))
-	}
-	installation := napcatInstallation{Version: "rootless", InstallDir: root, ReleaseTag: evidence.InstallerCommit, Asset: "NapCat-Installer", ArchiveSHA256: digest, Fingerprint: fingerprint}
+	installation := napcatInstallation{Version: "rootless", InstallDir: root, ReleaseTag: linuxInstallerRef, Asset: "NapCat-Installer", ArchiveSHA256: digest, Fingerprint: fingerprint}
 	if hadPrevious {
 		installation.PreviousDir = backup
 	}
@@ -446,16 +436,12 @@ func rollbackNapcatInstallation(installation napcatInstallation) error {
 }
 
 func installNapCat() (napcatInstallation, error) {
-	evidence, err := napcatEvidenceRecord()
-	if err != nil {
-		return napcatInstallation{}, errors.New(napcatVerificationReason())
-	}
-	reportNapcatProgress("prepare", 5, "检查 NapCat 平台契约和验证证据")
+	reportNapcatProgress("prepare", 5, "检查 NapCat 平台契约")
 	switch runtime.GOOS {
 	case "windows":
-		return installWindowsNapCat(evidence)
+		return installWindowsNapCat()
 	case "linux":
-		return installLinuxNapCat(evidence)
+		return installLinuxNapCat()
 	default:
 		return napcatInstallation{}, errors.New("macOS NapCat 仅支持外部关联；工作台不会修改 QQ 注入文件")
 	}

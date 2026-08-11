@@ -79,11 +79,9 @@ func collectStatus(state State) statusPayload {
 	if platform != nil {
 		payload.Supported, payload.Platform = true, platform.Key
 	}
-	// Verified answers the install-time question: can this platform consume the
-	// reviewed release? ManagedActions answers the stricter runtime question:
-	// does this already-installed copy still match that reviewed identity?
-	// Keeping them separate lets a newly validated platform offer its first
-	// installation without weakening update, start, config, or uninstall gates.
+	// Verified answers the install-time question: does this platform have an
+	// official automatic-install contract? ManagedActions answers the runtime
+	// question: does this installed copy still match its recorded identity?
 	payload.Verified = napcatVerified()
 	payload.ManagedActions = state.Managed && napcatStateVerified(state)
 	if !payload.Verified && platform != nil && platform.AutoInstall {
@@ -130,7 +128,7 @@ func collectStatus(state State) statusPayload {
 		reasons = append(reasons, "这是外部关联实例，自动操作已禁用")
 	}
 	if state.Managed && !payload.ManagedActions {
-		reasons = append(reasons, "当前受管安装未与本机平台的真实 E2E 验证证据匹配")
+		reasons = append(reasons, "当前受管安装信息或运行文件已变化")
 	}
 	if payload.Installed && !payload.Running {
 		reasons = append(reasons, "进程未运行")

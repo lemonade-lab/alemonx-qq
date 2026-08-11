@@ -201,8 +201,7 @@ func installAction(confirmed bool) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	evidence, _ := napcatEvidenceRecord()
-	state = State{Version: installation.Version, InstallDir: installation.InstallDir, Managed: true, Platform: napcatPlatform().Key, InstallMode: "managed", ReleaseTag: installation.ReleaseTag, Asset: installation.Asset, ArchiveSHA256: installation.ArchiveSHA256, Fingerprint: installation.Fingerprint, ValidatedAt: evidence.ValidatedAt}
+	state = State{Version: installation.Version, InstallDir: installation.InstallDir, Managed: true, Platform: napcatPlatform().Key, InstallMode: "managed", ReleaseTag: installation.ReleaseTag, Asset: installation.Asset, ArchiveSHA256: installation.ArchiveSHA256, Fingerprint: installation.Fingerprint}
 	if err := saveState(state); err != nil {
 		_ = rollbackNapcatInstallation(installation)
 		return "", err
@@ -363,8 +362,7 @@ func updateNapcat(confirmed bool) (string, error) {
 		}
 		return "", installErr
 	}
-	evidence, _ := napcatEvidenceRecord()
-	updated := State{Version: installation.Version, InstallDir: installation.InstallDir, Managed: true, Platform: napcatPlatform().Key, InstallMode: "managed", ReleaseTag: installation.ReleaseTag, Asset: installation.Asset, ArchiveSHA256: installation.ArchiveSHA256, Fingerprint: installation.Fingerprint, ValidatedAt: evidence.ValidatedAt, WatchdogPID: state.WatchdogPID}
+	updated := State{Version: installation.Version, InstallDir: installation.InstallDir, Managed: true, Platform: napcatPlatform().Key, InstallMode: "managed", ReleaseTag: installation.ReleaseTag, Asset: installation.Asset, ArchiveSHA256: installation.ArchiveSHA256, Fingerprint: installation.Fingerprint, WatchdogPID: state.WatchdogPID}
 	if wasRunning {
 		reportNapcatProgress("restart", 90, "恢复更新后的 NapCat 运行状态")
 		pid, startErr := startNapCat(updated)

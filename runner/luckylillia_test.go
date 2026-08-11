@@ -4,8 +4,6 @@ import (
 	"archive/tar"
 	"archive/zip"
 	"bytes"
-	"encoding/base64"
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -217,32 +215,16 @@ func TestLuckyEntrypointUsesExactPlatformContract(t *testing.T) {
 	}
 }
 
-func TestLuckyEvidenceRequiresExactPlatformRecord(t *testing.T) {
+func TestLuckySupportedPlatformDoesNotRequireReleaseEvidence(t *testing.T) {
 	platform := luckyPlatform()
 	if platform == nil {
 		t.Skip("unsupported host platform")
 	}
 	previous := luckyReleaseValidationEvidence
 	t.Cleanup(func() { luckyReleaseValidationEvidence = previous })
-	records := []luckyEvidence{{Platform: platform.Key, Tag: "v8.1.7", Asset: platform.AssetName, ArchiveSHA256: "9741b26ed6c2cbeb3bcf0fa86928f2bceeb3034a84d7950e489446936e455c1d", Fingerprint: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", ValidatedAt: "2026-08-10T00:00:00Z", ProcessModel: "foreground"}}
-	data, err := json.Marshal(records)
-	if err != nil {
-		t.Fatal(err)
-	}
-	luckyReleaseValidationEvidence = base64.RawURLEncoding.EncodeToString(data)
-	if !luckyVerified() {
-		t.Fatal("valid current-platform evidence must unlock the gate")
-	}
-	asset := releaseAsset{Name: platform.AssetName, Digest: "sha256:9741b26ed6c2cbeb3bcf0fa86928f2bceeb3034a84d7950e489446936e455c1d"}
-	if !luckyEvidenceMatchesRelease(githubRelease{TagName: "v8.1.7"}, asset) {
-		t.Fatal("matching release must be accepted")
-	}
-	if luckyEvidenceMatchesRelease(githubRelease{TagName: "v8.1.8"}, asset) {
-		t.Fatal("different release tag must remain locked")
-	}
-	asset.Digest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-	if luckyEvidenceMatchesRelease(githubRelease{TagName: "v8.1.7"}, asset) {
-		t.Fatal("different archive hash must remain locked")
+	luckyReleaseValidationEvidence = ""
+	if got, want := luckyVerified(), platform.AutoInstall; got != want {
+		t.Fatalf("automatic support = %v, want %v", got, want)
 	}
 }
 
