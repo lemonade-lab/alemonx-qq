@@ -13,6 +13,7 @@ type Task = {
 
 export type ActionResult = { output: string; error?: string }
 export type HostPrivilegeStatus = { privilege: { enabled: boolean; mode: string; reason?: string; policyVersion: string } }
+export type PrivilegePreflight = { available: boolean; authorization: 'password' | 'native-uac' | 'polkit' | 'unavailable'; title: string; description: string; reason?: string; intentId?: string; expiresAt?: string }
 
 async function json<T>(response: Response): Promise<T> {
   if (!response.ok) {
@@ -102,14 +103,22 @@ export async function runActionAndPoll(
 // plugin action forwarder. Keep the credential out of the generic API.
 export async function runNapcatDependenciesAndPoll(
   sudoPassword: string,
+	authorizationId: string,
   onUpdate?: (task: Task) => void
 ): Promise<ActionResult> {
   const payload = await json<{ id: string }>(await fetch('/api/v1/system/privileged/napcat-dependencies', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action: 'napcat-install-dependencies', confirm: true, sudoPassword })
+    body: JSON.stringify({ action: 'napcat-install-dependencies', confirm: true, sudoPassword, authorizationId })
   }))
   return pollTask(payload.id, onUpdate)
+}
+
+export async function preflightPrivilege(action: string): Promise<PrivilegePreflight> {
+	return json<PrivilegePreflight>(await fetch('/api/v1/system/privileged/preflight', {
+		method: 'POST', headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ pluginId: PLUGIN_ID, action })
+	}))
 }
 
 export type StatusPayload = {

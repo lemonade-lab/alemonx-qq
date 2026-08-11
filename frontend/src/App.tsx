@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { fetchHostPrivilegeStatus, fetchLocalServices, fetchRobotProjects, fetchStatus, napcatQRCodeURL, runActionAndPoll, runNapcatDependenciesAndPoll, syncRobotOneBot, type ActionResult, type HostPrivilegeStatus, type LocalService, type RobotProject, type StatusPayload } from './api'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { fetchLocalServices, fetchRobotProjects, fetchStatus, napcatQRCodeURL, preflightPrivilege, runActionAndPoll, runNapcatDependenciesAndPoll, syncRobotOneBot, type ActionResult, type LocalService, type PrivilegePreflight, type RobotProject, type StatusPayload } from './api'
 import { splitStatusLines, type StatusLine } from './status'
 
 type View = 'manage' | 'config' | 'webui'
@@ -168,11 +168,15 @@ function ConfirmModal({
 function SudoPasswordModal({
   onSubmit,
   onCancel,
-  systemAccount
+  systemAccount,
+	preflight,
+	serverError
 }: {
   onSubmit: (password: string) => void
   onCancel: () => void
   systemAccount?: string
+	preflight?: PrivilegePreflight
+	serverError?: string
 }) {
   const [password, setPassword] = useState('')
   const [confirmation, setConfirmation] = useState('')
@@ -191,24 +195,27 @@ function SudoPasswordModal({
     setConfirmation('')
     onSubmit(value)
   }
+  const unavailable = !preflight?.available || !preflight.intentId || preflight.authorization !== 'password'
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-[var(--theme-surface-overlay)]">
       <div className="grid w-[min(460px,calc(100vw-32px))] gap-3 rounded-panel border border-[var(--theme-border-default)] bg-[var(--theme-surface-panel)] p-4 shadow-[var(--theme-shadow-pop)]">
         <div className="grid gap-1">
-          <h3 className="m-0 text-[15px] font-semibold text-[var(--theme-text-strong)]">授权安装 Linux 系统依赖</h3>
-          <p className="m-0 text-[13px] leading-5 text-[var(--theme-text-muted)]">将以当前系统账户通过 APT 安装固定的 <code>xvfb</code>、<code>libnss3</code> 和 <code>libgbm1</code>。密码仅用于这一次 sudo 授权，不会保存、写入插件或显示在日志中。</p>
+          <h3 className="m-0 text-[15px] font-semibold text-[var(--theme-text-strong)]">{preflight?.title || '系统权限请求'}</h3>
+          <p className="m-0 text-[13px] leading-5 text-[var(--theme-text-muted)]">{preflight?.description || '正在检查本次系统权限请求。'}</p>
           {systemAccount && <p className="m-0 text-xs text-[var(--theme-text-secondary)]">系统账户：<code>{systemAccount}</code></p>}
         </div>
-        <label className="grid gap-1 text-xs font-semibold text-[var(--theme-text-secondary)]">sudo 密码
-          <input autoFocus className={inputClass} type="password" autoComplete="current-password" value={password} onChange={event => { setPassword(event.target.value); setError('') }} />
-        </label>
-        <label className="grid gap-1 text-xs font-semibold text-[var(--theme-text-secondary)]">确认 sudo 密码
-          <input className={inputClass} type="password" autoComplete="current-password" value={confirmation} onChange={event => { setConfirmation(event.target.value); setError('') }} onKeyDown={event => { if (event.key === 'Enter') submit() }} />
-        </label>
-        {error && <p className="m-0 rounded-md bg-[var(--theme-danger-soft)] px-2 py-1.5 text-xs text-[var(--theme-danger-text)]">{error}</p>}
+        {unavailable ? <p className="m-0 rounded-md bg-[var(--theme-warning-soft)] px-2 py-1.5 text-xs text-[var(--theme-warning-text)]">{preflight?.reason || '当前无法发起系统授权。请在本机桌面工作台中重试。'}</p> : <>
+          <label className="grid gap-1 text-xs font-semibold text-[var(--theme-text-secondary)]">sudo 密码
+            <input autoFocus className={inputClass} type="password" autoComplete="current-password" value={password} onChange={event => { setPassword(event.target.value); setError('') }} />
+          </label>
+          <label className="grid gap-1 text-xs font-semibold text-[var(--theme-text-secondary)]">确认 sudo 密码
+            <input className={inputClass} type="password" autoComplete="current-password" value={confirmation} onChange={event => { setConfirmation(event.target.value); setError('') }} onKeyDown={event => { if (event.key === 'Enter') submit() }} />
+          </label>
+        </>}
+        {(error || serverError) && <p className="m-0 rounded-md bg-[var(--theme-danger-soft)] px-2 py-1.5 text-xs text-[var(--theme-danger-text)]">{error || serverError}</p>}
         <div className="flex justify-end gap-2">
           <button className="secondary-button" onClick={() => { setPassword(''); setConfirmation(''); onCancel() }}>取消</button>
-          <button className="danger-button" onClick={submit}>确认授权</button>
+          {!unavailable && <button className="danger-button" onClick={submit}>确认授权</button>}
         </div>
       </div>
     </div>
@@ -292,7 +299,12 @@ export default function App() {
     action: () => Promise<void>
   } | null>(null)
 	const [sudoPromptOpen, setSudoPromptOpen] = useState(false)
-	const [hostPrivilege, setHostPrivilege] = useState<HostPrivilegeStatus>()
+	const [napcatPreflight, setNapcatPreflight] = useState<PrivilegePreflight>()
+	const [napcatPrivilegeError, setNapcatPrivilegeError] = useState('')
+	// Set only after the user explicitly confirms the NapCat installation. It
+	// never comes from an installer error, so an upstream script cannot turn a
+	// password prompt into an arbitrary privileged retry.
+	const resumeNapcatInstallRef = useRef(false)
   const [liveStatus, setLiveStatus] = useState<StatusPayload | null>(null)
 	const [projects, setProjects] = useState<RobotProject[]>([])
 	const [services, setServices] = useState<LocalService[]>([])
@@ -334,14 +346,72 @@ export default function App() {
 	}
 
 	const installNapcatDependencies = (password: string) => {
+		if (!napcatPreflight?.intentId) return
 		setSudoPromptOpen(false)
+		setNapcatPrivilegeError('')
 		setActiveAction('napcat-install-dependencies')
 		setState('running')
 		setResult(undefined)
-		void runNapcatDependenciesAndPoll(password, task => setResult({ output: task.output || (task.progress ? `正在执行（${task.progress}%）` : '正在执行…') }))
-			.then(outcome => { setResult(outcome); setState(outcome.error ? 'failed' : 'done') })
-			.catch(reason => { setResult({ output: '', error: reason instanceof Error ? reason.message : String(reason) }); setState('failed') })
+		void runNapcatDependenciesAndPoll(password, napcatPreflight.intentId, task => setResult({ output: task.output || (task.progress ? `正在执行（${task.progress}%）` : '正在执行…') }))
+			.then(async outcome => {
+				const resumeInstall = resumeNapcatInstallRef.current
+				resumeNapcatInstallRef.current = false
+				if (outcome.error) {
+					setResult(outcome)
+					setState('failed')
+					if (outcome.error.includes('权限请求已') || outcome.error.includes('请先在工作台确认')) {
+						await requestNapcatDependencyAuthorization(resumeInstall)
+						setNapcatPrivilegeError('权限请求已刷新，请重新输入密码后继续。')
+						return
+					}
+					setNapcatPrivilegeError(outcome.error)
+					setSudoPromptOpen(true)
+					return
+				}
+				if (resumeInstall) {
+					setResult({ output: `${outcome.output}\n依赖已补齐，正在继续安装 NapCat…` })
+					await run('install', {}, true)
+					return
+				}
+				setResult(outcome)
+				setState('done')
+			})
+			.catch(reason => { const message = reason instanceof Error ? reason.message : String(reason); resumeNapcatInstallRef.current = false; setResult({ output: '', error: message }); setNapcatPrivilegeError(message); setSudoPromptOpen(true); setState('failed') })
 			.finally(() => setActiveAction(null))
+	}
+
+	const requestNapcatInstall = async () => {
+		if (!liveStatus?.verified) {
+			setResult({ output: '', error: '当前平台尚未通过真实 E2E 验证，不能自动安装 NapCat。' })
+			setState('failed')
+			return
+		}
+		if (liveStatus.linuxDependencies && !liveStatus.linuxDependencies.ready) {
+			await requestNapcatDependencyAuthorization(true)
+			return
+		}
+		await run('install', {}, true)
+	}
+
+	const requestNapcatDependencyAuthorization = async (resumeInstall: boolean) => {
+		resumeNapcatInstallRef.current = resumeInstall
+		setNapcatPrivilegeError('')
+		try {
+			const preflight = await preflightPrivilege('napcat-install-dependencies')
+			setNapcatPreflight(preflight)
+			setSudoPromptOpen(true)
+		} catch (reason) {
+			resumeNapcatInstallRef.current = false
+			setResult({ output: '', error: reason instanceof Error ? reason.message : String(reason) })
+			setState('failed')
+		}
+	}
+
+	const cancelSudoPrompt = () => {
+		resumeNapcatInstallRef.current = false
+		setNapcatPreflight(undefined)
+		setNapcatPrivilegeError('')
+		setSudoPromptOpen(false)
 	}
 
 	// Login QR codes are short-lived. Poll the read-only endpoint faster only
@@ -352,11 +422,10 @@ export default function App() {
     const tick = async () => {
 			if (document.hidden) return
 		try {
-			const [status, nextServices, privilege] = await Promise.all([fetchStatus(engine), fetchLocalServices(), fetchHostPrivilegeStatus().catch(() => undefined)])
+			const [status, nextServices] = await Promise.all([fetchStatus(engine), fetchLocalServices()])
 			if (!stopped) {
 				setLiveStatus(status)
 				setServices(nextServices)
-				setHostPrivilege(privilege)
 				setNapcatQQ(current => current || status.selectedAccount || '')
 			}
       } catch {
@@ -397,7 +466,7 @@ export default function App() {
 		if (engine === 'napcat' && liveStatus.installed && !liveStatus.managedActions) return { title: '受管操作等待验证', description: '当前安装没有与本机平台完全匹配的真实 E2E 证据；为保护已有 QQ 环境，自动操作仍然锁定。', label: '查看状态', action: () => void run('napcat-status') }
 		if (engine === 'luckylillia' && liveStatus.supported === false) return { title: '当前平台不支持 LuckyLillia CLI', description: 'MVP 仅支持 Windows x64、macOS Apple Silicon、Linux x64 与 Linux ARM64。', label: '查看状态', action: () => void run(luckyAction('status')) }
 		if (engine === 'luckylillia' && !liveStatus.verified) return { title: '实验能力等待验证', description: `${liveStatus.platform || '当前平台'} 的官方包已识别，但尚未通过真实端到端验证，当前不开放安装或启动。`, label: '查看状态', action: () => void run(luckyAction('status')) }
-		if (!liveStatus.installed) return { title: '第一步：安装核心', description: '下载官方组件并准备本机运行环境。', label: engine === 'napcat' ? '安装 NapCat' : '安装 LuckyLillia', action: () => confirm('安装 QQ 核心', '将下载并安装官方组件；安装过程可能需要几分钟。', () => run(engine === 'napcat' ? 'install' : luckyAction('install'), {}, true)) }
+		if (!liveStatus.installed) return { title: '第一步：安装核心', description: '下载官方组件并准备本机运行环境。', label: engine === 'napcat' ? '安装 NapCat' : '安装 LuckyLillia', action: () => confirm('安装 QQ 核心', engine === 'napcat' && liveStatus.linuxDependencies && !liveStatus.linuxDependencies.ready ? '将先通过一次 sudo 授权补齐固定 Linux 依赖，成功后自动继续安装 NapCat。' : '将下载并安装官方组件；安装过程可能需要几分钟。', () => engine === 'napcat' ? requestNapcatInstall() : run(luckyAction('install'), {}, true)) }
 		if (engine === 'luckylillia' && !liveStatus.managed) return { title: '已关联外部 LuckyLillia', description: '工作台仅显示状态和内嵌 WebUI；不会替你启动、更新、写配置或删除外部目录。', label: webUrl ? '打开管理面板' : '查看状态', action: () => webUrl ? setView('webui') : void run(luckyAction('status')) }
 		if (!liveStatus.running) return { title: '第二步：启动服务', description: '启动后将自动等待 QQ 登录二维码。', label: engine === 'napcat' ? '启动 NapCat' : '启动 LuckyLillia', action: () => confirm('启动 QQ 核心', '启动后台服务并等待登录。', () => run(engine === 'napcat' ? 'start' : luckyAction('start'), {}, true)) }
 		if (liveStatus.loginPending) return { title: '第三步：使用手机 QQ 扫码', description: '二维码会自动刷新；完成登录后状态会自动进入下一步。', label: webUrl ? '打开管理面板' : '等待二维码', action: () => webUrl ? setView('webui') : undefined }
@@ -418,7 +487,7 @@ export default function App() {
         </div>
 		<div className="flex gap-1">
 			{(['napcat', 'luckylillia'] as Engine[]).map(item => (
-				<button key={item} className={engine === item ? 'primary-button' : 'secondary-button'} onClick={() => { setEngine(item); setView('manage'); setResult(undefined); setState('idle') }}>
+				<button key={item} className={engine === item ? 'primary-button' : 'secondary-button'} onClick={() => { resumeNapcatInstallRef.current = false; setSudoPromptOpen(false); setEngine(item); setView('manage'); setResult(undefined); setState('idle') }}>
 					{item === 'napcat' ? 'NapCat' : 'LuckyLillia'}
 				</button>
 			))}
@@ -514,7 +583,7 @@ export default function App() {
 					<p className="m-0 text-xs leading-5 text-[var(--theme-text-muted)]">{liveStatus.linuxDependencies.hint || 'NapCat 需要系统运行依赖。'}</p>
 					{liveStatus.linuxDependencies.missing?.length ? <p className="m-0 text-xs text-[var(--theme-text-secondary)]">缺少：<code>{liveStatus.linuxDependencies.missing.join('、')}</code></p> : null}
 				</div>
-				{hostPrivilege && !hostPrivilege.privilege.enabled ? <p className="m-0 text-xs text-[var(--theme-warning-text)]">仅本机桌面可安装系统依赖：{hostPrivilege.privilege.reason || '当前部署已禁用权限操作。'}</p> : <ActionButton label="安装系统依赖" running={state === 'running'} disabled={!liveStatus.linuxDependencies.supported} onClick={() => confirm('安装 NapCat Linux 系统依赖', '将通过 APT 安装 xvfb、libnss3 和 libgbm1。下一步会要求输入一次 sudo 密码；密码不会交给插件或保存。', async () => setSudoPromptOpen(true))} />}
+				<ActionButton label="安装系统依赖" running={state === 'running'} disabled={!liveStatus.linuxDependencies.supported} onClick={() => confirm('安装 NapCat Linux 系统依赖', '工作台会先说明本次系统权限请求；在本机可用时再输入一次 sudo 密码。', () => requestNapcatDependencyAuthorization(false))} />
 			</section>
 		  )}
 
@@ -557,7 +626,7 @@ export default function App() {
 			<div className="mt-3 flex flex-wrap gap-2">
 			{engine === 'napcat' ? <>
 				<ActionButton label="查看状态" variant="secondary" running={state === 'running'} onClick={() => void run('napcat-status')} />
-				<ActionButton label="安装" running={state === 'running'} disabled={!liveStatus?.verified || liveStatus?.installed} onClick={() => confirm('安装 NapCat', '会下载经真实 E2E 证据绑定的官方组件。', () => run('install', {}, true))} />
+				<ActionButton label="安装" running={state === 'running'} disabled={!liveStatus?.verified || liveStatus?.installed} onClick={() => confirm('安装 NapCat', liveStatus?.linuxDependencies && !liveStatus.linuxDependencies.ready ? '将先通过一次 sudo 授权补齐固定 Linux 依赖，成功后自动继续安装 NapCat。' : '会下载经真实 E2E 证据绑定的官方组件。', requestNapcatInstall)} />
 				<ActionButton label="启动" variant="secondary" running={state === 'running'} disabled={!napcatManagedActions || !liveStatus?.installed} onClick={() => confirm('启动 NapCat', '启动工作台受管的后台进程，用手机 QQ 扫码登录。', () => run('start', {}, true))} />
 				<ActionButton label="停止" variant="secondary" running={state === 'running'} disabled={!napcatManagedActions || !liveStatus?.running} onClick={() => confirm('停止 NapCat', '停止工作台受管的 NapCat 进程组。', () => run('stop', {}, true))} />
 				<ActionButton label="重启" variant="secondary" running={state === 'running'} disabled={!napcatManagedActions || !liveStatus?.installed} onClick={() => confirm('重启 NapCat', '停止后重新启动工作台受管的 NapCat。', () => run('restart', {}, true))} />
@@ -752,7 +821,7 @@ export default function App() {
           onCancel={() => setPendingConfirm(null)}
         />
       )}
-      {sudoPromptOpen && <SudoPasswordModal onSubmit={installNapcatDependencies} onCancel={() => setSudoPromptOpen(false)} systemAccount={liveStatus?.linuxDependencies?.systemAccount} />}
+		{sudoPromptOpen && <SudoPasswordModal onSubmit={installNapcatDependencies} onCancel={cancelSudoPrompt} systemAccount={liveStatus?.linuxDependencies?.systemAccount} preflight={napcatPreflight} serverError={napcatPrivilegeError} />}
     </div>
   )
 }
