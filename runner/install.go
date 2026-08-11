@@ -2,24 +2,35 @@ package main
 
 import (
 	"archive/zip"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
 const (
-	latestReleaseURL       = "https://api.github.com/repos/NapNeko/NapCatQQ/releases/latest"
-	downloadTimeout        = 30 * time.Minute
+	latestReleaseURL = "https://api.github.com/repos/NapNeko/NapCatQQ/releases/latest"
+	// Linux needs to download the official QQ runtime in addition to NapCat.
+	// Its package is currently about 190 MB, so this must not use the short
+	// timeout appropriate for ordinary API calls. Connection and idle timeouts
+	// below still fail a genuinely stalled transfer promptly.
+	metadataTimeout        = 60 * time.Second
+	downloadTimeout        = 60 * time.Minute
+	downloadDialTimeout    = 20 * time.Second
+	downloadHeaderTimeout  = 60 * time.Second
+	downloadIdleTimeout    = 3 * time.Minute
 	maxNapcatArchiveSize   = int64(300 << 20)
 	maxNapcatExtractedSize = int64(500 << 20)
 	windowsAsset           = "NapCat.Shell.Windows.OneKey.zip"
@@ -49,7 +60,7 @@ type napcatInstallation struct {
 }
 
 func fetchLatest() (githubRelease, error) {
-	client := &http.Client{Timeout: 20 * time.Second}
+	client := &http.Client{Timeout: metadataTimeout}
 	response, err := client.Get(latestReleaseURL)
 	if err != nil {
 		return githubRelease{}, fmt.Errorf("无法访问 NapCat 发布信息：%w", err)
@@ -91,12 +102,42 @@ func validSHA(value string) bool {
 	return err == nil
 }
 
+type downloadProgress func(downloaded, total int64)
+
+// downloadFileLimited downloads one trusted archive while enforcing its size
+// limit. It intentionally separates the total transfer budget from connection
+// and idle budgets: a slow but continuously progressing Linux QQ download is
+// valid, while a frozen connection is not.
 func downloadFileLimited(url, dest string, limit int64) (string, error) {
-	client := &http.Client{Timeout: downloadTimeout}
-	response, err := client.Get(url)
+	return downloadFileLimitedWithProgress(url, dest, limit, nil)
+}
+
+func downloadFileLimitedWithProgress(url, dest string, limit int64, progress downloadProgress) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), downloadTimeout)
+	defer cancel()
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
+		return "", fmt.Errorf("创建下载请求失败：%w", err)
+	}
+	transport := &http.Transport{
+		Proxy:                 http.ProxyFromEnvironment,
+		DialContext:           (&net.Dialer{Timeout: downloadDialTimeout, KeepAlive: 30 * time.Second}).DialContext,
+		ForceAttemptHTTP2:     true,
+		IdleConnTimeout:       45 * time.Second,
+		TLSHandshakeTimeout:   downloadDialTimeout,
+		ResponseHeaderTimeout: downloadHeaderTimeout,
+		ExpectContinueTimeout: time.Second,
+	}
+	client := &http.Client{Transport: transport}
+	response, err := client.Do(request)
+	if err != nil {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return "", fmt.Errorf("下载超过 %s；请检查网络或代理后重试", downloadTimeout.Round(time.Minute))
+		}
 		return "", fmt.Errorf("下载失败：%w", err)
 	}
+	idleBody := newIdleReadCloser(response.Body, downloadIdleTimeout)
+	response.Body = idleBody
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("下载失败（%s）", response.Status)
@@ -113,8 +154,18 @@ func downloadFileLimited(url, dest string, limit int64) (string, error) {
 	}
 	defer handle.Close()
 	hash := sha256.New()
-	written, err := io.Copy(io.MultiWriter(handle, hash), io.LimitReader(response.Body, limit+1))
+	writer := io.MultiWriter(handle, hash)
+	if progress != nil {
+		writer = io.MultiWriter(handle, hash, &downloadProgressWriter{total: response.ContentLength, report: progress})
+	}
+	written, err := io.Copy(writer, io.LimitReader(response.Body, limit+1))
 	if err != nil {
+		if idleBody.timedOut.Load() {
+			return "", fmt.Errorf("下载超过 %s 没有收到数据；请检查网络或代理后重试", downloadIdleTimeout.Round(time.Second))
+		}
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return "", fmt.Errorf("下载超过 %s；请检查网络或代理后重试", downloadTimeout.Round(time.Minute))
+		}
 		return "", err
 	}
 	if written > limit {
@@ -124,6 +175,79 @@ func downloadFileLimited(url, dest string, limit int64) (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(hash.Sum(nil)), nil
+}
+
+type downloadProgressWriter struct {
+	total   int64
+	written int64
+	report  downloadProgress
+}
+
+func (w *downloadProgressWriter) Write(data []byte) (int, error) {
+	w.written += int64(len(data))
+	w.report(w.written, w.total)
+	return len(data), nil
+}
+
+type idleReadCloser struct {
+	io.ReadCloser
+	timer    *time.Timer
+	timeout  time.Duration
+	timedOut atomic.Bool
+}
+
+func newIdleReadCloser(body io.ReadCloser, timeout time.Duration) *idleReadCloser {
+	reader := &idleReadCloser{ReadCloser: body, timeout: timeout}
+	reader.timer = time.AfterFunc(timeout, func() {
+		reader.timedOut.Store(true)
+		_ = reader.ReadCloser.Close()
+	})
+	return reader
+}
+
+func (r *idleReadCloser) Read(data []byte) (int, error) {
+	n, err := r.ReadCloser.Read(data)
+	if n > 0 {
+		r.timer.Reset(r.timeout)
+	}
+	return n, err
+}
+
+func (r *idleReadCloser) Close() error {
+	if r.timer != nil {
+		r.timer.Stop()
+	}
+	return r.ReadCloser.Close()
+}
+
+func napcatDownloadProgress(label string, start, end int) downloadProgress {
+	lastPercent := -1
+	lastReport := time.Time{}
+	return func(downloaded, total int64) {
+		percent := start
+		if total > 0 {
+			percent += int((downloaded * int64(end-start)) / total)
+			if percent >= end {
+				percent = end - 1
+			}
+		}
+		if percent <= lastPercent && time.Since(lastReport) < 2*time.Second {
+			return
+		}
+		lastPercent, lastReport = percent, time.Now()
+		if total > 0 {
+			reportNapcatProgress("download", percent, fmt.Sprintf("%s（%s / %s）", label, humanBytes(downloaded), humanBytes(total)))
+			return
+		}
+		reportNapcatProgress("download", percent, fmt.Sprintf("%s（已下载 %s）", label, humanBytes(downloaded)))
+	}
+}
+
+func humanBytes(size int64) string {
+	if size < 1<<20 {
+		return fmt.Sprintf("%.1f KB", float64(size)/(1<<10))
+	}
+	return fmt.Sprintf("%.1f MB", float64(size)/(1<<20))
 }
 
 // downloadFile remains available to the LuckyLillia runner. NapCat callers
@@ -257,7 +381,7 @@ func installWindowsNapCat() (napcatInstallation, error) {
 	}
 	archive := filepath.Join(stateRoot, "napcat-windows.zip")
 	reportNapcatProgress("download", 25, "下载官方 NapCat Windows Release 包")
-	digest, err := downloadFileLimited(asset.URL, archive, maxNapcatArchiveSize)
+	digest, err := downloadFileLimitedWithProgress(asset.URL, archive, maxNapcatArchiveSize, napcatDownloadProgress("下载官方 NapCat Windows Release 包", 25, 50))
 	if err != nil {
 		return napcatInstallation{}, err
 	}
@@ -345,7 +469,7 @@ func installLinuxNapCat() (napcatInstallation, error) {
 	shellArchive := filepath.Join(stateRoot, "napcat-shell.zip")
 	qqArchive := filepath.Join(stateRoot, qqAsset.Name)
 	reportNapcatProgress("download", 20, "下载官方 NapCat Linux Release 包")
-	digest, err := downloadFileLimited(shellAsset.URL, shellArchive, maxNapcatArchiveSize)
+	digest, err := downloadFileLimitedWithProgress(shellAsset.URL, shellArchive, maxNapcatArchiveSize, napcatDownloadProgress("下载官方 NapCat Linux Release 包", 20, 35))
 	if err != nil {
 		return napcatInstallation{}, err
 	}
@@ -354,7 +478,7 @@ func installLinuxNapCat() (napcatInstallation, error) {
 		return napcatInstallation{}, errors.New("NapCat Linux Release SHA-256 校验失败")
 	}
 	reportNapcatProgress("download", 35, "下载官方 Linux QQ 运行时")
-	qqDigest, err := downloadFileLimited(qqAsset.URL, qqArchive, maxNapcatArchiveSize)
+	qqDigest, err := downloadFileLimitedWithProgress(qqAsset.URL, qqArchive, maxNapcatArchiveSize, napcatDownloadProgress("下载官方 Linux QQ 运行时", 35, 55))
 	if err != nil {
 		return napcatInstallation{}, err
 	}

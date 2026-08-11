@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { chooseSystemPath, fetchLocalServices, fetchRobotProjects, fetchStatus, napcatQRCodeURL, preflightPrivilege, runActionAndPoll, runNapcatDependenciesAndPoll, syncRobotOneBot, type ActionResult, type LocalService, type PrivilegePreflight, type RobotProject, type StatusPayload } from './api'
+import { chooseSystemPath, fetchLocalServices, fetchRobotProjects, fetchStatus, napcatQRCodeURL, preflightPrivilege, runActionAndPoll, runNapcatDependenciesAndPoll, syncRobotOneBot, type ActionResult, type LocalService, type PrivilegePreflight, type RobotProject, type StatusPayload, type Task, type TaskStep } from './api'
 import { splitStatusLines, type StatusLine } from './status'
 
 type View = 'manage' | 'config' | 'webui'
@@ -43,10 +43,12 @@ function StatusLineRow({ line }: { line: StatusLine }) {
 
 function ResultPanel({
   state,
-  result
+  result,
+  steps = []
 }: {
   state: 'idle' | 'running' | 'done' | 'failed'
   result?: ActionResult
+  steps?: TaskStep[]
 }) {
   const lines = useMemo(() => splitStatusLines(result?.output ?? ''), [result])
   if (state === 'idle') return null
@@ -68,6 +70,21 @@ function ResultPanel({
         <div className="whitespace-pre-wrap rounded-md bg-[var(--theme-danger-soft)] px-2 py-1.5 font-semibold leading-5 text-[var(--theme-danger-text)]">
           {result.error}
         </div>
+      )}
+      {steps.length > 0 && (
+        <details open={state === 'running'} className="rounded-md border border-[var(--theme-border-default)] bg-[var(--theme-surface-input)] px-2 py-1.5">
+          <summary className="cursor-pointer text-xs font-semibold text-[var(--theme-text-secondary)]">
+            本次操作流程（{steps.length} 个阶段）
+          </summary>
+          <ol className="mt-2 grid gap-1.5 border-l border-[var(--theme-border-default)] pl-3">
+            {steps.map((step, index) => (
+              <li key={`${step.at}-${index}`} className="grid grid-cols-[3.25rem_1fr] gap-2 text-[11px] leading-4">
+                <span className="font-mono text-[var(--theme-text-muted)]">{step.progress}%</span>
+                <span className="break-words text-[var(--theme-text-secondary)]">{step.message}</span>
+              </li>
+            ))}
+          </ol>
+        </details>
       )}
       {state === 'running' && !result?.output ? (
         <div className="grid gap-2 py-1">
@@ -280,6 +297,7 @@ export default function App() {
   const [view, setView] = useState<View>('manage')
 	const [engine, setEngine] = useState<Engine>('napcat')
   const [result, setResult] = useState<ActionResult | undefined>()
+	const [operationSteps, setOperationSteps] = useState<TaskStep[]>([])
 	const [activeAction, setActiveAction] = useState<string | null>(null)
   const [state, setState] = useState<'idle' | 'running' | 'done' | 'failed'>(
     'idle'
@@ -308,6 +326,11 @@ export default function App() {
 		? napcatQRCodeURL(liveStatus.qrCodeUpdatedAt)
 		: ''
 	const luckyAction = (action: string) => `luckylillia-${action}`
+	const applyOperationTask = (task: Task) => {
+		const output = task.output || (task.progress ? `正在执行（${task.progress}%）` : '正在执行…')
+		setResult({ output })
+		if (task.steps) setOperationSteps(task.steps)
+	}
 	const luckyManaged = liveStatus?.managed === true
 	const luckyInstalled = liveStatus?.installed === true
 	const napcatManagedActions = engine === 'napcat' && liveStatus?.managedActions === true
@@ -337,9 +360,10 @@ export default function App() {
 	setActiveAction(action)
     setState('running')
     setResult(undefined)
+		setOperationSteps([])
     try {
 		const outcome = await runActionAndPoll(action, params, confirm, task => {
-		setResult({ output: task.output || (task.progress ? `正在执行（${task.progress}%）` : '正在执行…') })
+		applyOperationTask(task)
 	  })
       setResult(outcome)
       setState(outcome.error ? 'failed' : 'done')
@@ -358,7 +382,8 @@ export default function App() {
 		setActiveAction('napcat-install-dependencies')
 		setState('running')
 		setResult(undefined)
-		void runNapcatDependenciesAndPoll(password, napcatPreflight.intentId, task => setResult({ output: task.output || (task.progress ? `正在执行（${task.progress}%）` : '正在执行…') }))
+		setOperationSteps([])
+		void runNapcatDependenciesAndPoll(password, napcatPreflight.intentId, applyOperationTask)
 			.then(async outcome => {
 				const resumeInstall = resumeNapcatInstallRef.current
 				resumeNapcatInstallRef.current = false
@@ -493,7 +518,7 @@ export default function App() {
         </div>
 		<div className="flex gap-1">
 			{(['napcat', 'luckylillia'] as Engine[]).map(item => (
-				<button key={item} className={engine === item ? 'primary-button' : 'secondary-button'} onClick={() => { resumeNapcatInstallRef.current = false; setSudoPromptOpen(false); setEngine(item); setView('manage'); setResult(undefined); setState('idle') }}>
+				<button key={item} className={engine === item ? 'primary-button' : 'secondary-button'} onClick={() => { resumeNapcatInstallRef.current = false; setSudoPromptOpen(false); setEngine(item); setView('manage'); setResult(undefined); setOperationSteps([]); setState('idle') }}>
 					{item === 'napcat' ? 'NapCat' : 'LuckyLillia'}
 				</button>
 			))}
@@ -659,7 +684,7 @@ export default function App() {
 		  </details>
 
 
-		  <ResultPanel state={state} result={state === 'running' ? { output: actionTitle(activeAction) } : result} />
+		  <ResultPanel state={state} result={result ?? (state === 'running' ? { output: actionTitle(activeAction) } : undefined)} steps={operationSteps} />
 
 		  {engine === 'napcat' && liveStatus?.loginPending && (
 			<section className="grid justify-items-center gap-3 rounded-panel border border-[var(--theme-border-default)] bg-[var(--theme-surface-panel)] p-4 text-center">
@@ -701,7 +726,7 @@ export default function App() {
 			</div>
 			<ActionButton label="读取当前配置" variant="secondary" running={state === 'running'} onClick={() => void run(engine === 'napcat' ? 'onebot-config' : luckyAction('onebot-config'), engine === 'napcat' && napcatQQ ? { qq: napcatQQ } : {})} />
 		  </section>
-          <ResultPanel state={state} result={result} />
+		  <ResultPanel state={state} result={result} steps={operationSteps} />
 
           {engine === 'napcat' ? <><form
             className="grid grid-cols-[repeat(auto-fit,minmax(180px,1fr))] gap-3 rounded-panel border border-[var(--theme-border-default)] bg-[var(--theme-surface-panel)] p-3"

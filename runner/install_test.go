@@ -6,6 +6,8 @@ import (
 	"compress/gzip"
 	"encoding/binary"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -40,6 +42,36 @@ func TestLinuxQQReleaseAssetsArePinned(t *testing.T) {
 	}
 	if _, err := linuxQQReleaseAssetFor("amd64", "unknown"); err == nil {
 		t.Fatal("unknown package manager must be rejected")
+	}
+}
+
+func TestDownloadFileLimitedReportsProgressAndHash(t *testing.T) {
+	payload := bytes.Repeat([]byte("napcat"), 32*1024)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(payload)))
+		_, _ = w.Write(payload)
+	}))
+	defer server.Close()
+	var updates []int64
+	destination := filepath.Join(t.TempDir(), "napcat.zip")
+	digest, err := downloadFileLimitedWithProgress(server.URL, destination, int64(len(payload)+1), func(downloaded, total int64) {
+		if total != int64(len(payload)) {
+			t.Fatalf("progress total = %d, want %d", total, len(payload))
+		}
+		updates = append(updates, downloaded)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if digest != "d2e1fa9733407bfafd03c68c999eef9e4dcb3dd8236c02ccadd3946aa9deabe2" {
+		t.Fatalf("unexpected digest: %s", digest)
+	}
+	if len(updates) == 0 || updates[len(updates)-1] != int64(len(payload)) {
+		t.Fatalf("progress updates = %#v", updates)
+	}
+	data, err := os.ReadFile(destination)
+	if err != nil || !bytes.Equal(data, payload) {
+		t.Fatalf("downloaded payload mismatch: %v", err)
 	}
 }
 

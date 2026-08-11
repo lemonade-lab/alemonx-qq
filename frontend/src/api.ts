@@ -3,12 +3,19 @@
 
 const PLUGIN_ID = 'alemonx-qq'
 
-type Task = {
+export type TaskStep = {
+  at: string
+  progress: number
+  message: string
+}
+
+export type Task = {
   id: string
   status: 'running' | 'completed' | 'failed'
   output?: string
   error?: string
 	progress?: number
+	steps?: TaskStep[]
 }
 
 export type ActionResult = { output: string; error?: string }
