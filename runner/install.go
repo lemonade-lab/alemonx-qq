@@ -448,7 +448,7 @@ func rollbackNapcatInstallation(installation napcatInstallation) error {
 func installNapCat() (napcatInstallation, error) {
 	evidence, err := napcatEvidenceRecord()
 	if err != nil {
-		return napcatInstallation{}, err
+		return napcatInstallation{}, errors.New(napcatVerificationReason())
 	}
 	reportNapcatProgress("prepare", 5, "检查 NapCat 平台契约和验证证据")
 	switch runtime.GOOS {

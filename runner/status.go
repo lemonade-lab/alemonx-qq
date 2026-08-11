@@ -17,38 +17,39 @@ import (
 // the web UI can poll and render it precisely. Other actions keep returning
 // plain ✓/!? text.
 type statusPayload struct {
-	Engine            string                 `json:"engine"`
-	Installed         bool                   `json:"installed"`
-	InstallHealthy    bool                   `json:"installHealthy"`
-	Running           bool                   `json:"running"`
-	PortReachable     bool                   `json:"portReachable"`
-	WebUIReady        bool                   `json:"webUiReady"`
-	OneBotReady       bool                   `json:"oneBotReady"`
-	LoginPending      bool                   `json:"loginPending"`
-	Watchdog          bool                   `json:"watchdog"`
-	Version           string                 `json:"version,omitempty"`
-	PID               int                    `json:"pid,omitempty"`
-	WebUIURL          string                 `json:"webUiUrl,omitempty"`
-	OneBotURL         string                 `json:"oneBotUrl,omitempty"`
-	QRCodeAvailable   bool                   `json:"qrCodeAvailable"`
-	QRCodeUpdatedAt   string                 `json:"qrCodeUpdatedAt,omitempty"`
-	DiagnosticHint    string                 `json:"diagnosticHint,omitempty"`
-	Supported         bool                   `json:"supported"`
-	Managed           bool                   `json:"managed"`
-	Platform          string                 `json:"platform,omitempty"`
-	InstallMode       string                 `json:"installMode,omitempty"`
-	ReleaseTag        string                 `json:"releaseTag,omitempty"`
-	Asset             string                 `json:"asset,omitempty"`
-	ArchiveSHA256     string                 `json:"archiveSha256,omitempty"`
-	Fingerprint       string                 `json:"fingerprint,omitempty"`
-	ValidatedAt       string                 `json:"validatedAt,omitempty"`
-	Verified          bool                   `json:"verified"`
-	ManagedActions    bool                   `json:"managedActions"`
-	LinuxDependencies *linuxDependencyStatus `json:"linuxDependencies,omitempty"`
-	Accounts          []napcatAccount        `json:"accounts,omitempty"`
-	SelectedAccount   string                 `json:"selectedAccount,omitempty"`
-	UpdatedAt         string                 `json:"updatedAt"`
-	Error             string                 `json:"error,omitempty"`
+	Engine             string                 `json:"engine"`
+	Installed          bool                   `json:"installed"`
+	InstallHealthy     bool                   `json:"installHealthy"`
+	Running            bool                   `json:"running"`
+	PortReachable      bool                   `json:"portReachable"`
+	WebUIReady         bool                   `json:"webUiReady"`
+	OneBotReady        bool                   `json:"oneBotReady"`
+	LoginPending       bool                   `json:"loginPending"`
+	Watchdog           bool                   `json:"watchdog"`
+	Version            string                 `json:"version,omitempty"`
+	PID                int                    `json:"pid,omitempty"`
+	WebUIURL           string                 `json:"webUiUrl,omitempty"`
+	OneBotURL          string                 `json:"oneBotUrl,omitempty"`
+	QRCodeAvailable    bool                   `json:"qrCodeAvailable"`
+	QRCodeUpdatedAt    string                 `json:"qrCodeUpdatedAt,omitempty"`
+	DiagnosticHint     string                 `json:"diagnosticHint,omitempty"`
+	Supported          bool                   `json:"supported"`
+	Managed            bool                   `json:"managed"`
+	Platform           string                 `json:"platform,omitempty"`
+	InstallMode        string                 `json:"installMode,omitempty"`
+	ReleaseTag         string                 `json:"releaseTag,omitempty"`
+	Asset              string                 `json:"asset,omitempty"`
+	ArchiveSHA256      string                 `json:"archiveSha256,omitempty"`
+	Fingerprint        string                 `json:"fingerprint,omitempty"`
+	ValidatedAt        string                 `json:"validatedAt,omitempty"`
+	Verified           bool                   `json:"verified"`
+	VerificationReason string                 `json:"verificationReason,omitempty"`
+	ManagedActions     bool                   `json:"managedActions"`
+	LinuxDependencies  *linuxDependencyStatus `json:"linuxDependencies,omitempty"`
+	Accounts           []napcatAccount        `json:"accounts,omitempty"`
+	SelectedAccount    string                 `json:"selectedAccount,omitempty"`
+	UpdatedAt          string                 `json:"updatedAt"`
+	Error              string                 `json:"error,omitempty"`
 }
 
 type napcatAccount struct {
@@ -78,8 +79,16 @@ func collectStatus(state State) statusPayload {
 	if platform != nil {
 		payload.Supported, payload.Platform = true, platform.Key
 	}
-	payload.Verified = napcatStateVerified(state)
-	payload.ManagedActions = state.Managed && payload.Verified
+	// Verified answers the install-time question: can this platform consume the
+	// reviewed release? ManagedActions answers the stricter runtime question:
+	// does this already-installed copy still match that reviewed identity?
+	// Keeping them separate lets a newly validated platform offer its first
+	// installation without weakening update, start, config, or uninstall gates.
+	payload.Verified = napcatVerified()
+	payload.ManagedActions = state.Managed && napcatStateVerified(state)
+	if !payload.Verified && platform != nil && platform.AutoInstall {
+		payload.VerificationReason = napcatVerificationReason()
+	}
 	payload.Installed = state.InstallDir != "" && dirExists(state.InstallDir)
 	if platform != nil && platform.Key == "darwin-external" && !payload.Installed && macQQInstalled() && macNapcatInjected() {
 		if root, err := macInstallDir(); err == nil && dirExists(root) {
@@ -120,8 +129,8 @@ func collectStatus(state State) statusPayload {
 	if payload.Installed && !state.Managed {
 		reasons = append(reasons, "这是外部关联实例，自动操作已禁用")
 	}
-	if state.Managed && !payload.Verified {
-		reasons = append(reasons, "当前平台未注入匹配的真实 E2E 验证证据")
+	if state.Managed && !payload.ManagedActions {
+		reasons = append(reasons, "当前受管安装未与本机平台的真实 E2E 验证证据匹配")
 	}
 	if payload.Installed && !payload.Running {
 		reasons = append(reasons, "进程未运行")
@@ -131,6 +140,8 @@ func collectStatus(state State) statusPayload {
 	}
 	if payload.LoginPending {
 		payload.DiagnosticHint = "NapCat 已启动，等待在 WebUI 中扫码登录；OneBot 服务会在登录后就绪。"
+	} else if payload.VerificationReason != "" {
+		payload.DiagnosticHint = payload.VerificationReason
 	}
 	payload.Error = strings.Join(reasons, "；")
 	return payload

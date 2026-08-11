@@ -141,6 +141,7 @@ export type StatusPayload = {
 	diagnosticHint?: string
 	supported?: boolean
 	verified?: boolean
+	verificationReason?: string
 	platform?: string
 	assetName?: string
 	entrypoint?: string

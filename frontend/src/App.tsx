@@ -382,7 +382,7 @@ export default function App() {
 
 	const requestNapcatInstall = async () => {
 		if (!liveStatus?.verified) {
-			setResult({ output: '', error: '当前平台尚未通过真实 E2E 验证，不能自动安装 NapCat。' })
+			setResult({ output: '', error: liveStatus?.verificationReason || '当前平台尚未通过真实 E2E 验证，不能自动安装 NapCat。' })
 			setState('failed')
 			return
 		}
@@ -461,7 +461,7 @@ export default function App() {
 			label: '关联目录',
 			action: () => document.getElementById('napcat-association')?.scrollIntoView({ behavior: 'smooth', block: 'center' }),
 		}
-		if (engine === 'napcat' && !liveStatus.installed && !liveStatus.verified) return { title: '自动安装等待真实验证', description: `${liveStatus.platform || '当前平台'} 尚未注入与官方来源匹配的 E2E 验证证据，自动安装、启动与配置写入保持锁定。`, label: '查看状态', action: () => void run('napcat-status') }
+		if (engine === 'napcat' && !liveStatus.installed && !liveStatus.verified) return { title: '自动安装等待真实验证', description: liveStatus.verificationReason || `${liveStatus.platform || '当前平台'} 尚未注入与官方来源匹配的 E2E 验证证据，自动安装、启动与配置写入保持锁定。`, label: '查看状态', action: () => void run('napcat-status') }
 		if (engine === 'napcat' && liveStatus.installed && !liveStatus.managed) return { title: '已关联外部 NapCat', description: '工作台只显示状态、登录二维码和内嵌 WebUI，不会启动、停止、更新、写配置或删除外部目录。', label: webUrl ? '打开管理面板' : '查看状态', action: () => webUrl ? setView('webui') : void run('napcat-status') }
 		if (engine === 'napcat' && liveStatus.installed && !liveStatus.managedActions) return { title: '受管操作等待验证', description: '当前安装没有与本机平台完全匹配的真实 E2E 证据；为保护已有 QQ 环境，自动操作仍然锁定。', label: '查看状态', action: () => void run('napcat-status') }
 		if (engine === 'luckylillia' && liveStatus.supported === false) return { title: '当前平台不支持 LuckyLillia CLI', description: 'MVP 仅支持 Windows x64、macOS Apple Silicon、Linux x64 与 Linux ARM64。', label: '查看状态', action: () => void run(luckyAction('status')) }
@@ -556,6 +556,7 @@ export default function App() {
                 </p>
               )}
 				{liveStatus.diagnosticHint && <p className="m-0 rounded-md bg-[var(--theme-warning-soft)] px-2 py-1.5 text-[var(--theme-warning-text)]">{liveStatus.diagnosticHint}</p>}
+				{engine === 'napcat' && liveStatus.verificationReason && <p className="m-0 text-xs leading-5 text-[var(--theme-text-muted)]">自动安装保持锁定，不会尝试下载或执行上游安装脚本。</p>}
 				{engine === 'luckylillia' && liveStatus.installMode === 'verified-release' && liveStatus.verified === false && <p className="m-0 rounded-md bg-[var(--theme-warning-soft)] px-2 py-1.5 text-[var(--theme-warning-text)]">{liveStatus.platform || '当前平台'} 的自动安装仍待真实验证；正式版暂不提供安装、更新、启动或配置写入。</p>}
 				{engine === 'luckylillia' && liveStatus.assetName && <p className="m-0 text-xs text-[var(--theme-text-muted)]">官方 CLI 包：<code>{liveStatus.assetName}</code>{liveStatus.entrypoint ? ` · 启动入口 ${liveStatus.entrypoint}` : ''}</p>}
 			  {engine === 'napcat' && napcatManagedActions && liveStatus.installed && !liveStatus.running && (

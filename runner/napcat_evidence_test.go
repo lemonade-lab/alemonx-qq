@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/base64"
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -48,5 +49,20 @@ func TestExternalNapCatCannotReceiveManagedActions(t *testing.T) {
 	}
 	if err := requireNapcatConfirmation(false, "更新"); err == nil {
 		t.Fatal("mutating action must require protocol confirmation")
+	}
+}
+
+func TestNapcatVerificationReasonNamesCurrentPlatform(t *testing.T) {
+	previous := napcatReleaseValidationEvidence
+	napcatReleaseValidationEvidence = ""
+	t.Cleanup(func() { napcatReleaseValidationEvidence = previous })
+
+	platform := napcatPlatform()
+	if platform == nil || !platform.AutoInstall {
+		t.Skip("automatic NapCat install is unavailable on this test platform")
+	}
+	reason := napcatVerificationReason()
+	if !strings.Contains(reason, platform.Label) || !strings.Contains(reason, "真实 E2E") {
+		t.Fatalf("verification reason = %q", reason)
 	}
 }

@@ -66,6 +66,23 @@ func napcatVerified() bool {
 	return err == nil
 }
 
+// napcatVerificationReason turns the low-level evidence check into an
+// operator-facing explanation. It deliberately names the current architecture:
+// a Linux x64 validation must never unlock Linux ARM64, and vice versa.
+func napcatVerificationReason() string {
+	platform := napcatPlatform()
+	if platform == nil {
+		return "当前平台不支持 NapCat"
+	}
+	if !platform.AutoInstall {
+		return fmt.Sprintf("%s 的 NapCat 仅支持关联现有实例，不提供自动安装", platform.Label)
+	}
+	if _, err := napcatEvidenceRecord(); err != nil {
+		return fmt.Sprintf("%s 自动安装尚未解锁：%v。需要在该架构完成官方 NapCat 安装、启动、扫码、OneBot、停止、更新与回滚的真实 E2E 验证，并将审核通过的证据随新的插件 Release 发布。", platform.Label, err)
+	}
+	return ""
+}
+
 func napcatStateVerified(state State) bool {
 	evidence, err := napcatEvidenceRecord()
 	platform := napcatPlatform()

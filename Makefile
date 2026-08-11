@@ -7,6 +7,8 @@ BINARIES := \
 	dist/alemonx-qq-darwin-arm64 \
 	dist/alemonx-qq-darwin-amd64
 
+RUNNER_SOURCES := $(shell find runner -type f -name '*.go' -print) go.mod go.sum
+
 .PHONY: test vet validate web build dist check
 
 test:
@@ -30,19 +32,19 @@ build-fe:
 
 build: $(BINARIES)
 
-dist/alemonx-qq-linux-amd64:
+dist/alemonx-qq-linux-amd64: $(RUNNER_SOURCES)
 	GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o $@ ./runner
 
-dist/alemonx-qq-linux-arm64:
+dist/alemonx-qq-linux-arm64: $(RUNNER_SOURCES)
 	GOOS=linux GOARCH=arm64 go build -trimpath -ldflags "-s -w" -o $@ ./runner
 
-dist/alemonx-qq-windows-amd64.exe:
+dist/alemonx-qq-windows-amd64.exe: $(RUNNER_SOURCES)
 	GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o $@ ./runner
 
-dist/alemonx-qq-darwin-arm64:
+dist/alemonx-qq-darwin-arm64: $(RUNNER_SOURCES)
 	GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags "-s -w" -o $@ ./runner
 
-dist/alemonx-qq-darwin-amd64:
+dist/alemonx-qq-darwin-amd64: $(RUNNER_SOURCES)
 	GOOS=darwin GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o $@ ./runner
 
 # Package each platform as a zip containing the full plugin directory

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -14,6 +15,31 @@ func TestCollectStatusNotInstalled(t *testing.T) {
 	}
 	if payload.Error == "" {
 		t.Fatal("uninstalled must carry an error reason")
+	}
+}
+
+func TestCollectStatusSeparatesPlatformEvidenceFromManagedIdentity(t *testing.T) {
+	platform := napcatPlatform()
+	if platform == nil || !platform.AutoInstall {
+		t.Skip("automatic NapCat install is unavailable on this test platform")
+	}
+	previous := napcatReleaseValidationEvidence
+	t.Cleanup(func() { napcatReleaseValidationEvidence = previous })
+	evidence := napcatEvidence{Platform: platform.Key, RuntimeFingerprint: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", ValidatedAt: "2026-08-11T00:00:00Z", ProcessModel: "foreground"}
+	if platform.Key == "windows-amd64" {
+		evidence.Tag, evidence.Asset, evidence.ArchiveSHA256 = "v1.0.0", windowsAsset, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	} else {
+		evidence.InstallerCommit, evidence.InstallerSHA256 = "reviewed-commit", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	}
+	data, err := json.Marshal(evidence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	napcatReleaseValidationEvidence = base64.RawURLEncoding.EncodeToString(data)
+
+	payload := collectStatus(State{})
+	if !payload.Verified || payload.ManagedActions {
+		t.Fatalf("new installation status = %#v", payload)
 	}
 }
 
