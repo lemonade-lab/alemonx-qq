@@ -137,11 +137,7 @@ func ensureManagedLinuxRuntime() (managedLinuxRuntime, error) {
 	if err != nil {
 		return managedLinuxRuntime{}, err
 	}
-	tag := strings.TrimSpace(os.Getenv("ALX_PLUGIN_INSTALLED_TAG"))
-	releaseURL := linuxCompatibilityRuntimeLatestURL
-	if strings.HasPrefix(tag, "v") && !strings.ContainsAny(tag, "/?#") {
-		releaseURL = linuxCompatibilityRuntimeReleaseBaseURL + tag
-	}
+	releaseURL := linuxCompatibilityReleaseURL(os.Getenv("ALX_PLUGIN_INSTALLED_TAG"))
 	release, err := fetchRelease(releaseURL, "NapCat Linux 兼容运行环境")
 	if err != nil && releaseURL != linuxCompatibilityRuntimeLatestURL {
 		release, err = fetchRelease(linuxCompatibilityRuntimeLatestURL, "NapCat Linux 兼容运行环境")
@@ -154,6 +150,16 @@ func ensureManagedLinuxRuntime() (managedLinuxRuntime, error) {
 		return managedLinuxRuntime{}, fmt.Errorf("当前 QQ 插件 Release（%s）尚未附带 %s；请更新到包含兼容运行环境的 QQ 插件版本", release.TagName, assetContract.Name)
 	}
 	return installManagedLinuxRuntime(assetContract, asset)
+}
+
+// linuxCompatibilityReleaseURL accepts a formal plugin tag when available,
+// while source-development and old installations transparently use latest.
+func linuxCompatibilityReleaseURL(tag string) string {
+	tag = strings.TrimSpace(tag)
+	if strings.HasPrefix(tag, "v") && !strings.ContainsAny(tag, "/?#") {
+		return linuxCompatibilityRuntimeReleaseBaseURL + tag
+	}
+	return linuxCompatibilityRuntimeLatestURL
 }
 
 func managedRuntimeBaseDir() (string, error) {

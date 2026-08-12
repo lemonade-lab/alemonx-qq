@@ -6,7 +6,6 @@ import (
 	"archive/tar"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/klauspost/compress/zstd"
@@ -107,11 +106,14 @@ func TestManagedRuntimeIDCannotEscapeCacheRoot(t *testing.T) {
 	}
 }
 
-func TestManagedRuntimeRequiresInstalledPluginTag(t *testing.T) {
-	previous := os.Getenv("ALX_PLUGIN_INSTALLED_TAG")
-	t.Cleanup(func() { _ = os.Setenv("ALX_PLUGIN_INSTALLED_TAG", previous) })
-	_ = os.Unsetenv("ALX_PLUGIN_INSTALLED_TAG")
-	if _, err := ensureManagedLinuxRuntime(); err == nil || !strings.Contains(err.Error(), "未记录正式 Release 版本") {
-		t.Fatalf("missing installed tag must reject runtime lookup: %v", err)
+func TestManagedRuntimeReleaseURLFallsBackToLatestWithoutPluginTag(t *testing.T) {
+	if got := linuxCompatibilityReleaseURL(""); got != linuxCompatibilityRuntimeLatestURL {
+		t.Fatalf("missing tag URL = %q, want latest %q", got, linuxCompatibilityRuntimeLatestURL)
+	}
+	if got := linuxCompatibilityReleaseURL("v0.0.12"); got != linuxCompatibilityRuntimeReleaseBaseURL+"v0.0.12" {
+		t.Fatalf("formal tag URL = %q", got)
+	}
+	if got := linuxCompatibilityReleaseURL("not-a-tag"); got != linuxCompatibilityRuntimeLatestURL {
+		t.Fatalf("invalid tag URL = %q, want latest", got)
 	}
 }
