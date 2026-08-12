@@ -161,6 +161,8 @@ export type StatusPayload = {
 	linuxDependencies?: {
 		supported: boolean
 		ready: boolean
+		systemPackageAvailable?: boolean
+		requiresAuthorization?: boolean
 		packageManager?: string
 		systemAccount?: string
 		missing?: string[]
@@ -168,6 +170,15 @@ export type StatusPayload = {
 	}
 	releaseTag?: string
 	archiveSha256?: string
+	qqRuntimeAsset?: string
+	qqRuntimeArchiveSha256?: string
+	runtimeId?: string
+	runtimeAsset?: string
+	runtimeSha256?: string
+	runtimeFingerprint?: string
+	environmentMode?: 'system' | 'managed-runtime'
+	fallbackReason?: string
+	environmentDiagnostic?: string
 	fingerprint?: string
 	validatedAt?: string
 	accounts?: Array<{ qq: string; oneBotUrl?: string; oneBotReady: boolean }>

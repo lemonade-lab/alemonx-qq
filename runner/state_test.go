@@ -1,6 +1,10 @@
 package main
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 func TestNapcatGraphicalLauncherPlatformsAreExternal(t *testing.T) {
 	windows := napcatPlatformFor("windows", "amd64")
@@ -36,7 +40,7 @@ func TestStateRoundTrip(t *testing.T) {
 		t.Fatalf("expected empty state, got %+v", state)
 	}
 
-	saved := State{Version: "4.18.18", InstallDir: dir + "/napcat", PID: 1234, RuntimeAsset: "QQ_3.2.31_260710_amd64_01.deb", RuntimeArchiveSHA256: "02f677feb1ce01ed293a3c7761e5dd85bd79936f57dcaa4cdb53178ae30e3d6d"}
+	saved := State{Version: "4.18.18", InstallDir: dir + "/napcat", PID: 1234, QQRuntimeAsset: "QQ_3.2.31_260710_amd64_01.deb", QQRuntimeArchiveSHA256: "02f677feb1ce01ed293a3c7761e5dd85bd79936f57dcaa4cdb53178ae30e3d6d"}
 	if err := saveState(saved); err != nil {
 		t.Fatalf("save failed: %v", err)
 	}
@@ -44,7 +48,32 @@ func TestStateRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reload failed: %v", err)
 	}
-	if reloaded.Version != saved.Version || reloaded.InstallDir != saved.InstallDir || reloaded.PID != saved.PID || reloaded.RuntimeAsset != saved.RuntimeAsset || reloaded.RuntimeArchiveSHA256 != saved.RuntimeArchiveSHA256 {
+	if reloaded.Version != saved.Version || reloaded.InstallDir != saved.InstallDir || reloaded.PID != saved.PID || reloaded.QQRuntimeAsset != saved.QQRuntimeAsset || reloaded.QQRuntimeArchiveSHA256 != saved.QQRuntimeArchiveSHA256 {
 		t.Fatalf("round-trip mismatch: got %+v want %+v", reloaded, saved)
+	}
+}
+
+func TestLoadStateMigratesLegacyQQRuntimeFields(t *testing.T) {
+	original := userConfigDir
+	dir := t.TempDir()
+	userConfigDir = func() (string, error) { return dir, nil }
+	defer func() { userConfigDir = original }()
+	path, err := statePath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := `{"installDir":"/tmp/Napcat","runtimeAsset":"QQ.deb","runtimeArchiveSha256":"02f677feb1ce01ed293a3c7761e5dd85bd79936f57dcaa4cdb53178ae30e3d6d"}`
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	state, err := loadState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.QQRuntimeAsset != "QQ.deb" || state.QQRuntimeArchiveSHA256 == "" || state.RuntimeAsset != "" || state.EnvironmentMode != "system" {
+		t.Fatalf("legacy runtime migration = %+v", state)
 	}
 }

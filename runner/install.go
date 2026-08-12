@@ -12,7 +12,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -49,15 +48,22 @@ type githubRelease struct {
 }
 
 type napcatInstallation struct {
-	Version              string
-	InstallDir           string
-	ReleaseTag           string
-	Asset                string
-	ArchiveSHA256        string
-	RuntimeAsset         string
-	RuntimeArchiveSHA256 string
-	Fingerprint          string
-	PreviousDir          string
+	Version                string
+	InstallDir             string
+	ReleaseTag             string
+	Asset                  string
+	ArchiveSHA256          string
+	QQRuntimeAsset         string
+	QQRuntimeArchiveSHA256 string
+	RuntimeID              string
+	RuntimeAsset           string
+	RuntimeSHA256          string
+	RuntimeFingerprint     string
+	EnvironmentMode        string
+	FallbackReason         string
+	EnvironmentDiagnostic  string
+	Fingerprint            string
+	PreviousDir            string
 }
 
 func fetchLatest() (githubRelease, error) {
@@ -474,9 +480,11 @@ func installWindowsNapCat() (napcatInstallation, error) {
 	return installation, nil
 }
 
-func installLinuxNapCat() (napcatInstallation, error) {
-	if _, err := exec.LookPath("Xvfb"); err != nil {
-		return napcatInstallation{}, errors.New("缺少 Linux 图形运行依赖 Xvfb；请在工作台点击“安装 NapCat”，授权后会自动补齐并继续")
+func installLinuxNapCat(forceManagedRuntime bool) (napcatInstallation, error) {
+	reportNapcatProgress("prepare", 10, "正在准备 NapCat 运行环境")
+	environment, err := prepareLinuxEnvironment(forceManagedRuntime)
+	if err != nil {
+		return napcatInstallation{}, err
 	}
 	release, err := fetchLatest()
 	if err != nil {
@@ -490,7 +498,7 @@ func installLinuxNapCat() (napcatInstallation, error) {
 	if !validSHA(shellDigest) {
 		return napcatInstallation{}, errors.New("官方 NapCat Linux Release 未提供有效 SHA-256 校验和")
 	}
-	qqAsset, err := linuxQQReleaseAsset()
+	qqAsset, err := linuxQQReleaseAssetForEnvironment(environment.Mode)
 	if err != nil {
 		return napcatInstallation{}, err
 	}
@@ -581,7 +589,26 @@ func installLinuxNapCat() (napcatInstallation, error) {
 			return rollback(err)
 		}
 	}
-	installation := napcatInstallation{Version: strings.TrimPrefix(release.TagName, "v"), InstallDir: root, ReleaseTag: release.TagName, Asset: shellAsset.Name + "+" + qqAsset.Name, ArchiveSHA256: digest, RuntimeAsset: qqAsset.Name, RuntimeArchiveSHA256: qqDigest, Fingerprint: fingerprint}
+	installation := napcatInstallation{
+		Version:                strings.TrimPrefix(release.TagName, "v"),
+		InstallDir:             root,
+		ReleaseTag:             release.TagName,
+		Asset:                  shellAsset.Name + "+" + qqAsset.Name,
+		ArchiveSHA256:          digest,
+		QQRuntimeAsset:         qqAsset.Name,
+		QQRuntimeArchiveSHA256: qqDigest,
+		EnvironmentMode:        environment.Mode,
+		FallbackReason:         environment.Reason,
+		EnvironmentDiagnostic:  environment.Diagnostic,
+		Fingerprint:            fingerprint,
+	}
+	if environment.Runtime != nil {
+		installation.RuntimeID = environment.Runtime.ID
+		installation.RuntimeAsset = environment.Runtime.Asset
+		installation.RuntimeSHA256 = environment.Runtime.SHA256
+		installation.RuntimeFingerprint = environment.Runtime.Fingerprint
+		installation.Fingerprint = linuxRuntimeStateFingerprint(installation.Fingerprint, installation.RuntimeFingerprint)
+	}
 	if hadPrevious {
 		installation.PreviousDir = backup
 	}
@@ -599,6 +626,12 @@ func discardNapcatBackup(installation napcatInstallation) {
 
 func rollbackNapcatInstallation(installation napcatInstallation) error {
 	if installation.PreviousDir == "" {
+		// A first install has no backup. Removing only its verified, managed
+		// target is the transactional rollback equivalent; never touch an
+		// arbitrary directory supplied by a browser or an external association.
+		if installation.InstallDir != "" {
+			return os.RemoveAll(installation.InstallDir)
+		}
 		return nil
 	}
 	if err := os.RemoveAll(installation.InstallDir); err != nil {
@@ -607,13 +640,13 @@ func rollbackNapcatInstallation(installation napcatInstallation) error {
 	return os.Rename(installation.PreviousDir, installation.InstallDir)
 }
 
-func installNapCat() (napcatInstallation, error) {
+func installNapCat(forceManagedRuntime bool) (napcatInstallation, error) {
 	reportNapcatProgress("prepare", 5, "检查 NapCat 平台契约")
 	switch runtime.GOOS {
 	case "windows":
 		return installWindowsNapCat()
 	case "linux":
-		return installLinuxNapCat()
+		return installLinuxNapCat(forceManagedRuntime)
 	default:
 		return napcatInstallation{}, errors.New("macOS NapCat 仅支持外部关联；工作台不会修改 QQ 注入文件")
 	}

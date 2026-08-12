@@ -17,44 +17,51 @@ import (
 // the web UI can poll and render it precisely. Other actions keep returning
 // plain ✓/!? text.
 type statusPayload struct {
-	Engine               string                 `json:"engine"`
-	Installed            bool                   `json:"installed"`
-	InstallHealthy       bool                   `json:"installHealthy"`
-	Running              bool                   `json:"running"`
-	PortReachable        bool                   `json:"portReachable"`
-	WebUIReady           bool                   `json:"webUiReady"`
-	OneBotReady          bool                   `json:"oneBotReady"`
-	LoginPending         bool                   `json:"loginPending"`
-	Watchdog             bool                   `json:"watchdog"`
-	Version              string                 `json:"version,omitempty"`
-	PID                  int                    `json:"pid,omitempty"`
-	WebUIURL             string                 `json:"webUiUrl,omitempty"`
-	OneBotURL            string                 `json:"oneBotUrl,omitempty"`
-	QRCodeAvailable      bool                   `json:"qrCodeAvailable"`
-	QRCodeUpdatedAt      string                 `json:"qrCodeUpdatedAt,omitempty"`
-	InstallerReady       bool                   `json:"installerReady"`
-	InstallerPath        string                 `json:"installerPath,omitempty"`
-	LauncherPath         string                 `json:"launcherPath,omitempty"`
-	DiagnosticHint       string                 `json:"diagnosticHint,omitempty"`
-	Supported            bool                   `json:"supported"`
-	Managed              bool                   `json:"managed"`
-	Platform             string                 `json:"platform,omitempty"`
-	InstallMode          string                 `json:"installMode,omitempty"`
-	ReleaseTag           string                 `json:"releaseTag,omitempty"`
-	Asset                string                 `json:"asset,omitempty"`
-	ArchiveSHA256        string                 `json:"archiveSha256,omitempty"`
-	RuntimeAsset         string                 `json:"runtimeAsset,omitempty"`
-	RuntimeArchiveSHA256 string                 `json:"runtimeArchiveSha256,omitempty"`
-	Fingerprint          string                 `json:"fingerprint,omitempty"`
-	ValidatedAt          string                 `json:"validatedAt,omitempty"`
-	Verified             bool                   `json:"verified"`
-	VerificationReason   string                 `json:"verificationReason,omitempty"`
-	ManagedActions       bool                   `json:"managedActions"`
-	LinuxDependencies    *linuxDependencyStatus `json:"linuxDependencies,omitempty"`
-	Accounts             []napcatAccount        `json:"accounts,omitempty"`
-	SelectedAccount      string                 `json:"selectedAccount,omitempty"`
-	UpdatedAt            string                 `json:"updatedAt"`
-	Error                string                 `json:"error,omitempty"`
+	Engine                 string                 `json:"engine"`
+	Installed              bool                   `json:"installed"`
+	InstallHealthy         bool                   `json:"installHealthy"`
+	Running                bool                   `json:"running"`
+	PortReachable          bool                   `json:"portReachable"`
+	WebUIReady             bool                   `json:"webUiReady"`
+	OneBotReady            bool                   `json:"oneBotReady"`
+	LoginPending           bool                   `json:"loginPending"`
+	Watchdog               bool                   `json:"watchdog"`
+	Version                string                 `json:"version,omitempty"`
+	PID                    int                    `json:"pid,omitempty"`
+	WebUIURL               string                 `json:"webUiUrl,omitempty"`
+	OneBotURL              string                 `json:"oneBotUrl,omitempty"`
+	QRCodeAvailable        bool                   `json:"qrCodeAvailable"`
+	QRCodeUpdatedAt        string                 `json:"qrCodeUpdatedAt,omitempty"`
+	InstallerReady         bool                   `json:"installerReady"`
+	InstallerPath          string                 `json:"installerPath,omitempty"`
+	LauncherPath           string                 `json:"launcherPath,omitempty"`
+	DiagnosticHint         string                 `json:"diagnosticHint,omitempty"`
+	Supported              bool                   `json:"supported"`
+	Managed                bool                   `json:"managed"`
+	Platform               string                 `json:"platform,omitempty"`
+	InstallMode            string                 `json:"installMode,omitempty"`
+	ReleaseTag             string                 `json:"releaseTag,omitempty"`
+	Asset                  string                 `json:"asset,omitempty"`
+	ArchiveSHA256          string                 `json:"archiveSha256,omitempty"`
+	QQRuntimeAsset         string                 `json:"qqRuntimeAsset,omitempty"`
+	QQRuntimeArchiveSHA256 string                 `json:"qqRuntimeArchiveSha256,omitempty"`
+	RuntimeID              string                 `json:"runtimeId,omitempty"`
+	RuntimeAsset           string                 `json:"runtimeAsset,omitempty"`
+	RuntimeSHA256          string                 `json:"runtimeSha256,omitempty"`
+	RuntimeFingerprint     string                 `json:"runtimeFingerprint,omitempty"`
+	EnvironmentMode        string                 `json:"environmentMode,omitempty"`
+	FallbackReason         string                 `json:"fallbackReason,omitempty"`
+	EnvironmentDiagnostic  string                 `json:"environmentDiagnostic,omitempty"`
+	Fingerprint            string                 `json:"fingerprint,omitempty"`
+	ValidatedAt            string                 `json:"validatedAt,omitempty"`
+	Verified               bool                   `json:"verified"`
+	VerificationReason     string                 `json:"verificationReason,omitempty"`
+	ManagedActions         bool                   `json:"managedActions"`
+	LinuxDependencies      *linuxDependencyStatus `json:"linuxDependencies,omitempty"`
+	Accounts               []napcatAccount        `json:"accounts,omitempty"`
+	SelectedAccount        string                 `json:"selectedAccount,omitempty"`
+	UpdatedAt              string                 `json:"updatedAt"`
+	Error                  string                 `json:"error,omitempty"`
 }
 
 type napcatAccount struct {
@@ -64,12 +71,14 @@ type napcatAccount struct {
 }
 
 type linuxDependencyStatus struct {
-	Supported      bool     `json:"supported"`
-	Ready          bool     `json:"ready"`
-	PackageManager string   `json:"packageManager,omitempty"`
-	SystemAccount  string   `json:"systemAccount,omitempty"`
-	Missing        []string `json:"missing,omitempty"`
-	Hint           string   `json:"hint,omitempty"`
+	Supported              bool     `json:"supported"`
+	Ready                  bool     `json:"ready"`
+	SystemPackageAvailable bool     `json:"systemPackageAvailable"`
+	RequiresAuthorization  bool     `json:"requiresAuthorization"`
+	PackageManager         string   `json:"packageManager,omitempty"`
+	SystemAccount          string   `json:"systemAccount,omitempty"`
+	Missing                []string `json:"missing,omitempty"`
+	Hint                   string   `json:"hint,omitempty"`
 }
 
 // collectStatus gathers the live status from state + process probes.
@@ -78,7 +87,9 @@ func collectStatus(state State) statusPayload {
 	payload := statusPayload{
 		Engine: "napcat", Version: state.Version, PID: state.PID,
 		Managed: state.Managed, InstallMode: state.InstallMode, ReleaseTag: state.ReleaseTag,
-		Asset: state.Asset, ArchiveSHA256: state.ArchiveSHA256, RuntimeAsset: state.RuntimeAsset, RuntimeArchiveSHA256: state.RuntimeArchiveSHA256, Fingerprint: state.Fingerprint,
+		Asset: state.Asset, ArchiveSHA256: state.ArchiveSHA256, QQRuntimeAsset: state.QQRuntimeAsset, QQRuntimeArchiveSHA256: state.QQRuntimeArchiveSHA256,
+		RuntimeID: state.RuntimeID, RuntimeAsset: state.RuntimeAsset, RuntimeSHA256: state.RuntimeSHA256, RuntimeFingerprint: state.RuntimeFingerprint,
+		EnvironmentMode: state.EnvironmentMode, FallbackReason: state.FallbackReason, EnvironmentDiagnostic: state.EnvironmentDiagnostic, Fingerprint: state.Fingerprint,
 		ValidatedAt: state.ValidatedAt, UpdatedAt: time.Now().UTC().Format(time.RFC3339),
 	}
 	if platform != nil {
@@ -182,7 +193,10 @@ func napcatLinuxDependenciesFor(goos string, lookPath func(string) (string, erro
 	} else if _, err := lookPath("dnf"); err == nil {
 		packageManager = "dnf"
 	} else {
-		return &linuxDependencyStatus{Hint: "未检测到 APT 或 DNF；当前 Linux 发行版暂不能自动补齐 NapCat 依赖。"}
+		// The managed runtime is the normal automatic path on an unknown or
+		// musl distribution. Do not turn this into a password prompt for a
+		// package manager which does not exist.
+		return &linuxDependencyStatus{Supported: true, Ready: false, Hint: "将自动准备兼容运行环境。"}
 	}
 	packages := napcatLinuxPackages(packageManager)
 	missing := make([]string, 0, len(packages)+1)
@@ -197,9 +211,9 @@ func napcatLinuxDependenciesFor(goos string, lookPath func(string) (string, erro
 	if _, err := lookPath("Xvfb"); err != nil && !containsString(missing, packages[0]) {
 		missing = append(missing, packages[0])
 	}
-	status := &linuxDependencyStatus{Supported: true, Ready: len(missing) == 0, PackageManager: packageManager, SystemAccount: currentSystemAccount(), Missing: missing}
+	status := &linuxDependencyStatus{Supported: true, Ready: len(missing) == 0, SystemPackageAvailable: true, RequiresAuthorization: len(missing) > 0, PackageManager: packageManager, SystemAccount: currentSystemAccount(), Missing: missing}
 	if !status.Ready {
-		status.Hint = "安装 NapCat 前需要补齐 Linux 图形运行依赖。工作台会通过一次 sudo 授权安装固定的系统软件包，并自动继续安装。"
+		status.Hint = "首次安装会自动准备 NapCat 所需的 Linux 运行环境，然后继续下载、启动并显示登录二维码。"
 	}
 	return status
 }

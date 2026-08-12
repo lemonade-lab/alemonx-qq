@@ -1,0 +1,7 @@
+{
+  "id": "linux-arm64-glibc-v1",
+  "platform": "linux-arm64",
+  "xvfb": "bin/Xvfb",
+  "loader": "lib/ld-linux-aarch64.so.1",
+  "libraryPath": "lib"
+}

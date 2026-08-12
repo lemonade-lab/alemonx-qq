@@ -151,4 +151,8 @@ func TestNapcatLinuxDependencyPreflight(t *testing.T) {
 	if got := napcatLinuxDependenciesFor("darwin", lookup, func(string) bool { return true }); got != nil {
 		t.Fatalf("non-Linux dependencies = %#v, want nil", got)
 	}
+	unknown := napcatLinuxDependenciesFor("linux", func(string) (string, error) { return "", os.ErrNotExist }, func(string) bool { return false })
+	if unknown == nil || !unknown.Supported || unknown.RequiresAuthorization || unknown.SystemPackageAvailable {
+		t.Fatalf("unknown Linux should use automatic managed runtime: %#v", unknown)
+	}
 }

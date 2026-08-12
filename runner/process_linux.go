@@ -20,8 +20,9 @@ func startNapCat(state State) (napcatProcess, error) {
 	if err != nil {
 		return napcatProcess{}, err
 	}
-	if _, err := exec.LookPath("Xvfb"); err != nil {
-		return napcatProcess{}, errors.New("未找到 Xvfb；请在工作台点击“安装 NapCat”补齐 Linux 图形运行依赖")
+	environment, err := linuxEnvironmentForState(state)
+	if err != nil {
+		return napcatProcess{}, err
 	}
 	logFile, err := logPath()
 	if err != nil {
@@ -39,7 +40,12 @@ func startNapCat(state State) (napcatProcess, error) {
 	if err != nil {
 		return napcatProcess{}, err
 	}
-	xvfb := exec.Command("Xvfb", display, "-screen", "0", "1280x720x24", "-nolisten", "tcp", "-ac")
+	var xvfb *exec.Cmd
+	if environment.Runtime != nil {
+		xvfb = managedRuntimeCommand(*environment.Runtime, environment.Runtime.Xvfb, display, "-screen", "0", "1280x720x24", "-nolisten", "tcp", "-ac")
+	} else {
+		xvfb = exec.Command("Xvfb", display, "-screen", "0", "1280x720x24", "-nolisten", "tcp", "-ac")
+	}
 	xvfb.Stdout, xvfb.Stderr, xvfb.Stdin = logHandle, logHandle, nil
 	detachProcess(xvfb)
 	if err := xvfb.Start(); err != nil {
@@ -51,7 +57,12 @@ func startNapCat(state State) (napcatProcess, error) {
 		stopXvfb()
 		return napcatProcess{}, errors.New("Xvfb 未能在 5 秒内就绪，请查看 NapCat 日志")
 	}
-	qqCommand := exec.Command(qq, "--no-sandbox")
+	var qqCommand *exec.Cmd
+	if environment.Runtime != nil {
+		qqCommand = managedRuntimeCommand(*environment.Runtime, qq, "--no-sandbox")
+	} else {
+		qqCommand = exec.Command(qq, "--no-sandbox")
+	}
 	qqCommand.Dir = filepath.Dir(qq)
 	qqCommand.Env = append(os.Environ(), "DISPLAY="+display)
 	qqCommand.Stdout, qqCommand.Stderr, qqCommand.Stdin = logHandle, logHandle, nil

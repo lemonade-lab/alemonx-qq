@@ -212,11 +212,11 @@ function SudoPasswordModal({
       <div className="grid w-[min(460px,calc(100vw-32px))] gap-3 rounded-panel border border-[var(--theme-border-default)] bg-[var(--theme-surface-panel)] p-4 shadow-[var(--theme-shadow-pop)]">
         <div className="grid gap-1">
           <h3 className="m-0 text-[15px] font-semibold text-[var(--theme-text-strong)]">{preflight?.title || '系统权限请求'}</h3>
-          <p className="m-0 text-[13px] leading-5 text-[var(--theme-text-muted)]">{preflight?.description || '正在检查本次系统权限请求。'}</p>
+          <p className="m-0 text-[13px] leading-5 text-[var(--theme-text-muted)]">{preflight?.description || '授权后会自动准备运行环境并继续安装。'}</p>
           {systemAccount && <p className="m-0 text-xs text-[var(--theme-text-secondary)]">系统账户：<code>{systemAccount}</code></p>}
         </div>
         {unavailable ? <p className="m-0 rounded-md bg-[var(--theme-warning-soft)] px-2 py-1.5 text-xs text-[var(--theme-warning-text)]">{preflight?.reason || '当前无法发起系统授权。请在本机桌面工作台中重试。'}</p> : <>
-          <label className="grid gap-1 text-xs font-semibold text-[var(--theme-text-secondary)]">sudo 密码
+          <label className="grid gap-1 text-xs font-semibold text-[var(--theme-text-secondary)]">系统密码
             <input autoFocus className={inputClass} type="password" autoComplete="current-password" value={password} onChange={event => { setPassword(event.target.value); setError('') }} />
           </label>
         </>}
@@ -368,15 +368,30 @@ export default function App() {
 				const resumeInstall = resumeNapcatInstallRef.current
 				resumeNapcatInstallRef.current = false
 				if (outcome.error) {
-					setResult(outcome)
-					setState('failed')
 					if (outcome.error.includes('权限请求已') || outcome.error.includes('请先在工作台确认')) {
+						setResult(outcome)
+						setState('failed')
 						await requestNapcatDependencyAuthorization(resumeInstall)
 						setNapcatPrivilegeError('权限请求已刷新，请重新输入密码后继续。')
 						return
 					}
-					setNapcatPrivilegeError(outcome.error)
-					setSudoPromptOpen(true)
+					// Only an invalid credential deserves another password prompt.
+					// Package availability, repository and platform failures cannot be
+					// fixed by re-entering the same password.
+					if (outcome.error.includes('sudo 密码无效')) {
+						setResult(outcome)
+						setState('failed')
+						setNapcatPrivilegeError(outcome.error)
+						setSudoPromptOpen(true)
+						return
+					}
+					if (resumeInstall) {
+						// A repository/package-manager failure is not solved by asking for
+						// the same password again. The runner owns the safe fallback and
+						// continues with its independently verified compatibility runtime.
+						setResult({ output: '系统环境未能自动准备，正在切换兼容运行环境…' })
+						await run('install', { environment: 'managed-runtime' }, true)
+					}
 					return
 				}
 				if (resumeInstall) {
@@ -397,7 +412,7 @@ export default function App() {
 			setState('failed')
 			return
 		}
-		if (liveStatus.linuxDependencies && !liveStatus.linuxDependencies.ready) {
+		if (liveStatus.linuxDependencies?.requiresAuthorization) {
 			await requestNapcatDependencyAuthorization(true)
 			return
 		}
@@ -615,16 +630,6 @@ export default function App() {
 			</section>
 		  )}
 
-		  {engine === 'napcat' && !napcatNeedsInstall && !nativeLauncherNapcat && !napcatLoginJourney && liveStatus?.linuxDependencies && !liveStatus.linuxDependencies.ready && (
-			<section className="grid gap-3 rounded-panel border border-[var(--theme-warning)] bg-[var(--theme-warning-soft)] p-3">
-				<div className="grid gap-1">
-					<strong className="text-sm font-semibold text-[var(--theme-text-strong)]">补齐 Linux 运行依赖</strong>
-					<p className="m-0 text-xs leading-5 text-[var(--theme-text-muted)]">{liveStatus.linuxDependencies.hint || 'NapCat 需要系统运行依赖。'}</p>
-					{liveStatus.linuxDependencies.missing?.length ? <p className="m-0 text-xs text-[var(--theme-text-secondary)]">缺少：<code>{liveStatus.linuxDependencies.missing.join('、')}</code></p> : null}
-				</div>
-				<ActionButton label="安装系统依赖" running={state === 'running'} disabled={!liveStatus.linuxDependencies.supported} onClick={() => confirm('安装 NapCat Linux 系统依赖', '工作台会先说明本次系统权限请求；在本机可用时再输入一次 sudo 密码。', () => requestNapcatDependencyAuthorization(false))} />
-			</section>
-		  )}
 
 		  {engine === 'luckylillia' && liveStatus?.supported !== false && !liveStatus?.installed && (
 			<section id="luckylillia-association" className="grid gap-3 rounded-panel border border-[var(--theme-border-default)] bg-[var(--theme-surface-panel)] p-3">

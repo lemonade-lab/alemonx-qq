@@ -34,12 +34,19 @@ type linuxQQAsset struct {
 // linuxQQReleaseAssets are official Tencent Linux QQ packages. The values are
 // deliberately host-owned: no browser, manifest or downloaded installer can
 // replace them with an arbitrary URL.
-func linuxQQReleaseAsset() (linuxQQAsset, error) {
+// linuxQQReleaseAssetForEnvironment selects a package format without making
+// package-manager availability a user-visible prerequisite. A managed runtime
+// can unpack the reviewed DEB payload even on musl or an unknown distribution;
+// its bundled loader and libraries are what make that payload runnable.
+func linuxQQReleaseAssetForEnvironment(environment string) (linuxQQAsset, error) {
 	packageManager := ""
 	if _, err := exec.LookPath("apt-get"); err == nil {
 		packageManager = "apt"
 	} else if _, err := exec.LookPath("dnf"); err == nil {
 		packageManager = "dnf"
+	}
+	if packageManager == "" && environment == "managed-runtime" {
+		packageManager = "apt"
 	}
 	return linuxQQReleaseAssetFor(runtime.GOARCH, packageManager)
 }

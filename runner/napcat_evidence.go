@@ -45,12 +45,27 @@ func napcatStateVerified(state State) bool {
 		return false
 	}
 	if platform.Key == "linux-amd64" || platform.Key == "linux-arm64" {
-		if state.RuntimeAsset == "" || !validSHA(state.RuntimeArchiveSHA256) || !strings.Contains(state.Asset, "+"+state.RuntimeAsset) {
+		if state.QQRuntimeAsset == "" || !validSHA(state.QQRuntimeArchiveSHA256) || !strings.Contains(state.Asset, "+"+state.QQRuntimeAsset) {
 			return false
+		}
+		if state.EnvironmentMode == "managed-runtime" {
+			if state.RuntimeID == "" || state.RuntimeAsset == "" || !validSHA(state.RuntimeSHA256) || state.RuntimeFingerprint == "" {
+				return false
+			}
+			value, err := loadManagedLinuxRuntime(state.RuntimeID, state.RuntimeAsset, state.RuntimeSHA256)
+			if err != nil || value.Fingerprint != state.RuntimeFingerprint {
+				return false
+			}
 		}
 	}
 	fingerprint, err := napcatFingerprint(state.InstallDir)
-	return err == nil && fingerprint == state.Fingerprint
+	if err != nil {
+		return false
+	}
+	if state.EnvironmentMode == "managed-runtime" {
+		return linuxRuntimeStateFingerprint(fingerprint, state.RuntimeFingerprint) == state.Fingerprint
+	}
+	return fingerprint == state.Fingerprint
 }
 
 func requireManagedNapcat(state State, action string) error {

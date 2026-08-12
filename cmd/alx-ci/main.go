@@ -20,6 +20,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/klauspost/compress/zstd"
 	"github.com/lemonade-lab/alemonx-qq/internal/qqruntime"
 	"github.com/ulikunitz/xz"
 )
@@ -59,7 +60,7 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: alx-ci <validate-manifest|set-version|verify-version|evidence|validate-runtime|verify-lucky-e2e|verify-napcat-e2e|verify-napcat-runtime>")
+		return errors.New("usage: alx-ci <validate-manifest|set-version|verify-version|evidence|validate-runtime|package-napcat-runtime|verify-lucky-e2e|verify-napcat-e2e|verify-napcat-runtime>")
 	}
 	switch args[0] {
 	case "validate-manifest":
@@ -84,6 +85,8 @@ func run(args []string) error {
 		return evidenceCommand(args[1:])
 	case "validate-runtime":
 		return validateRuntimeEnvironment()
+	case "package-napcat-runtime":
+		return packageNapcatRuntime(args[1:])
 	case "verify-lucky-e2e":
 		return verifyLuckyE2E()
 	case "verify-napcat-e2e":
@@ -848,6 +851,11 @@ func verifyNapcatE2E() error {
 }
 
 func verifyNapcatRuntime() error {
+	stage := strings.TrimSpace(os.Getenv("NAPCAT_RUNTIME_STAGE"))
+	platform := strings.TrimSpace(os.Getenv("NAPCAT_RUNTIME_PLATFORM"))
+	if stage != "" || platform != "" {
+		return verifyCompatibilityRuntime(stage, platform)
+	}
 	runner := strings.TrimSpace(os.Getenv("ALX_QQ_RUNNER"))
 	if runner == "" {
 		return errors.New("set ALX_QQ_RUNNER to the built almonx-qq executor path")
@@ -888,4 +896,153 @@ func verifyNapcatRuntime() error {
 		return err
 	}
 	return writeJSON(filepath.Join("artifacts", "napcat-runtime-validation.json"), map[string]any{"validatedAt": time.Now().UTC().Format(time.RFC3339), "status": status, "qrCode": map[string]any{"available": qr["available"], "updatedAt": qr["updatedAt"]}})
+}
+
+func verifyCompatibilityRuntime(stage, platform string) error {
+	if platform != "linux-amd64" && platform != "linux-arm64" {
+		return errors.New("NAPCAT_RUNTIME_PLATFORM must be linux-amd64 or linux-arm64")
+	}
+	if stage == "" {
+		return errors.New("set NAPCAT_RUNTIME_STAGE to the staged compatibility runtime directory")
+	}
+	manifest, err := readJSON(filepath.Join(stage, "alx-runtime.json"))
+	if err != nil {
+		return err
+	}
+	if asString(manifest["platform"]) != platform || asString(manifest["id"]) == "" {
+		return errors.New("compatibility runtime manifest platform or ID is invalid")
+	}
+	for _, key := range []string{"xvfb", "loader", "libraryPath"} {
+		relative := asString(manifest[key])
+		if relative == "" || filepath.IsAbs(relative) || strings.HasPrefix(filepath.Clean(relative), "..") {
+			return fmt.Errorf("compatibility runtime %s path is invalid", key)
+		}
+		info, statErr := os.Stat(filepath.Join(stage, relative))
+		if statErr != nil || (key != "libraryPath" && info.Mode()&0o111 == 0) {
+			return fmt.Errorf("compatibility runtime %s is unavailable", key)
+		}
+	}
+	// The host must provide the runtime's actual smoke-test command. This
+	// avoids pretending that an archive is portable merely because it exists.
+	if err := runCommandFromJSON("NAPCAT_RUNTIME_E2E_COMMAND_JSON", []string{"NAPCAT_RUNTIME_STAGE=" + stage, "NAPCAT_RUNTIME_PLATFORM=" + platform}); err != nil {
+		return err
+	}
+	archiveHash := sha256.New()
+	if err := filepath.Walk(stage, func(path string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil || info.IsDir() {
+			return walkErr
+		}
+		data, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return readErr
+		}
+		_, _ = archiveHash.Write([]byte(strings.TrimPrefix(path, stage)))
+		_, _ = archiveHash.Write(data)
+		return nil
+	}); err != nil {
+		return err
+	}
+	if err := os.MkdirAll("artifacts", 0o755); err != nil {
+		return err
+	}
+	return writeJSON(filepath.Join("artifacts", "napcat-runtime-validation.json"), map[string]any{
+		"platform": platform, "runtimeID": asString(manifest["id"]), "runtimeFingerprint": fmt.Sprintf("%x", archiveHash.Sum(nil)), "validatedAt": time.Now().UTC().Format(time.RFC3339), "status": "passed",
+	})
+}
+
+// packageNapcatRuntime produces a release-ready, self-contained runtime
+// archive from a native build directory. The directory itself is prepared by
+// the approved native builder; this command deliberately performs all archive
+// construction, content enumeration and checksum generation in Go.
+func packageNapcatRuntime(args []string) error {
+	if len(args) != 3 {
+		return errors.New("usage: package-napcat-runtime <linux-amd64|linux-arm64> <stage-dir> <output-dir>")
+	}
+	platform, stage, output := args[0], args[1], args[2]
+	if platform != "linux-amd64" && platform != "linux-arm64" {
+		return errors.New("runtime platform must be linux-amd64 or linux-arm64")
+	}
+	manifest, err := readJSON(filepath.Join(stage, "alx-runtime.json"))
+	if err != nil {
+		return err
+	}
+	if asString(manifest["platform"]) != platform || asString(manifest["id"]) == "" {
+		return errors.New("runtime manifest platform or ID is invalid")
+	}
+	for _, key := range []string{"xvfb", "loader", "libraryPath"} {
+		relative := asString(manifest[key])
+		if relative == "" || filepath.IsAbs(relative) || strings.HasPrefix(filepath.Clean(relative), "..") {
+			return fmt.Errorf("runtime %s path is invalid", key)
+		}
+		info, statErr := os.Stat(filepath.Join(stage, relative))
+		if statErr != nil || (key != "libraryPath" && (info.IsDir() || info.Mode()&0o111 == 0)) {
+			return fmt.Errorf("runtime %s is unavailable", key)
+		}
+	}
+	asset := "alemonx-qq-runtime-" + platform + "-glibc.tar.zst"
+	if err := os.MkdirAll(output, 0o755); err != nil {
+		return err
+	}
+	archivePath := filepath.Join(output, asset)
+	archive, err := os.OpenFile(archivePath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	if err != nil {
+		return err
+	}
+	checksum := sha256.New()
+	writer := io.MultiWriter(archive, checksum)
+	zstdWriter, err := zstd.NewWriter(writer)
+	if err != nil {
+		_ = archive.Close()
+		return err
+	}
+	tarWriter := tar.NewWriter(zstdWriter)
+	files := []map[string]any{}
+	err = filepath.Walk(stage, func(path string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		relative, err := filepath.Rel(stage, path)
+		if err != nil || relative == "." {
+			return err
+		}
+		if !info.Mode().IsRegular() && !info.IsDir() {
+			return fmt.Errorf("runtime contains unsupported file %s", relative)
+		}
+		header, err := tar.FileInfoHeader(info, "")
+		if err != nil {
+			return err
+		}
+		header.Name = filepath.ToSlash(relative)
+		if info.IsDir() {
+			header.Name += "/"
+		}
+		if err := tarWriter.WriteHeader(header); err != nil {
+			return err
+		}
+		if info.IsDir() {
+			return nil
+		}
+		contents, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		fileHash := sha256.Sum256(contents)
+		files = append(files, map[string]any{"path": header.Name, "sha256": fmt.Sprintf("%x", fileHash[:]), "size": len(contents)})
+		_, err = tarWriter.Write(contents)
+		return err
+	})
+	closeTar := tarWriter.Close()
+	closeZstd := zstdWriter.Close()
+	closeFile := archive.Close()
+	if err != nil {
+		return err
+	}
+	if closeTar != nil || closeZstd != nil || closeFile != nil {
+		return errors.New("cannot finalize runtime archive")
+	}
+	digest := fmt.Sprintf("%x", checksum.Sum(nil))
+	if err := os.WriteFile(filepath.Join(output, "SHA256SUMS"), []byte(digest+"  "+asset+"\n"), 0o600); err != nil {
+		return err
+	}
+	return writeJSON(filepath.Join(output, asset+".sbom.json"), map[string]any{"format": "alx-runtime-sbom/v1", "platform": platform, "runtimeID": asString(manifest["id"]), "archive": asset, "archiveSha256": digest, "files": files})
 }

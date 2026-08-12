@@ -86,7 +86,7 @@ func run(action string, params map[string]string, confirmed bool) (string, error
 		}
 		return openWindowsNapcatLauncher()
 	case "install":
-		return installAction(confirmed)
+		return installAction(params, confirmed)
 	case "uninstall":
 		return uninstallAction(confirmed)
 	case "start":
@@ -208,7 +208,7 @@ func napcatForget(confirmed bool) (string, error) {
 	return "✓ 已取消外部 NapCat 关联，未删除任何文件。", saveState(State{})
 }
 
-func installAction(confirmed bool) (string, error) {
+func installAction(params map[string]string, confirmed bool) (string, error) {
 	if err := requireNapcatConfirmation(confirmed, "安装 NapCat"); err != nil {
 		return "", err
 	}
@@ -222,34 +222,44 @@ func installAction(confirmed bool) (string, error) {
 	if runtime.GOOS == "darwin" || runtime.GOOS == "windows" {
 		return "", errors.New("当前系统请使用工作台下载并打开官方 NapCat 启动器；工作台不会修改 QQ 注入文件")
 	}
-	installation, err := installNapCat()
+	forceManagedRuntime := runtime.GOOS == "linux" && params["environment"] == "managed-runtime"
+	previousState := state
+	installation, err := installNapCat(forceManagedRuntime)
 	if err != nil {
 		return "", err
 	}
-	state = State{Version: installation.Version, InstallDir: installation.InstallDir, Managed: true, Platform: napcatPlatform().Key, InstallMode: "managed", ReleaseTag: installation.ReleaseTag, Asset: installation.Asset, ArchiveSHA256: installation.ArchiveSHA256, RuntimeAsset: installation.RuntimeAsset, RuntimeArchiveSHA256: installation.RuntimeArchiveSHA256, Fingerprint: installation.Fingerprint}
+	state = State{Version: installation.Version, InstallDir: installation.InstallDir, Managed: true, Platform: napcatPlatform().Key, InstallMode: "managed", ReleaseTag: installation.ReleaseTag, Asset: installation.Asset, ArchiveSHA256: installation.ArchiveSHA256, QQRuntimeAsset: installation.QQRuntimeAsset, QQRuntimeArchiveSHA256: installation.QQRuntimeArchiveSHA256, RuntimeID: installation.RuntimeID, RuntimeAsset: installation.RuntimeAsset, RuntimeSHA256: installation.RuntimeSHA256, RuntimeFingerprint: installation.RuntimeFingerprint, EnvironmentMode: installation.EnvironmentMode, FallbackReason: installation.FallbackReason, EnvironmentDiagnostic: installation.EnvironmentDiagnostic, Fingerprint: installation.Fingerprint}
 	if err := saveState(state); err != nil {
 		_ = rollbackNapcatInstallation(installation)
+		_ = saveState(previousState)
 		return "", err
 	}
-	discardNapcatBackup(installation)
 	if runtime.GOOS == "linux" {
 		reportNapcatProgress("start", 85, "自动启动 NapCat 并等待二维码")
 		process, startErr := startNapCat(state)
 		if startErr != nil {
-			return "", fmt.Errorf("NapCat 已安装（版本 %s），但自动启动失败：%w。安装已保留，请查看日志后点击“启动 NapCat”重试", installation.Version, startErr)
+			_ = rollbackNapcatInstallation(installation)
+			_ = saveState(previousState)
+			return "", fmt.Errorf("NapCat 自动启动失败，已恢复安装前状态：%w", startErr)
 		}
 		state.PID, state.ProcessGroupID = process.PID, process.ProcessGroupID
 		if err := saveState(state); err != nil {
 			stopProcess(process.ProcessGroupID)
+			_ = rollbackNapcatInstallation(installation)
+			_ = saveState(previousState)
 			return "", err
 		}
-		timeWait(1500)
-		reportNapcatProgress("complete", 100, "NapCat 已安装并启动，等待扫码登录")
-		if url := webUIBridge(); url != "" {
-			return fmt.Sprintf("✓ NapCat 已安装并启动（版本 %s）。\n✓ 正在等待扫码登录，二维码会自动显示。", installation.Version), nil
+		if !waitNapcatWebUI(45 * time.Second) {
+			stopProcess(process.ProcessGroupID)
+			_ = rollbackNapcatInstallation(installation)
+			_ = saveState(previousState)
+			return "", errors.New("NapCat 未能在 45 秒内启动管理面板，安装已自动恢复到安装前状态，请查看执行日志")
 		}
-		return fmt.Sprintf("✓ NapCat 已安装并启动（版本 %s）。\n? 正在等待 NapCat 准备二维码，请稍候。", installation.Version), nil
+		discardNapcatBackup(installation)
+		reportNapcatProgress("complete", 100, "NapCat 已安装并启动，等待扫码登录")
+		return fmt.Sprintf("✓ NapCat 已安装并启动（版本 %s）。\n✓ 正在等待扫码登录，二维码会自动显示。", installation.Version), nil
 	}
+	discardNapcatBackup(installation)
 	reportNapcatProgress("complete", 100, "NapCat 安装完成")
 	return fmt.Sprintf("✓ NapCat 已安装（版本 %s）。\n✓ 现在可以点击「启动」运行它。", installation.Version), nil
 }
@@ -315,11 +325,13 @@ func startAction(confirmed bool) (string, error) {
 		stopProcess(process.ProcessGroupID)
 		return "", err
 	}
-	timeWait(1500)
-	if url := webUIBridge(); url != "" {
-		return fmt.Sprintf("✓ NapCat 已启动（PID %d）。\n✓ 管理面板可访问：%s\n✓ 用手机 QQ 扫码登录后即可使用。", process.PID, url), nil
+	if !waitNapcatWebUI(45 * time.Second) {
+		stopProcess(process.ProcessGroupID)
+		state.PID, state.ProcessGroupID = 0, 0
+		_ = saveState(state)
+		return "", errors.New("NapCat 未能在 45 秒内启动管理面板，已停止受管进程组，请查看执行日志")
 	}
-	return fmt.Sprintf("✓ NapCat 已启动（PID %d）。\n? 管理面板（6099）尚未就绪，请稍等片刻后查看状态。", process.PID), nil
+	return fmt.Sprintf("✓ NapCat 已启动（PID %d）。\n✓ 现在请用手机 QQ 扫码登录。", process.PID), nil
 }
 
 func stopAction(confirmed bool) (string, error) {
@@ -395,7 +407,7 @@ func updateNapcat(confirmed bool) (string, error) {
 			return "", errors.New("旧 NapCat 进程组未能停止，未开始更新")
 		}
 	}
-	installation, installErr := installNapCat()
+	installation, installErr := installNapCat(state.EnvironmentMode == "managed-runtime")
 	if installErr != nil {
 		if wasRunning {
 			if process, startErr := startNapCat(state); startErr == nil {
@@ -405,7 +417,7 @@ func updateNapcat(confirmed bool) (string, error) {
 		}
 		return "", installErr
 	}
-	updated := State{Version: installation.Version, InstallDir: installation.InstallDir, Managed: true, Platform: napcatPlatform().Key, InstallMode: "managed", ReleaseTag: installation.ReleaseTag, Asset: installation.Asset, ArchiveSHA256: installation.ArchiveSHA256, RuntimeAsset: installation.RuntimeAsset, RuntimeArchiveSHA256: installation.RuntimeArchiveSHA256, Fingerprint: installation.Fingerprint, WatchdogPID: state.WatchdogPID}
+	updated := State{Version: installation.Version, InstallDir: installation.InstallDir, Managed: true, Platform: napcatPlatform().Key, InstallMode: "managed", ReleaseTag: installation.ReleaseTag, Asset: installation.Asset, ArchiveSHA256: installation.ArchiveSHA256, QQRuntimeAsset: installation.QQRuntimeAsset, QQRuntimeArchiveSHA256: installation.QQRuntimeArchiveSHA256, RuntimeID: installation.RuntimeID, RuntimeAsset: installation.RuntimeAsset, RuntimeSHA256: installation.RuntimeSHA256, RuntimeFingerprint: installation.RuntimeFingerprint, EnvironmentMode: installation.EnvironmentMode, FallbackReason: installation.FallbackReason, EnvironmentDiagnostic: installation.EnvironmentDiagnostic, Fingerprint: installation.Fingerprint, WatchdogPID: state.WatchdogPID}
 	if wasRunning {
 		reportNapcatProgress("restart", 90, "恢复更新后的 NapCat 运行状态")
 		process, startErr := startNapCat(updated)
@@ -447,3 +459,14 @@ func logAction(params map[string]string) (string, error) {
 }
 
 func timeWait(ms int) { time.Sleep(time.Duration(ms) * time.Millisecond) }
+
+func waitNapcatWebUI(timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if webUIBridge() != "" {
+			return true
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	return false
+}

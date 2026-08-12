@@ -16,18 +16,34 @@ import (
 // read-only (for example when installed next to the alx executable).
 
 type State struct {
-	Version              string `json:"version,omitempty"`
-	InstallDir           string `json:"installDir,omitempty"`
-	PID                  int    `json:"pid,omitempty"`
-	ProcessGroupID       int    `json:"processGroupId,omitempty"`
-	WatchdogPID          int    `json:"watchdogPid,omitempty"`
-	Managed              bool   `json:"managed"`
-	Platform             string `json:"platform,omitempty"`
-	InstallMode          string `json:"installMode,omitempty"`
-	ReleaseTag           string `json:"releaseTag,omitempty"`
-	Asset                string `json:"asset,omitempty"`
-	ArchiveSHA256        string `json:"archiveSha256,omitempty"`
-	RuntimeAsset         string `json:"runtimeAsset,omitempty"`
+	Version        string `json:"version,omitempty"`
+	InstallDir     string `json:"installDir,omitempty"`
+	PID            int    `json:"pid,omitempty"`
+	ProcessGroupID int    `json:"processGroupId,omitempty"`
+	WatchdogPID    int    `json:"watchdogPid,omitempty"`
+	Managed        bool   `json:"managed"`
+	Platform       string `json:"platform,omitempty"`
+	InstallMode    string `json:"installMode,omitempty"`
+	ReleaseTag     string `json:"releaseTag,omitempty"`
+	Asset          string `json:"asset,omitempty"`
+	ArchiveSHA256  string `json:"archiveSha256,omitempty"`
+	// QQRuntime* identifies the official Tencent QQ package installed beside
+	// NapCat.  Older state files used RuntimeAsset for these fields; loadState
+	// migrates that representation before any lifecycle decision is made.
+	QQRuntimeAsset         string `json:"qqRuntimeAsset,omitempty"`
+	QQRuntimeArchiveSHA256 string `json:"qqRuntimeArchiveSha256,omitempty"`
+	// Runtime* identifies ALX's self-contained Linux compatibility runtime.
+	// It is deliberately separate from QQRuntime*: the former supplies Xvfb
+	// and compatible libraries, while the latter is the official QQ payload.
+	RuntimeID             string `json:"runtimeId,omitempty"`
+	RuntimeAsset          string `json:"runtimeAsset,omitempty"`
+	RuntimeSHA256         string `json:"runtimeSha256,omitempty"`
+	RuntimeFingerprint    string `json:"runtimeFingerprint,omitempty"`
+	EnvironmentMode       string `json:"environmentMode,omitempty"`
+	FallbackReason        string `json:"fallbackReason,omitempty"`
+	EnvironmentDiagnostic string `json:"environmentDiagnostic,omitempty"`
+	// RuntimeArchiveSHA256 is retained solely to migrate pre-compatibility
+	// state files. New writes always use QQRuntimeArchiveSHA256 or RuntimeSHA256.
 	RuntimeArchiveSHA256 string `json:"runtimeArchiveSha256,omitempty"`
 	Fingerprint          string `json:"fingerprint,omitempty"`
 	ValidatedAt          string `json:"validatedAt,omitempty"`
@@ -136,6 +152,19 @@ func loadState() (State, error) {
 	var state State
 	if err := json.Unmarshal(data, &state); err != nil {
 		return State{}, err
+	}
+	// Version 1 Linux state used RuntimeAsset/RuntimeArchiveSHA256 for the
+	// official QQ package.  A compatibility runtime always has a RuntimeID, so
+	// this conversion is unambiguous and keeps existing managed installations
+	// usable without granting any new permission.
+	if state.QQRuntimeAsset == "" && state.RuntimeID == "" && state.RuntimeAsset != "" && state.RuntimeArchiveSHA256 != "" {
+		state.QQRuntimeAsset = state.RuntimeAsset
+		state.QQRuntimeArchiveSHA256 = state.RuntimeArchiveSHA256
+		state.RuntimeAsset = ""
+		state.RuntimeArchiveSHA256 = ""
+		if state.EnvironmentMode == "" {
+			state.EnvironmentMode = "system"
+		}
 	}
 	// Before release governance existed, installations had no immutable source
 	// identity. Treat them as external associations; this prevents an upgrade
