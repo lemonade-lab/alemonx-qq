@@ -45,7 +45,10 @@ func napcatPlatform() *napcatPlatformSpec { return napcatPlatformFor(runtime.GOO
 func napcatPlatformFor(goos, goarch string) *napcatPlatformSpec {
 	switch goos + "/" + goarch {
 	case "windows/amd64":
-		return &napcatPlatformSpec{Key: "windows-amd64", Label: "Windows x64", AutoInstall: true}
+		// The official OneKey archive is a graphical NapCatInstaller.exe.  It
+		// owns QQ injection and subsequent lifecycle operations, just like the
+		// official macOS launcher; ALX only downloads, verifies and opens it.
+		return &napcatPlatformSpec{Key: "windows-external", Label: "Windows x64", AutoInstall: false}
 	case "linux/amd64":
 		return &napcatPlatformSpec{Key: "linux-amd64", Label: "Linux x64", AutoInstall: true}
 	case "linux/arm64":

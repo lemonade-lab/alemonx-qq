@@ -32,6 +32,9 @@ type statusPayload struct {
 	OneBotURL            string                 `json:"oneBotUrl,omitempty"`
 	QRCodeAvailable      bool                   `json:"qrCodeAvailable"`
 	QRCodeUpdatedAt      string                 `json:"qrCodeUpdatedAt,omitempty"`
+	InstallerReady       bool                   `json:"installerReady"`
+	InstallerPath        string                 `json:"installerPath,omitempty"`
+	LauncherPath         string                 `json:"launcherPath,omitempty"`
 	DiagnosticHint       string                 `json:"diagnosticHint,omitempty"`
 	Supported            bool                   `json:"supported"`
 	Managed              bool                   `json:"managed"`
@@ -96,6 +99,20 @@ func collectStatus(state State) statusPayload {
 		}
 	}
 	payload.InstallHealthy = payload.Installed
+	if platform != nil && platform.Key == "darwin-external" {
+		payload.InstallerReady = macInstallerReady()
+		if payload.InstallerReady {
+			payload.InstallerPath = macInstallerPath()
+		}
+		payload.LauncherPath = macNapcatLauncherPath()
+	}
+	if platform != nil && platform.Key == "windows-external" {
+		payload.InstallerReady = windowsInstallerReady()
+		if payload.InstallerReady {
+			payload.InstallerPath = windowsInstallerPath()
+		}
+		payload.LauncherPath = windowsNapcatLauncherPath()
+	}
 	payload.Running = isRunning(state)
 	payload.Watchdog = payload.ManagedActions && processAlive(state.WatchdogPID)
 	payload.WebUIURL = webUIBridge()
@@ -148,7 +165,11 @@ func collectStatus(state State) statusPayload {
 }
 
 func napcatLinuxDependencies() *linuxDependencyStatus {
-	return napcatLinuxDependenciesFor(runtime.GOOS, exec.LookPath, dpkgPackageInstalled)
+	installed := dpkgPackageInstalled
+	if _, err := exec.LookPath("apt-get"); err != nil {
+		installed = rpmPackageInstalled
+	}
+	return napcatLinuxDependenciesFor(runtime.GOOS, exec.LookPath, installed)
 }
 
 func napcatLinuxDependenciesFor(goos string, lookPath func(string) (string, error), installed func(string) bool) *linuxDependencyStatus {
@@ -163,22 +184,44 @@ func napcatLinuxDependenciesFor(goos string, lookPath func(string) (string, erro
 	} else {
 		return &linuxDependencyStatus{Hint: "未检测到 APT 或 DNF；当前 Linux 发行版暂不能自动补齐 NapCat 依赖。"}
 	}
-	missing := make([]string, 0, 8)
-	if _, err := lookPath("Xvfb"); err != nil {
-		missing = append(missing, "xvfb")
-	}
-	if packageManager == "apt" {
-		for _, packageName := range []string{"libnss3", "libgbm1"} {
-			if !installed(packageName) {
-				missing = append(missing, packageName)
-			}
+	packages := napcatLinuxPackages(packageManager)
+	missing := make([]string, 0, len(packages)+1)
+	for _, packageName := range packages {
+		if !installed(packageName) {
+			missing = append(missing, packageName)
 		}
+	}
+	// A package database entry alone does not prove that the X server binary is
+	// available on PATH. Keep this separate runtime check so the following
+	// managed launch cannot fail after the UI already declared the host ready.
+	if _, err := lookPath("Xvfb"); err != nil && !containsString(missing, packages[0]) {
+		missing = append(missing, packages[0])
 	}
 	status := &linuxDependencyStatus{Supported: true, Ready: len(missing) == 0, PackageManager: packageManager, SystemAccount: currentSystemAccount(), Missing: missing}
 	if !status.Ready {
 		status.Hint = "安装 NapCat 前需要补齐 Linux 图形运行依赖。工作台会通过一次 sudo 授权安装固定的系统软件包，并自动继续安装。"
 	}
 	return status
+}
+
+func napcatLinuxPackages(packageManager string) []string {
+	switch packageManager {
+	case "apt":
+		return []string{"xvfb", "libnss3", "libgbm1", "libglib2.0-0", "libatk1.0-0", "libatspi2.0-0", "libgtk-3-0", "libasound2"}
+	case "dnf":
+		return []string{"xorg-x11-server-Xvfb", "nss", "mesa-libgbm", "glib2", "atk", "at-spi2-atk", "gtk3", "alsa-lib"}
+	default:
+		return nil
+	}
+}
+
+func containsString(values []string, wanted string) bool {
+	for _, value := range values {
+		if value == wanted {
+			return true
+		}
+	}
+	return false
 }
 
 func currentSystemAccount() string {
@@ -209,6 +252,11 @@ func dpkgPackageInstalled(packageName string) bool {
 		}
 	}
 	return false
+}
+
+func rpmPackageInstalled(packageName string) bool {
+	result := exec.Command("rpm", "-q", packageName)
+	return result.Run() == nil
 }
 
 func napcatAccounts(state State) ([]napcatAccount, error) {

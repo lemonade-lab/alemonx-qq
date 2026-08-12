@@ -259,7 +259,7 @@ function ActionButton({
 function actionTitle(action: string | null) {
 	if (!action) return ''
 	if (action.includes('reinstall')) return '正在重装并保留现有配置'
-	if (action === 'install' || action.endsWith('-install')) return '正在下载并安装核心'
+	if (action === 'install' || action.endsWith('-install')) return '正在下载、安装并启动核心'
 	if (action === 'start' || action.endsWith('-start')) return '正在启动 QQ 服务并等待二维码'
 	if (action === 'stop' || action.endsWith('-stop')) return '正在停止核心服务'
 	if (action.includes('update')) return '正在检查或更新核心版本'
@@ -317,6 +317,12 @@ export default function App() {
 	const selectedOneBotURL = engine === 'napcat'
 		? selectedNapcatAccount?.oneBotUrl
 		: liveStatus?.oneBotUrl
+	const napcatNeedsInstall = engine === 'napcat' && liveStatus?.installed === false
+	const nativeLauncherNapcat = engine === 'napcat' && (liveStatus?.platform === 'darwin-external' || liveStatus?.platform === 'windows-external')
+	// Linux's first-run path has exactly one user outcome: scan the QQ code.
+	// Keep configuration, directories and maintenance controls out of sight
+	// until the core either becomes ready or genuinely needs recovery.
+	const napcatLoginJourney = engine === 'napcat' && !nativeLauncherNapcat && liveStatus?.installed === true && liveStatus.running && !liveStatus.oneBotReady
 
 	const selectSystemDirectory = async (pickerId: string, setValue: (value: string) => void) => {
 		setSystemPickerBusy(pickerId)
@@ -465,13 +471,39 @@ export default function App() {
 
 	const guide = useMemo(() => {
 		if (!liveStatus) return null
-		if (engine === 'napcat' && liveStatus.platform === 'darwin-external' && !liveStatus.installed) return {
+		if (engine === 'napcat' && liveStatus.platform === 'darwin-external' && !liveStatus.installed) return liveStatus.installerReady ? {
 			title: '安装 NapCat',
-			description: '下载官方 macOS 安装器，完成安装后即可关联。',
-			label: '下载 macOS 安装器',
-			action: () => confirm('下载 macOS NapCat 安装器', '工作台将下载并校验官方安装器，完成后显示本地文件地址。', () => run('napcat-macos-installer-download', {}, true)),
+			description: liveStatus.installerPath ? `${liveStatus.installerPath}` : '安装器已下载。',
+			label: '打开安装器',
+			action: () => confirm('打开 NapCat 安装器', '将打开已下载的官方安装器。', () => run('napcat-macos-installer-open', {}, true)),
+		} : {
+			title: '安装 NapCat',
+			description: '点击后自动下载并校验官方安装器。',
+			label: '安装 NapCat',
+			action: () => confirm('安装 NapCat', '工作台将下载并校验官方安装器。', () => run('napcat-macos-installer-download', {}, true)),
 		}
-		if (engine === 'napcat' && !liveStatus.installed && !liveStatus.verified) return { title: '请先安装 NapCat', description: liveStatus.verificationReason || '此系统需要先手动安装，再在这里关联。', label: '关联目录', action: () => document.getElementById('napcat-association')?.scrollIntoView({ behavior: 'smooth', block: 'center' }) }
+		if (engine === 'napcat' && liveStatus.platform === 'windows-external') return liveStatus.launcherPath ? {
+			title: 'NapCat 启动器',
+			description: liveStatus.launcherPath,
+			label: '打开 NapCat 启动器',
+			action: () => confirm('打开 NapCat 启动器', '将打开官方 NapCat 启动器。', () => run('napcat-windows-launcher-open', {}, true)),
+		} : {
+			title: '安装 NapCat',
+			description: '点击后自动下载并校验官方图形安装器。',
+			label: '安装 NapCat',
+			action: () => confirm('安装 NapCat', '工作台将下载并校验官方安装器。', () => run('napcat-windows-installer-download', {}, true)),
+		}
+		if (engine === 'napcat' && !liveStatus.installed) return { title: '安装 NapCat', description: '点击后自动安装并启动，随后显示登录二维码。', label: '安装 NapCat', action: () => void requestNapcatInstall() }
+		if (engine === 'napcat' && liveStatus.installed && liveStatus.running && !liveStatus.oneBotReady) {
+			if (liveStatus.loginPending) return null
+			return { title: '正在准备登录二维码', description: 'NapCat 已启动，请稍候。二维码出现后用手机 QQ 扫描即可。', label: '等待二维码', action: () => undefined }
+		}
+		if (nativeLauncherNapcat) return {
+			title: 'NapCat 启动器',
+			description: liveStatus.launcherPath || '使用官方启动器管理 NapCat。',
+			label: '打开 NapCat 启动器',
+			action: () => confirm('打开 NapCat 启动器', '启动器负责安装、启动和管理 NapCat。', () => run('napcat-macos-launcher-open', {}, true)),
+		}
 		if (engine === 'napcat' && liveStatus.installed && !liveStatus.managed) return { title: 'NapCat 已关联', description: webUrl ? '可以继续登录 QQ。' : '正在检查登录状态。', label: webUrl ? '打开登录页' : '刷新', action: () => webUrl ? setView('webui') : void run('napcat-status') }
 		if (engine === 'napcat' && liveStatus.installed && !liveStatus.managedActions) return { title: '需要重新安装', description: '当前安装不完整。', label: '查看详情', action: () => void run('napcat-status') }
 		if (engine === 'luckylillia' && liveStatus.supported === false) return { title: '此系统暂不支持', description: '请改用 NapCat，或手动安装后关联。', label: '关联目录', action: () => document.getElementById('luckylillia-association')?.scrollIntoView({ behavior: 'smooth', block: 'center' }) }
@@ -501,7 +533,7 @@ export default function App() {
 		</div>
       </header>
 
-      <nav className="flex gap-1 border-b border-[var(--theme-border-default)] pb-2">
+	  {!napcatNeedsInstall && !nativeLauncherNapcat && !napcatLoginJourney && <nav className="flex gap-1 border-b border-[var(--theme-border-default)] pb-2">
         {(['manage', 'config', 'webui'] as View[]).map((tab) => (
           <button
             key={tab}
@@ -516,7 +548,7 @@ export default function App() {
             {tab === 'manage' ? '管理' : tab === 'config' ? '网络配置' : '管理面板'}
           </button>
         ))}
-      </nav>
+	  </nav>}
 
       {view === 'manage' && (
         <div className="grid gap-3">
@@ -533,7 +565,21 @@ export default function App() {
 			</section>
 		  )}
 
-		  {liveStatus && (
+		  {engine === 'napcat' && !nativeLauncherNapcat && liveStatus?.loginPending && (
+			<section className="grid justify-items-center gap-3 rounded-panel border border-[var(--theme-border-default)] bg-[var(--theme-surface-panel)] p-4 text-center">
+				<div>
+					<h2 className="m-0 text-sm font-semibold text-[var(--theme-text-strong)]">请用手机 QQ 扫码登录</h2>
+					<p className="m-0 mt-1 text-xs text-[var(--theme-text-muted)]">扫码完成后会自动继续。</p>
+				</div>
+				{qrImageUrl ? (
+					<img className="size-56 rounded-lg bg-white p-2" src={qrImageUrl} alt="NapCat QQ 登录二维码" />
+				) : (
+					<p className="m-0 text-xs text-[var(--theme-text-muted)]">正在获取二维码…</p>
+				)}
+			</section>
+		  )}
+
+		  {liveStatus && !napcatNeedsInstall && !nativeLauncherNapcat && !napcatLoginJourney && (
             <section className="grid gap-2 rounded-panel border p-3 text-xs"
               style={{ borderColor: 'var(--theme-border-default)', background: 'var(--theme-surface-panel)' }}
             >
@@ -569,7 +615,7 @@ export default function App() {
 			</section>
 		  )}
 
-		  {engine === 'napcat' && liveStatus?.linuxDependencies && !liveStatus.linuxDependencies.ready && (
+		  {engine === 'napcat' && !napcatNeedsInstall && !nativeLauncherNapcat && !napcatLoginJourney && liveStatus?.linuxDependencies && !liveStatus.linuxDependencies.ready && (
 			<section className="grid gap-3 rounded-panel border border-[var(--theme-warning)] bg-[var(--theme-warning-soft)] p-3">
 				<div className="grid gap-1">
 					<strong className="text-sm font-semibold text-[var(--theme-text-strong)]">补齐 Linux 运行依赖</strong>
@@ -597,17 +643,7 @@ export default function App() {
 			</section>
 		  )}
 
-		  {engine === 'napcat' && !liveStatus?.managed && liveStatus?.platform === 'darwin-external' && (
-			<section id="napcat-association" className="grid gap-3 rounded-panel border border-[var(--theme-border-default)] bg-[var(--theme-surface-panel)] p-3">
-				<div className="grid gap-1">
-					<strong className="text-sm font-semibold text-[var(--theme-text-strong)]">安装完成后关联</strong>
-					<span className="text-xs text-[var(--theme-text-muted)]">工作台会使用 QQ 容器中的固定 NapCat 地址，无需选择或扫描目录。</span>
-				</div>
-				<div className="flex justify-end"><button className="primary-button min-h-9" disabled={!liveStatus.installed} onClick={() => confirm('关联 NapCat', '工作台将关联 QQ 容器中的已安装 NapCat，不会修改其中的文件。', () => run('napcat-adopt', {}, true))}>关联已检测到的实例</button></div>
-			</section>
-		  )}
-
-		  {engine === 'napcat' && !liveStatus?.managed && liveStatus?.platform !== 'darwin-external' && (
+		  {engine === 'napcat' && !napcatNeedsInstall && !nativeLauncherNapcat && !napcatLoginJourney && !liveStatus?.managed && liveStatus?.platform !== 'darwin-external' && (
 			<section id="napcat-association" className="grid gap-3 rounded-panel border border-[var(--theme-border-default)] bg-[var(--theme-surface-panel)] p-3">
 				<div className="grid gap-1">
 					<strong className="text-sm font-semibold text-[var(--theme-text-strong)]">已经安装？关联目录</strong>
@@ -624,7 +660,7 @@ export default function App() {
 			</section>
 		  )}
 
-		  <details className="rounded-panel border border-[var(--theme-border-default)] bg-[var(--theme-surface-panel)] p-3">
+		  {!napcatNeedsInstall && !nativeLauncherNapcat && !napcatLoginJourney && <details className="rounded-panel border border-[var(--theme-border-default)] bg-[var(--theme-surface-panel)] p-3">
 			<summary className="cursor-pointer text-xs font-semibold text-[var(--theme-text-secondary)]">其他操作与诊断（更新、日志、重启、卸载）</summary>
 			<div className="mt-3 flex flex-wrap gap-2">
 			{engine === 'napcat' ? <>
@@ -651,26 +687,12 @@ export default function App() {
 				<ActionButton label="更新" variant="secondary" running={state === 'running'} disabled={!liveStatus?.verified || !luckyManaged} onClick={() => confirm('更新 LuckyLillia', '会停止旧进程，下载新版并在失败时恢复旧版本与进程。', () => run(luckyAction('update'), {}, true))} />
 			</>}
 			</div>
-		  </details>
+		  </details>}
 
 
 		  <ResultPanel state={state} result={result ?? (state === 'running' ? { output: actionTitle(activeAction) } : undefined)} steps={operationSteps} />
 
-		  {engine === 'napcat' && liveStatus?.loginPending && (
-			<section className="grid justify-items-center gap-3 rounded-panel border border-[var(--theme-border-default)] bg-[var(--theme-surface-panel)] p-4 text-center">
-				<div>
-					<h2 className="m-0 text-sm font-semibold text-[var(--theme-text-strong)]">QQ 扫码登录</h2>
-					<p className="m-0 mt-1 text-xs text-[var(--theme-text-muted)]">请使用手机 QQ 扫描二维码。二维码刷新后会自动更新。</p>
-				</div>
-				{qrImageUrl ? (
-					<img className="size-56 rounded-lg bg-white p-2" src={qrImageUrl} alt="NapCat QQ 登录二维码" />
-				) : (
-					<p className="m-0 text-xs text-[var(--theme-text-muted)]">正在等待 NapCat 生成二维码…</p>
-				)}
-			</section>
-		  )}
-
-          {webUrl && (
+		  {!napcatNeedsInstall && !nativeLauncherNapcat && !napcatLoginJourney && webUrl && (
             <section className="grid gap-2 rounded-panel border border-[var(--theme-border-default)] bg-[var(--theme-surface-panel)] p-3 text-xs">
               <strong className="text-sm font-semibold text-[var(--theme-text-strong)]">
                 管理面板可用

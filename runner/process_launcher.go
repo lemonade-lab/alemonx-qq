@@ -61,6 +61,15 @@ func macInstallGuide() (string, error) {
 func downloadMacNapcatInstaller() (string, error) {
 	return "", fmt.Errorf("当前系统不支持 macOS NapCat 安装器")
 }
+func openMacNapcatInstaller() (string, error) {
+	return "", fmt.Errorf("当前系统不支持 macOS NapCat 安装器")
+}
+func macInstallerReady() bool       { return false }
+func macInstallerPath() string      { return "" }
+func macNapcatLauncherPath() string { return "" }
+func openMacNapcatLauncher() (string, error) {
+	return "", fmt.Errorf("当前系统不支持 macOS NapCat 启动器")
+}
 
 func macNapcatVersion() string { return "" }
 

@@ -54,6 +54,9 @@ func napcatStateVerified(state State) bool {
 }
 
 func requireManagedNapcat(state State, action string) error {
+	if platform := napcatPlatform(); platform != nil && (platform.Key == "darwin-external" || platform.Key == "windows-external") {
+		return errors.New("当前系统由官方 NapCat 启动器管理；请在启动器中" + action)
+	}
 	if !state.Managed || state.InstallMode != "managed" {
 		return errors.New("当前 NapCat 是外部关联实例；工作台不能" + action + "。请使用其原始管理方式")
 	}

@@ -65,6 +65,26 @@ func run(action string, params map[string]string, confirmed bool) (string, error
 			return "", err
 		}
 		return downloadMacNapcatInstaller()
+	case "napcat-macos-installer-open":
+		if err := requireNapcatConfirmation(confirmed, "打开 macOS NapCat 安装器"); err != nil {
+			return "", err
+		}
+		return openMacNapcatInstaller()
+	case "napcat-macos-launcher-open":
+		if err := requireNapcatConfirmation(confirmed, "打开 NapCat 启动器"); err != nil {
+			return "", err
+		}
+		return openMacNapcatLauncher()
+	case "napcat-windows-installer-download":
+		if err := requireNapcatConfirmation(confirmed, "下载 Windows NapCat 安装器"); err != nil {
+			return "", err
+		}
+		return downloadWindowsNapcatInstaller()
+	case "napcat-windows-installer-open", "napcat-windows-launcher-open":
+		if err := requireNapcatConfirmation(confirmed, "打开 NapCat 启动器"); err != nil {
+			return "", err
+		}
+		return openWindowsNapcatLauncher()
 	case "install":
 		return installAction(confirmed)
 	case "uninstall":
@@ -199,8 +219,8 @@ func installAction(confirmed bool) (string, error) {
 	if state.InstallDir != "" && !state.Managed {
 		return "", errors.New("已关联外部 NapCat；请先取消关联，工作台才可创建受管安装")
 	}
-	if runtime.GOOS == "darwin" {
-		return "", errors.New("macOS NapCat 仅支持外部关联；工作台不会修改 QQ 注入文件")
+	if runtime.GOOS == "darwin" || runtime.GOOS == "windows" {
+		return "", errors.New("当前系统请使用工作台下载并打开官方 NapCat 启动器；工作台不会修改 QQ 注入文件")
 	}
 	installation, err := installNapCat()
 	if err != nil {
@@ -212,6 +232,24 @@ func installAction(confirmed bool) (string, error) {
 		return "", err
 	}
 	discardNapcatBackup(installation)
+	if runtime.GOOS == "linux" {
+		reportNapcatProgress("start", 85, "自动启动 NapCat 并等待二维码")
+		process, startErr := startNapCat(state)
+		if startErr != nil {
+			return "", fmt.Errorf("NapCat 已安装（版本 %s），但自动启动失败：%w。安装已保留，请查看日志后点击“启动 NapCat”重试", installation.Version, startErr)
+		}
+		state.PID, state.ProcessGroupID = process.PID, process.ProcessGroupID
+		if err := saveState(state); err != nil {
+			stopProcess(process.ProcessGroupID)
+			return "", err
+		}
+		timeWait(1500)
+		reportNapcatProgress("complete", 100, "NapCat 已安装并启动，等待扫码登录")
+		if url := webUIBridge(); url != "" {
+			return fmt.Sprintf("✓ NapCat 已安装并启动（版本 %s）。\n✓ 正在等待扫码登录，二维码会自动显示。", installation.Version), nil
+		}
+		return fmt.Sprintf("✓ NapCat 已安装并启动（版本 %s）。\n? 正在等待 NapCat 准备二维码，请稍候。", installation.Version), nil
+	}
 	reportNapcatProgress("complete", 100, "NapCat 安装完成")
 	return fmt.Sprintf("✓ NapCat 已安装（版本 %s）。\n✓ 现在可以点击「启动」运行它。", installation.Version), nil
 }

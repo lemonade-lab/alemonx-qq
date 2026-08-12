@@ -19,7 +19,7 @@
   "development": {
     "runtime": "go",
     "entry": {
-      "go": "runner/main.go"
+      "go": "runner"
     },
     "web": {
       "mode": "dev-server",

@@ -144,6 +144,9 @@ export type StatusPayload = {
 	oneBotUrl?: string
 	qrCodeAvailable?: boolean
 	qrCodeUpdatedAt?: string
+	installerReady?: boolean
+	installerPath?: string
+	launcherPath?: string
 	logPath?: string
 	diagnosticHint?: string
 	supported?: boolean

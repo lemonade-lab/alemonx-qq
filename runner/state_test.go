@@ -2,6 +2,26 @@ package main
 
 import "testing"
 
+func TestNapcatGraphicalLauncherPlatformsAreExternal(t *testing.T) {
+	windows := napcatPlatformFor("windows", "amd64")
+	if windows == nil || windows.Key != "windows-external" || windows.AutoInstall {
+		t.Fatalf("Windows OneKey installer contract = %#v", windows)
+	}
+	mac := napcatPlatformFor("darwin", "arm64")
+	if mac == nil || mac.Key != "darwin-external" || mac.AutoInstall {
+		t.Fatalf("macOS installer contract = %#v", mac)
+	}
+}
+
+func TestNapcatLinuxPlatformsRemainManaged(t *testing.T) {
+	for _, architecture := range []string{"amd64", "arm64"} {
+		platform := napcatPlatformFor("linux", architecture)
+		if platform == nil || !platform.AutoInstall || platform.Key != "linux-"+architecture {
+			t.Fatalf("Linux %s managed runtime contract = %#v", architecture, platform)
+		}
+	}
+}
+
 func TestStateRoundTrip(t *testing.T) {
 	original := userConfigDir
 	dir := t.TempDir()

@@ -3,11 +3,12 @@
 package main
 
 import (
-	"crypto/sha256"
+	"archive/zip"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 )
@@ -103,15 +104,14 @@ func downloadMacNapcatInstaller() (string, error) {
 	if !validSHA(expected) {
 		return "", fmt.Errorf("官方 macOS 安装器未提供有效 SHA-256 校验和")
 	}
-	root, err := stateDir()
+	destination, err := macInstallerArchivePath()
 	if err != nil {
 		return "", err
 	}
-	downloads := filepath.Join(root, "downloads")
+	downloads := filepath.Dir(destination)
 	if err := os.MkdirAll(downloads, 0o700); err != nil {
 		return "", err
 	}
-	destination := filepath.Join(downloads, macInstallerAsset)
 	if current, err := sha256File(destination); err == nil && strings.EqualFold(current, expected) {
 		return macInstallerDownloadResult(destination, release.TagName), nil
 	}
@@ -136,20 +136,157 @@ func downloadMacNapcatInstaller() (string, error) {
 }
 
 func macInstallerDownloadResult(destination, tag string) string {
-	return fmt.Sprintf("✓ macOS NapCat 安装器已下载并校验（%s）。\n文件：%s\n下一步：双击此 ZIP 解压，打开 NapCat安装器.app，点击「安装」并按提示授权。完成后回到这里点击「关联已检测到的实例」。", tag, destination)
+	return fmt.Sprintf("✓ 安装器已下载并校验（%s）。\n文件位置：%s\n下一步：点击「打开安装器」，按 App 内提示完成安装。", tag, destination)
 }
 
-func sha256File(path string) (string, error) {
-	file, err := os.Open(path)
+func macInstallerArchivePath() (string, error) {
+	root, err := stateDir()
 	if err != nil {
 		return "", err
 	}
-	defer file.Close()
-	hash := sha256.New()
-	if _, err := io.Copy(hash, file); err != nil {
+	return filepath.Join(root, "downloads", macInstallerAsset), nil
+}
+
+func macInstallerReady() bool {
+	archive, err := macInstallerArchivePath()
+	if err != nil {
+		return false
+	}
+	info, err := os.Stat(archive)
+	return err == nil && info.Mode().IsRegular() && info.Size() > 0 && info.Size() <= maxNapcatArchiveSize
+}
+
+func macInstallerPath() string {
+	archive, err := macInstallerArchivePath()
+	if err != nil || !macInstallerReady() {
+		return ""
+	}
+	return archive
+}
+
+func macNapcatLauncherPath() string {
+	archive, err := macInstallerArchivePath()
+	if err != nil {
+		return ""
+	}
+	candidate := filepath.Join(filepath.Dir(archive), "NapCatInstaller", "NapCatInstaller.app")
+	info, err := os.Stat(candidate)
+	if err != nil || !info.IsDir() {
+		return ""
+	}
+	return candidate
+}
+
+func openMacNapcatLauncher() (string, error) {
+	launcher := macNapcatLauncherPath()
+	if launcher == "" {
+		return "", fmt.Errorf("未找到 NapCat 启动器；请先点击「安装 NapCat」下载官方安装器")
+	}
+	if err := exec.Command("open", launcher).Run(); err != nil {
+		return "", fmt.Errorf("无法打开 NapCat 启动器：%w", err)
+	}
+	return "✓ NapCat 启动器已打开。请在启动器中安装、启动 NapCat 或切换原版 QQ。", nil
+}
+
+// openMacNapcatInstaller expands the already verified archive to a
+// workbench-owned directory and launches its sole app bundle. It deliberately
+// uses Go's ZIP reader rather than Archive Utility or a shell command, so the
+// location and extracted paths remain bounded and predictable.
+func openMacNapcatInstaller() (string, error) {
+	archive, err := macInstallerArchivePath()
+	if err != nil || !macInstallerReady() {
+		return "", fmt.Errorf("安装器尚未下载完成；请先点击「安装 NapCat」")
+	}
+	root := filepath.Join(filepath.Dir(archive), "NapCatInstaller")
+	temporary, err := os.MkdirTemp(filepath.Dir(archive), ".NapCatInstaller-")
+	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("%x", hash.Sum(nil)), nil
+	defer os.RemoveAll(temporary)
+	app, err := extractMacInstallerApp(archive, temporary)
+	if err != nil {
+		return "", err
+	}
+	_ = os.RemoveAll(root)
+	if err := os.Rename(temporary, root); err != nil {
+		return "", err
+	}
+	app = filepath.Join(root, strings.TrimPrefix(app, temporary+string(filepath.Separator)))
+	if err := exec.Command("open", app).Run(); err != nil {
+		return "", fmt.Errorf("无法打开 NapCat 安装器：%w", err)
+	}
+	return "✓ NapCat 安装器已打开。请按 App 内提示完成安装；完成后回到这里继续。", nil
+}
+
+func extractMacInstallerApp(archive, destination string) (string, error) {
+	reader, err := zip.OpenReader(archive)
+	if err != nil {
+		return "", fmt.Errorf("安装器压缩包无效：%w", err)
+	}
+	defer reader.Close()
+	var written int64
+	appRoots := map[string]bool{}
+	for _, item := range reader.File {
+		name := filepath.Clean(filepath.FromSlash(item.Name))
+		if name == "." || filepath.IsAbs(name) || name == ".." || strings.HasPrefix(name, ".."+string(filepath.Separator)) {
+			return "", fmt.Errorf("安装器压缩包包含不安全路径")
+		}
+		if index := strings.Index(filepath.ToSlash(name), ".app/"); index >= 0 {
+			appRoots[filepath.FromSlash(filepath.ToSlash(name)[:index+4])] = true
+		}
+		target := filepath.Join(destination, name)
+		rel, err := filepath.Rel(destination, target)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return "", fmt.Errorf("安装器压缩包路径无效")
+		}
+		if item.FileInfo().IsDir() {
+			if err := os.MkdirAll(target, 0o700); err != nil {
+				return "", err
+			}
+			continue
+		}
+		if item.UncompressedSize64 > uint64(maxNapcatExtractedSize-written) {
+			return "", fmt.Errorf("安装器解压后超过 %d MB 限制", maxNapcatExtractedSize>>20)
+		}
+		if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
+			return "", err
+		}
+		input, err := item.Open()
+		if err != nil {
+			return "", err
+		}
+		output, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, item.Mode()&0o755)
+		if err == nil {
+			var count int64
+			count, err = io.Copy(output, io.LimitReader(input, maxNapcatExtractedSize-written+1))
+			written += count
+			if written > maxNapcatExtractedSize {
+				err = fmt.Errorf("安装器解压后超过 %d MB 限制", maxNapcatExtractedSize>>20)
+			}
+		}
+		closeInput := input.Close()
+		var closeOutput error
+		if output != nil {
+			closeOutput = output.Close()
+		}
+		if err != nil {
+			return "", err
+		}
+		if closeInput != nil || closeOutput != nil {
+			return "", fmt.Errorf("安装器文件写入失败")
+		}
+	}
+	if len(appRoots) != 1 {
+		return "", fmt.Errorf("安装器压缩包未包含唯一的 macOS App")
+	}
+	for app := range appRoots {
+		info, err := os.Stat(filepath.Join(destination, app))
+		if err != nil || !info.IsDir() {
+			return "", fmt.Errorf("安装器 App 不完整")
+		}
+		return filepath.Join(destination, app), nil
+	}
+	return "", fmt.Errorf("安装器 App 不完整")
 }
 
 // macInstallGuide returns guidance for installing NapCat on macOS.
