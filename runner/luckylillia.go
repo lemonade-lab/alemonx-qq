@@ -92,6 +92,7 @@ type luckyPlatformSpec struct {
 	AssetName   string
 	Archive     string
 	Entrypoint  string
+	CLIBinary   string
 	AutoInstall bool
 }
 
@@ -100,13 +101,13 @@ func luckyPlatform() *luckyPlatformSpec { return luckyPlatformFor(runtime.GOOS, 
 func luckyPlatformFor(goos, goarch string) *luckyPlatformSpec {
 	switch goos + "/" + goarch {
 	case "linux/arm64":
-		return &luckyPlatformSpec{Key: "linux-arm64", Label: "Linux ARM64", AssetName: "LLBot-CLI-linux-arm64.zip", Archive: "zip", Entrypoint: "start.sh", AutoInstall: true}
+		return &luckyPlatformSpec{Key: "linux-arm64", Label: "Linux ARM64", AssetName: "LLBot-CLI-linux-arm64.zip", Archive: "zip", Entrypoint: "start.sh", CLIBinary: "llbot", AutoInstall: true}
 	case "linux/amd64":
-		return &luckyPlatformSpec{Key: "linux-amd64", Label: "Linux x64", AssetName: "LLBot-CLI-linux-x64.zip", Archive: "zip", Entrypoint: "start.sh", AutoInstall: true}
+		return &luckyPlatformSpec{Key: "linux-amd64", Label: "Linux x64", AssetName: "LLBot-CLI-linux-x64.zip", Archive: "zip", Entrypoint: "start.sh", CLIBinary: "llbot", AutoInstall: true}
 	case "windows/amd64":
-		return &luckyPlatformSpec{Key: "windows-amd64", Label: "Windows x64", AssetName: "LLBot-CLI-win-x64.zip", Archive: "zip", Entrypoint: "llbot.exe", AutoInstall: true}
+		return &luckyPlatformSpec{Key: "windows-amd64", Label: "Windows x64", AssetName: "LLBot-CLI-win-x64.zip", Archive: "zip", Entrypoint: "llbot.exe", CLIBinary: "llbot.exe", AutoInstall: true}
 	case "darwin/arm64":
-		return &luckyPlatformSpec{Key: "darwin-arm64", Label: "macOS Apple Silicon", AssetName: "LLBot-CLI-macos-arm64.tar.xz", Archive: "tar.xz", Entrypoint: "start.sh", AutoInstall: true}
+		return &luckyPlatformSpec{Key: "darwin-arm64", Label: "macOS Apple Silicon", AssetName: "LLBot-CLI-macos-arm64.tar.xz", Archive: "tar.xz", Entrypoint: "start.sh", CLIBinary: "llbot", AutoInstall: true}
 	default:
 		return nil
 	}
@@ -817,10 +818,19 @@ func luckyStartCommand(platform *luckyPlatformSpec, root, entry string) (*exec.C
 		return nil, errors.New("当前平台没有 LuckyLillia CLI 启动契约")
 	}
 	var command *exec.Cmd
-	if platform.Entrypoint == "start.sh" {
-		// Keep the CLI root as the working directory, exactly as the official
-		// Linux/macOS instructions require: `sh start.sh`.
-		command = exec.Command("sh", platform.Entrypoint)
+	if platform.Key == "linux-amd64" || platform.Key == "linux-arm64" {
+		// start.sh is interactive. With the workbench's detached process it
+		// mistakes the missing TTY for a request for token-only headless mode,
+		// which cannot show a QR code. Its official headed Shell path is exactly
+		// `xvfb-run -a ./llbot --pmhq`; invoke that path directly instead.
+		binary := filepath.Join(root, platform.CLIBinary)
+		info, err := os.Stat(binary)
+		if err != nil || info.IsDir() {
+			return nil, errors.New("LuckyLillia CLI 包缺少 llbot 启动程序")
+		}
+		command = exec.Command("xvfb-run", "-a", binary, "--pmhq")
+	} else if platform.Entrypoint == "start.sh" {
+		command = exec.Command("sh", platform.Entrypoint, "--headed", "--gui")
 	} else {
 		command = exec.Command(entry)
 	}

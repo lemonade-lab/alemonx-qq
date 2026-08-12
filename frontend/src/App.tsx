@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { fetchHostRobotContext, fetchLocalServices, fetchRobotProjects, fetchStatus, napcatQRCodeURL, runActionAndPoll, syncRobotOneBot, type ActionResult, type LocalService, type RobotProject, type StatusPayload, type Task, type TaskStep } from './api'
 import { splitStatusLines, type StatusLine } from './status'
 
@@ -222,6 +222,7 @@ export default function App() {
   const [result, setResult] = useState<ActionResult | undefined>()
 	const [operationSteps, setOperationSteps] = useState<TaskStep[]>([])
 	const [activeAction, setActiveAction] = useState<string | null>(null)
+	const actionInFlight = useRef(false)
   const [state, setState] = useState<'idle' | 'running' | 'done' | 'failed'>(
     'idle'
   )
@@ -264,6 +265,11 @@ export default function App() {
 	const napcatLoginJourney = engine === 'napcat' && !nativeLauncherNapcat && liveStatus?.installed === true && liveStatus.running && !liveStatus.oneBotReady
 
 	const run = async (action: string, params: Record<string, string> = {}, confirm = false) => {
+		// State updates are asynchronous, so `state === running` alone cannot
+		// stop two rapid clicks (or two confirmation clicks) from starting two
+		// installations. Keep a synchronous guard in the browser as well.
+		if (actionInFlight.current) return
+		actionInFlight.current = true
 	setActiveAction(action)
     setState('running')
     setResult(undefined)
@@ -279,12 +285,24 @@ export default function App() {
       setState('failed')
 	} finally {
 		setActiveAction(null)
+		actionInFlight.current = false
 	  }
 	}
 
 	const requestNapcatInstall = async () => {
 		await run('install', {}, true)
 	}
+
+	const refreshStatus = useCallback(async () => {
+		try {
+			const [status, nextServices] = await Promise.all([fetchStatus(engine), fetchLocalServices()])
+			setLiveStatus(status)
+			setServices(nextServices)
+			setNapcatQQ(current => current || status.selectedAccount || '')
+		} catch {
+			// Keep the last usable state while a local service is changing.
+		}
+	}, [engine])
 
 	// Login QR codes are short-lived. Poll the read-only endpoint faster only
 	// while login is pending; hidden pages do not need background refreshes.
@@ -293,16 +311,7 @@ export default function App() {
 		let timer: ReturnType<typeof setTimeout> | undefined
     const tick = async () => {
 			if (document.hidden) return
-		try {
-			const [status, nextServices] = await Promise.all([fetchStatus(engine), fetchLocalServices()])
-			if (!stopped) {
-				setLiveStatus(status)
-				setServices(nextServices)
-				setNapcatQQ(current => current || status.selectedAccount || '')
-			}
-      } catch {
-		// Probe failed; keep last known status.
-      }
+			await refreshStatus()
 		if (!stopped) timer = setTimeout(tick, liveStatus?.loginPending ? 2000 : 5000)
     }
     void tick()
@@ -315,7 +324,7 @@ export default function App() {
 		if (timer) clearTimeout(timer)
 		 document.removeEventListener('visibilitychange', onVisibility)
     }
-	}, [engine, liveStatus?.loginPending])
+	}, [liveStatus?.loginPending, refreshStatus])
 
 	useEffect(() => {
 		void Promise.all([fetchRobotProjects(), fetchHostRobotContext().catch(() => null)])
@@ -365,16 +374,15 @@ export default function App() {
 			label: '打开 NapCat 启动器',
 			action: () => confirm('打开 NapCat 启动器', '启动器负责安装、启动和管理 NapCat。', () => run('napcat-macos-launcher-open', {}, true)),
 		}
-		if (engine === 'napcat' && liveStatus.installed && !liveStatus.managed) return { title: 'NapCat 已关联', description: webUrl ? '可以继续登录 QQ。' : '正在检查登录状态。', label: webUrl ? '打开登录页' : '刷新', action: () => webUrl ? setView('webui') : void run('napcat-status') }
-		if (engine === 'napcat' && liveStatus.installed && !liveStatus.managed) return { title: 'NapCat 已关联', description: webUrl ? '可以继续登录 QQ。' : '正在检查登录状态。', label: webUrl ? '打开登录页' : '刷新', action: () => webUrl ? setView('webui') : void run('napcat-status') }
+		if (engine === 'napcat' && liveStatus.installed && !liveStatus.managed) return { title: 'NapCat 已关联', description: webUrl ? '可以继续登录 QQ。' : '正在检查登录状态。', label: webUrl ? '打开登录页' : '刷新', action: () => webUrl ? setView('webui') : void refreshStatus() }
 		if (engine === 'luckylillia' && liveStatus.supported === false) return { title: '此系统暂不支持', description: '请改用 NapCat，或手动安装后关联。', label: '关联目录', action: () => document.getElementById('luckylillia-association')?.scrollIntoView({ behavior: 'smooth', block: 'center' }) }
 		if (!liveStatus.installed) return { title: '安装 QQ 核心', description: '安装完成后会自动启动并进入登录。', label: engine === 'napcat' ? '安装 NapCat' : '安装 LuckyLillia', action: () => engine === 'napcat' ? void requestNapcatInstall() : confirm('安装 QQ 核心', '将下载、安装并启动官方组件。', () => run(luckyAction('install'), {}, true)) }
-		if (engine === 'luckylillia' && !liveStatus.managed) return { title: 'LuckyLillia 已关联', description: webUrl ? '可以继续登录 QQ。' : '正在检查登录状态。', label: webUrl ? '打开登录页' : '刷新', action: () => webUrl ? setView('webui') : void run(luckyAction('status')) }
+		if (engine === 'luckylillia' && !liveStatus.managed) return { title: 'LuckyLillia 已关联', description: webUrl ? '可以继续登录 QQ。' : '正在检查登录状态。', label: webUrl ? '打开登录页' : '刷新', action: () => webUrl ? setView('webui') : void refreshStatus() }
 		if (!liveStatus.running) return { title: '启动 QQ', description: '启动后即可扫码登录。', label: engine === 'napcat' ? '启动 NapCat' : '启动 LuckyLillia', action: () => confirm('启动 QQ', '启动后请使用手机 QQ 扫码。', () => run(engine === 'napcat' ? 'start' : luckyAction('start'), {}, true)) }
 		if (liveStatus.loginPending) return { title: '请用手机 QQ 扫码', description: '扫码后会自动继续。', label: webUrl ? '打开登录页' : '等待登录', action: () => webUrl ? setView('webui') : undefined }
-		if (!liveStatus.oneBotReady) return { title: '正在连接', description: '请稍候。', label: '刷新', action: () => void run(engine === 'napcat' ? 'napcat-status' : luckyAction('status')) }
+		if (!liveStatus.oneBotReady) return { title: '正在连接', description: '请稍候。', label: '刷新', action: () => void refreshStatus() }
 		return { title: 'QQ 已就绪', description: '现在可同步到机器人。', label: '同步到机器人', action: () => setView('config') }
-	}, [engine, liveStatus, webUrl])
+	}, [engine, liveStatus, refreshStatus, webUrl])
 
   return (
     <div className="mx-auto grid max-w-[860px] gap-4 p-4">

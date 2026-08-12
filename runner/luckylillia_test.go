@@ -216,13 +216,17 @@ func TestLuckyEntrypointUsesExactPlatformContract(t *testing.T) {
 }
 
 func TestLuckyStartCommandUsesOfficialUnixStartScript(t *testing.T) {
-	entry := filepath.Join(t.TempDir(), "start.sh")
-	command, err := luckyStartCommand(luckyPlatformFor("linux", "amd64"), filepath.Dir(entry), entry)
+	root := t.TempDir()
+	entry := filepath.Join(root, "start.sh")
+	if err := os.WriteFile(filepath.Join(root, "llbot"), []byte("fixture"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	command, err := luckyStartCommand(luckyPlatformFor("linux", "amd64"), root, entry)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(command.Args) != 2 || command.Args[0] != "sh" || command.Args[1] != "start.sh" || command.Dir != filepath.Dir(entry) {
-		t.Fatalf("Lucky start command must run sh start.sh in the CLI root: %#v", command)
+	if len(command.Args) != 4 || command.Args[0] != "xvfb-run" || command.Args[1] != "-a" || command.Args[2] != filepath.Join(root, "llbot") || command.Args[3] != "--pmhq" || command.Dir != root {
+		t.Fatalf("Linux Lucky start must use the official headed Shell command: %#v", command)
 	}
 }
 
