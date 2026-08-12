@@ -19,8 +19,6 @@ export type Task = {
 }
 
 export type ActionResult = { output: string; error?: string }
-export type HostPrivilegeStatus = { privilege: { enabled: boolean; mode: string; reason?: string; policyVersion: string } }
-export type PrivilegePreflight = { available: boolean; authorization: 'password' | 'native-uac' | 'polkit' | 'unavailable'; title: string; description: string; reason?: string; intentId?: string; expiresAt?: string }
 
 async function json<T>(response: Response): Promise<T> {
   if (!response.ok) {
@@ -106,28 +104,6 @@ export async function runActionAndPoll(
   return pollTask(id, onUpdate)
 }
 
-// NapCat's only password-bearing operation belongs to the host, not the
-// plugin action forwarder. Keep the credential out of the generic API.
-export async function runNapcatDependenciesAndPoll(
-  sudoPassword: string,
-	authorizationId: string,
-  onUpdate?: (task: Task) => void
-): Promise<ActionResult> {
-  const payload = await json<{ id: string }>(await fetch('/api/v1/system/privileged/napcat-dependencies', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action: 'napcat-install-dependencies', confirm: true, sudoPassword, authorizationId })
-  }))
-  return pollTask(payload.id, onUpdate)
-}
-
-export async function preflightPrivilege(action: string): Promise<PrivilegePreflight> {
-	return json<PrivilegePreflight>(await fetch('/api/v1/system/privileged/preflight', {
-		method: 'POST', headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ pluginId: PLUGIN_ID, action })
-	}))
-}
-
 export type StatusPayload = {
 	engine: 'napcat' | 'luckylillia'
   installed: boolean
@@ -150,37 +126,8 @@ export type StatusPayload = {
 	logPath?: string
 	diagnosticHint?: string
 	supported?: boolean
-	verified?: boolean
-	verificationReason?: string
 	platform?: string
-	assetName?: string
-	entrypoint?: string
-	installMode?: 'verified-release' | 'managed' | 'external'
 	managed?: boolean
-	managedActions?: boolean
-	linuxDependencies?: {
-		supported: boolean
-		ready: boolean
-		systemPackageAvailable?: boolean
-		requiresAuthorization?: boolean
-		packageManager?: string
-		systemAccount?: string
-		missing?: string[]
-		hint?: string
-	}
-	releaseTag?: string
-	archiveSha256?: string
-	qqRuntimeAsset?: string
-	qqRuntimeArchiveSha256?: string
-	runtimeId?: string
-	runtimeAsset?: string
-	runtimeSha256?: string
-	runtimeFingerprint?: string
-	environmentMode?: 'system' | 'managed-runtime'
-	fallbackReason?: string
-	environmentDiagnostic?: string
-	fingerprint?: string
-	validatedAt?: string
 	accounts?: Array<{ qq: string; oneBotUrl?: string; oneBotReady: boolean }>
 	selectedAccount?: string
 	state?: 'not-installed' | 'installing' | 'starting' | 'running' | 'login-pending' | 'stopped' | 'failed' | 'unsupported'
@@ -199,10 +146,6 @@ export function napcatQRCodeURL(updatedAt?: string): string {
 export async function fetchLocalServices(): Promise<LocalService[]> {
 	const payload = await json<{ items: LocalService[] }>(await fetch(`/api/v1/services?plugin=${PLUGIN_ID}`))
 	return payload.items
-}
-
-export async function fetchHostPrivilegeStatus(): Promise<HostPrivilegeStatus> {
-	return json<HostPrivilegeStatus>(await fetch('/api/v1/system/privileged/status'))
 }
 
 // Finder is a host capability. The browser only names this plugin's declared

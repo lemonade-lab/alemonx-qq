@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -32,7 +33,7 @@ func TestLinuxQQReleaseAssetsArePinned(t *testing.T) {
 	}{
 		{"apt", "amd64", "QQ_3.2.31_260710_amd64_01.deb", "deb", "02f677feb1ce01ed293a3c7761e5dd85bd79936f57dcaa4cdb53178ae30e3d6d"},
 		{"apt", "arm64", "QQ_3.2.31_260710_arm64_01.deb", "deb", "ac604371f5c486acf6cbf83dd667e622ee1f487d0c8bd425627de6d68fe34974"},
-		{"dnf", "amd64", "QQ_3.2.31_260710_x86_64_01.rpm", "rpm", "0dcb6f8201817ae74973a01cf6c8b77256acdaf8e2c1bca302581c4351a8dfe1"},
+		{"dnf", "amd64", "QQ_3.2.31_260710_x86_64_01.rpm", "rpm", "be897976f9481be2d224dc4e11592126a3adf71b2c395e8273cf14ea99b5519d"},
 		{"dnf", "arm64", "QQ_3.2.31_260710_aarch64_01.rpm", "rpm", "0a48d0a82881ab6a6716b7f90250ecaab1305727e7b5bf2d16c9205cb0c28995"},
 	}
 	for _, expected := range want {
@@ -46,7 +47,7 @@ func TestLinuxQQReleaseAssetsArePinned(t *testing.T) {
 	}
 }
 
-func TestDownloadFileLimitedReportsProgressAndHash(t *testing.T) {
+func TestDownloadFileReportsProgressAndHash(t *testing.T) {
 	payload := bytes.Repeat([]byte("napcat"), 32*1024)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(payload)))
@@ -55,7 +56,7 @@ func TestDownloadFileLimitedReportsProgressAndHash(t *testing.T) {
 	defer server.Close()
 	var updates []int64
 	destination := filepath.Join(t.TempDir(), "napcat.zip")
-	digest, err := downloadFileLimitedWithProgress(server.URL, destination, int64(len(payload)+1), func(downloaded, total int64) {
+	digest, err := downloadFileWithProgress(server.URL, destination, func(downloaded, total int64) {
 		if total != int64(len(payload)) {
 			t.Fatalf("progress total = %d, want %d", total, len(payload))
 		}
@@ -73,6 +74,20 @@ func TestDownloadFileLimitedReportsProgressAndHash(t *testing.T) {
 	data, err := os.ReadFile(destination)
 	if err != nil || !bytes.Equal(data, payload) {
 		t.Fatalf("downloaded payload mismatch: %v", err)
+	}
+}
+
+func TestDownloadFileRejectsTruncatedContentLength(t *testing.T) {
+	payload := []byte("truncated-download")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(payload)+8))
+		_, _ = w.Write(payload)
+	}))
+	defer server.Close()
+
+	_, err := downloadFileWithProgress(server.URL, filepath.Join(t.TempDir(), "partial.zip"), nil)
+	if err == nil || !strings.Contains(err.Error(), "下载未完成") {
+		t.Fatalf("err = %v, want simple download failure", err)
 	}
 }
 

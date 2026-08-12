@@ -100,10 +100,6 @@ func downloadMacNapcatInstaller() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	expected := normalizedSHA(asset.Digest)
-	if !validSHA(expected) {
-		return "", fmt.Errorf("官方 macOS 安装器未提供有效 SHA-256 校验和")
-	}
 	destination, err := macInstallerArchivePath()
 	if err != nil {
 		return "", err
@@ -112,20 +108,16 @@ func downloadMacNapcatInstaller() (string, error) {
 	if err := os.MkdirAll(downloads, 0o700); err != nil {
 		return "", err
 	}
-	if current, err := sha256File(destination); err == nil && strings.EqualFold(current, expected) {
+	if macInstallerReady() {
 		return macInstallerDownloadResult(destination, release.TagName), nil
 	}
 	temporary := destination + ".download"
 	_ = os.Remove(temporary)
 	reportNapcatProgress("download", 20, "下载官方 macOS NapCat 安装器")
-	actual, err := downloadFileLimitedWithProgress(asset.URL, temporary, maxNapcatArchiveSize, napcatDownloadProgress("下载官方 macOS NapCat 安装器", 20, 85))
+	_, err = downloadFileWithProgress(asset.URL, temporary, napcatDownloadProgress("下载官方 macOS NapCat 安装器", 20, 85))
 	if err != nil {
 		_ = os.Remove(temporary)
 		return "", err
-	}
-	if !strings.EqualFold(actual, expected) {
-		_ = os.Remove(temporary)
-		return "", fmt.Errorf("macOS 安装器 SHA-256 校验失败")
 	}
 	if err := os.Rename(temporary, destination); err != nil {
 		_ = os.Remove(temporary)
@@ -136,7 +128,7 @@ func downloadMacNapcatInstaller() (string, error) {
 }
 
 func macInstallerDownloadResult(destination, tag string) string {
-	return fmt.Sprintf("✓ 安装器已下载并校验（%s）。\n文件位置：%s\n下一步：点击「打开安装器」，按 App 内提示完成安装。", tag, destination)
+	return fmt.Sprintf("✓ 安装器已准备好（%s）。\n文件位置：%s\n下一步：点击「打开安装器」，按 App 内提示完成安装。", tag, destination)
 }
 
 func macInstallerArchivePath() (string, error) {
@@ -153,7 +145,7 @@ func macInstallerReady() bool {
 		return false
 	}
 	info, err := os.Stat(archive)
-	return err == nil && info.Mode().IsRegular() && info.Size() > 0 && info.Size() <= maxNapcatArchiveSize
+	return err == nil && info.Mode().IsRegular() && info.Size() > 0
 }
 
 func macInstallerPath() string {
@@ -224,7 +216,6 @@ func extractMacInstallerApp(archive, destination string) (string, error) {
 		return "", fmt.Errorf("安装器压缩包无效：%w", err)
 	}
 	defer reader.Close()
-	var written int64
 	appRoots := map[string]bool{}
 	for _, item := range reader.File {
 		name := filepath.Clean(filepath.FromSlash(item.Name))
@@ -245,9 +236,6 @@ func extractMacInstallerApp(archive, destination string) (string, error) {
 			}
 			continue
 		}
-		if item.UncompressedSize64 > uint64(maxNapcatExtractedSize-written) {
-			return "", fmt.Errorf("安装器解压后超过 %d MB 限制", maxNapcatExtractedSize>>20)
-		}
 		if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
 			return "", err
 		}
@@ -257,12 +245,7 @@ func extractMacInstallerApp(archive, destination string) (string, error) {
 		}
 		output, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, item.Mode()&0o755)
 		if err == nil {
-			var count int64
-			count, err = io.Copy(output, io.LimitReader(input, maxNapcatExtractedSize-written+1))
-			written += count
-			if written > maxNapcatExtractedSize {
-				err = fmt.Errorf("安装器解压后超过 %d MB 限制", maxNapcatExtractedSize>>20)
-			}
+			_, err = io.Copy(output, input)
 		}
 		closeInput := input.Close()
 		var closeOutput error

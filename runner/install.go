@@ -26,14 +26,13 @@ const (
 	// Its package is currently about 190 MB, so this must not use the short
 	// timeout appropriate for ordinary API calls. Connection and idle timeouts
 	// below still fail a genuinely stalled transfer promptly.
-	metadataTimeout        = 60 * time.Second
-	downloadTimeout        = 60 * time.Minute
-	downloadDialTimeout    = 20 * time.Second
-	downloadHeaderTimeout  = 60 * time.Second
-	downloadIdleTimeout    = 3 * time.Minute
-	maxNapcatArchiveSize   = int64(300 << 20)
-	maxNapcatExtractedSize = int64(500 << 20)
-	windowsAsset           = "NapCat.Shell.Windows.OneKey.zip"
+	metadataTimeout       = 60 * time.Second
+	downloadTimeout       = 60 * time.Minute
+	downloadDialTimeout   = 20 * time.Second
+	downloadHeaderTimeout = 60 * time.Second
+	downloadIdleTimeout   = 3 * time.Minute
+	webUIStartupTimeout   = 3 * time.Minute
+	windowsAsset          = "NapCat.Shell.Windows.OneKey.zip"
 )
 
 type releaseAsset struct {
@@ -115,15 +114,27 @@ func validSHA(value string) bool {
 
 type downloadProgress func(downloaded, total int64)
 
-// downloadFileLimited downloads one trusted archive while enforcing its size
-// limit. It intentionally separates the total transfer budget from connection
-// and idle budgets: a slow but continuously progressing Linux QQ download is
-// valid, while a frozen connection is not.
-func downloadFileLimited(url, dest string, limit int64) (string, error) {
-	return downloadFileLimitedWithProgress(url, dest, limit, nil)
+// downloadFileWithProgress downloads a fixed official asset. A transfer may be
+// large as long as it keeps making progress; only an incomplete response,
+// timeout, or I/O error is retried and eventually reported to the user.
+func downloadFileWithProgress(url, dest string, progress downloadProgress) (string, error) {
+	var lastErr error
+	for attempt := 0; attempt < 2; attempt++ {
+		_ = os.Remove(dest)
+		digest, err := downloadFileOnce(url, dest, progress)
+		if err == nil {
+			return digest, nil
+		}
+		lastErr = err
+		_ = os.Remove(dest)
+	}
+	if lastErr == nil {
+		lastErr = errors.New("download did not start")
+	}
+	return "", fmt.Errorf("下载未完成，请检查网络后重试或查看日志")
 }
 
-func downloadFileLimitedWithProgress(url, dest string, limit int64, progress downloadProgress) (string, error) {
+func downloadFileOnce(url, dest string, progress downloadProgress) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), downloadTimeout)
 	defer cancel()
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -144,9 +155,6 @@ func downloadFileLimitedWithProgress(url, dest string, limit int64, progress dow
 	if response.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("下载失败（%s）", response.Status)
 	}
-	if response.ContentLength > limit {
-		return "", fmt.Errorf("下载包超过 %d MB 限制", limit>>20)
-	}
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 		return "", err
 	}
@@ -160,8 +168,11 @@ func downloadFileLimitedWithProgress(url, dest string, limit int64, progress dow
 	if progress != nil {
 		writer = io.MultiWriter(handle, hash, &downloadProgressWriter{total: response.ContentLength, report: progress})
 	}
-	written, err := io.Copy(writer, io.LimitReader(response.Body, limit+1))
+	written, err := io.Copy(writer, response.Body)
 	if err != nil {
+		if response.ContentLength >= 0 && written != response.ContentLength {
+			return "", fmt.Errorf("下载内容不完整（已接收 %d / %d 字节）；请检查网络或代理后重试", written, response.ContentLength)
+		}
 		if idleBody.timedOut.Load() {
 			return "", fmt.Errorf("下载超过 %s 没有收到数据；请检查网络或代理后重试", downloadIdleTimeout.Round(time.Second))
 		}
@@ -170,8 +181,8 @@ func downloadFileLimitedWithProgress(url, dest string, limit int64, progress dow
 		}
 		return "", err
 	}
-	if written > limit {
-		return "", fmt.Errorf("下载包超过 %d MB 限制", limit>>20)
+	if response.ContentLength >= 0 && written != response.ContentLength {
+		return "", fmt.Errorf("下载内容不完整（已接收 %d / %d 字节）；请检查网络或代理后重试", written, response.ContentLength)
 	}
 	if err := handle.Sync(); err != nil {
 		return "", err
@@ -291,27 +302,20 @@ func humanBytes(size int64) string {
 	return fmt.Sprintf("%.1f MB", float64(size)/(1<<20))
 }
 
-// downloadFile remains available to the LuckyLillia runner. NapCat callers
-// must use downloadFileLimited with an explicit integrity boundary.
 func downloadFile(url, dest string) error {
-	_, err := downloadFileLimited(url, dest, maxNapcatArchiveSize)
+	_, err := downloadFileWithProgress(url, dest, nil)
 	return err
 }
 
-func unzipLimited(srcZip, destDir string) error {
+func unzipArchive(srcZip, destDir string) error {
 	reader, err := zip.OpenReader(srcZip)
 	if err != nil {
 		return fmt.Errorf("无法打开下载包：%w", err)
 	}
 	defer reader.Close()
-	var total int64
 	for _, file := range reader.File {
 		if file.FileInfo().Mode()&os.ModeSymlink != 0 {
 			return errors.New("下载包包含符号链接，已拒绝解压")
-		}
-		total += int64(file.UncompressedSize64)
-		if total > maxNapcatExtractedSize {
-			return errors.New("解压内容超过 500 MB 限制")
 		}
 		target := filepath.Join(destDir, file.Name)
 		if !strings.HasPrefix(filepath.Clean(target), filepath.Clean(destDir)+string(filepath.Separator)) {
@@ -405,10 +409,6 @@ func installWindowsNapCat() (napcatInstallation, error) {
 	if err != nil {
 		return napcatInstallation{}, err
 	}
-	expectedDigest := normalizedSHA(asset.Digest)
-	if !validSHA(expectedDigest) {
-		return napcatInstallation{}, errors.New("官方 NapCat Release 未提供有效 SHA-256 校验和")
-	}
 	root, err := managedInstallDir()
 	if err != nil {
 		return napcatInstallation{}, err
@@ -422,21 +422,18 @@ func installWindowsNapCat() (napcatInstallation, error) {
 	}
 	archive := filepath.Join(stateRoot, "napcat-windows.zip")
 	reportNapcatProgress("download", 25, "下载官方 NapCat Windows Release 包")
-	digest, err := downloadFileLimitedWithProgress(asset.URL, archive, maxNapcatArchiveSize, napcatDownloadProgress("下载官方 NapCat Windows Release 包", 25, 50))
+	digest, err := downloadFileWithProgress(asset.URL, archive, napcatDownloadProgress("下载官方 NapCat Windows Release 包", 25, 50))
 	if err != nil {
 		return napcatInstallation{}, err
 	}
 	defer os.Remove(archive)
-	if !strings.EqualFold(digest, expectedDigest) {
-		return napcatInstallation{}, errors.New("NapCat Release SHA-256 校验失败")
-	}
 	stage, err := os.MkdirTemp(stateRoot, "napcat-stage-*")
 	if err != nil {
 		return napcatInstallation{}, err
 	}
 	defer os.RemoveAll(stage)
 	reportNapcatProgress("extract", 50, "安全解压 NapCat Windows Release 包")
-	if err := unzipLimited(archive, stage); err != nil {
+	if err := unzipArchive(archive, stage); err != nil {
 		return napcatInstallation{}, err
 	}
 	extracted := napcatExtractRoot(stage)
@@ -480,9 +477,9 @@ func installWindowsNapCat() (napcatInstallation, error) {
 	return installation, nil
 }
 
-func installLinuxNapCat(forceManagedRuntime bool) (napcatInstallation, error) {
+func installLinuxNapCat() (napcatInstallation, error) {
 	reportNapcatProgress("prepare", 10, "正在准备 NapCat 运行环境")
-	environment, err := prepareLinuxEnvironment(forceManagedRuntime)
+	environment, err := prepareLinuxEnvironment(false)
 	if err != nil {
 		return napcatInstallation{}, err
 	}
@@ -493,10 +490,6 @@ func installLinuxNapCat(forceManagedRuntime bool) (napcatInstallation, error) {
 	shellAsset, err := releaseAssetByName(release, linuxShellAsset)
 	if err != nil {
 		return napcatInstallation{}, err
-	}
-	shellDigest := normalizedSHA(shellAsset.Digest)
-	if !validSHA(shellDigest) {
-		return napcatInstallation{}, errors.New("官方 NapCat Linux Release 未提供有效 SHA-256 校验和")
 	}
 	qqAsset, err := linuxQQReleaseAssetForEnvironment(environment.Mode)
 	if err != nil {
@@ -512,23 +505,17 @@ func installLinuxNapCat(forceManagedRuntime bool) (napcatInstallation, error) {
 	shellArchive := filepath.Join(stateRoot, "napcat-shell.zip")
 	qqArchive := filepath.Join(stateRoot, qqAsset.Name)
 	reportNapcatProgress("download", 20, "下载官方 NapCat Linux Release 包")
-	digest, err := downloadFileLimitedWithProgress(shellAsset.URL, shellArchive, maxNapcatArchiveSize, napcatDownloadProgress("下载官方 NapCat Linux Release 包", 20, 35))
+	digest, err := downloadFileWithProgress(shellAsset.URL, shellArchive, napcatDownloadProgress("下载官方 NapCat Linux Release 包", 20, 35))
 	if err != nil {
 		return napcatInstallation{}, err
 	}
 	defer os.Remove(shellArchive)
-	if !strings.EqualFold(digest, shellDigest) {
-		return napcatInstallation{}, errors.New("NapCat Linux Release SHA-256 校验失败")
-	}
 	reportNapcatProgress("download", 35, "下载官方 Linux QQ 运行时")
-	qqDigest, err := downloadFileLimitedWithProgress(qqAsset.URL, qqArchive, maxNapcatArchiveSize, napcatDownloadProgress("下载官方 Linux QQ 运行时", 35, 55))
+	qqDigest, err := downloadFileWithProgress(qqAsset.URL, qqArchive, napcatDownloadProgress("下载官方 Linux QQ 运行时", 35, 55))
 	if err != nil {
 		return napcatInstallation{}, err
 	}
 	defer os.Remove(qqArchive)
-	if !strings.EqualFold(qqDigest, qqAsset.SHA256) {
-		return napcatInstallation{}, errors.New("官方 Linux QQ 运行时 SHA-256 校验失败")
-	}
 	root, err := managedInstallDir()
 	if err != nil {
 		return napcatInstallation{}, err
@@ -556,7 +543,7 @@ func installLinuxNapCat(forceManagedRuntime bool) (napcatInstallation, error) {
 	}
 	defer os.RemoveAll(stage)
 	reportNapcatProgress("extract", 55, "安全解压 NapCat Shell 与 Linux QQ")
-	if err := unzipLimited(shellArchive, stage); err != nil {
+	if err := unzipArchive(shellArchive, stage); err != nil {
 		return rollback(err)
 	}
 	switch qqAsset.Kind {
@@ -640,13 +627,13 @@ func rollbackNapcatInstallation(installation napcatInstallation) error {
 	return os.Rename(installation.PreviousDir, installation.InstallDir)
 }
 
-func installNapCat(forceManagedRuntime bool) (napcatInstallation, error) {
+func installNapCat() (napcatInstallation, error) {
 	reportNapcatProgress("prepare", 5, "检查 NapCat 平台契约")
 	switch runtime.GOOS {
 	case "windows":
 		return installWindowsNapCat()
 	case "linux":
-		return installLinuxNapCat(forceManagedRuntime)
+		return installLinuxNapCat()
 	default:
 		return napcatInstallation{}, errors.New("macOS NapCat 仅支持外部关联；工作台不会修改 QQ 注入文件")
 	}

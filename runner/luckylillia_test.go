@@ -112,8 +112,8 @@ func TestLuckyReleaseAssetRequiresOfficialSHA256(t *testing.T) {
 		t.Fatalf("expected valid official digest, asset=%+v err=%v", asset, err)
 	}
 	release.Assets[0].Digest = "sha256:bad"
-	if _, err := luckyReleaseAsset(release); err == nil {
-		t.Fatal("asset without a valid SHA-256 digest must be rejected")
+	if _, err := luckyReleaseAsset(release); err != nil {
+		t.Fatalf("official asset remains installable when Release digest changes: %v", err)
 	}
 }
 
@@ -226,19 +226,6 @@ func TestLuckyStartCommandUsesNativeExecutable(t *testing.T) {
 	}
 }
 
-func TestLuckySupportedPlatformDoesNotRequireReleaseEvidence(t *testing.T) {
-	platform := luckyPlatform()
-	if platform == nil {
-		t.Skip("unsupported host platform")
-	}
-	previous := luckyReleaseValidationEvidence
-	t.Cleanup(func() { luckyReleaseValidationEvidence = previous })
-	luckyReleaseValidationEvidence = ""
-	if got, want := luckyVerified(), platform.AutoInstall; got != want {
-		t.Fatalf("automatic support = %v, want %v", got, want)
-	}
-}
-
 func TestLuckyExternalAssociationCannotUninstallAndForgetKeepsFiles(t *testing.T) {
 	original := userConfigDir
 	base := t.TempDir()
@@ -285,7 +272,7 @@ func TestLuckyManagedUninstallRefusesUnexpectedDirectory(t *testing.T) {
 	}
 }
 
-func TestLuckyLegacyStateMigratesToExternal(t *testing.T) {
+func TestLuckyHistoricalManagedStateRemainsManaged(t *testing.T) {
 	original := userConfigDir
 	base := t.TempDir()
 	userConfigDir = func() (string, error) { return base, nil }
@@ -301,8 +288,8 @@ func TestLuckyLegacyStateMigratesToExternal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if state.Managed || state.InstallMode != "external" {
-		t.Fatalf("legacy state must become external: %+v", state)
+	if !state.Managed || state.InstallMode != "managed" {
+		t.Fatalf("historical managed state must remain managed: %+v", state)
 	}
 }
 

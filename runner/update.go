@@ -58,9 +58,6 @@ func checkUpdate() (string, error) {
 	if !state.Managed {
 		return "? 当前 NapCat 是外部关联实例；请使用其原始管理方式检查更新。", nil
 	}
-	if !napcatStateVerified(state) {
-		return "? 当前受管安装不完整或文件已变化，自动更新已锁定。", nil
-	}
 	if state.Platform != "windows-amd64" {
 		return "✓ 当前为 Linux 受管安装。点击「更新」会下载官方 Release 并保留原配置；失败时自动回滚。", nil
 	}

@@ -80,7 +80,6 @@ func secureArchiveTarget(destination, name string) (string, error) {
 
 func extractLinuxTar(reader io.Reader, destination string) error {
 	tarReader := tar.NewReader(reader)
-	var total int64
 	for {
 		header, err := tarReader.Next()
 		if errors.Is(err, io.EOF) {
@@ -99,10 +98,9 @@ func extractLinuxTar(reader io.Reader, destination string) error {
 				return err
 			}
 		case tar.TypeReg, tar.TypeRegA:
-			if header.Size < 0 || total > maxNapcatExtractedSize-header.Size {
-				return errors.New("QQ 运行时解压后超过 500 MB 限制")
+			if header.Size < 0 {
+				return errors.New("QQ 运行时安装包包含无效文件大小")
 			}
-			total += header.Size
 			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 				return err
 			}
@@ -146,7 +144,7 @@ func extractDebQQ(archivePath, destination string) error {
 		}
 		name := strings.TrimSpace(strings.TrimSuffix(string(header[:16]), "/"))
 		size, err := strconv.ParseInt(strings.TrimSpace(string(header[48:58])), 10, 64)
-		if err != nil || size < 0 || size > maxNapcatArchiveSize {
+		if err != nil || size < 0 {
 			return errors.New("Linux QQ DEB 成员大小无效")
 		}
 		member := io.LimitReader(handle, size)
@@ -208,7 +206,6 @@ func discardAligned(reader *bufio.Reader, count int64) error {
 
 func extractNewcCPIO(reader io.Reader, destination string) error {
 	buffered := bufio.NewReader(reader)
-	var total int64
 	for {
 		header := make([]byte, 110)
 		if _, err := io.ReadFull(buffered, header); err != nil {
@@ -249,10 +246,6 @@ func extractNewcCPIO(reader io.Reader, destination string) error {
 		case 0o040000:
 			err = os.MkdirAll(target, os.FileMode(mode&0o777)|0o700)
 		case 0o100000:
-			if total > maxNapcatExtractedSize-fileSize {
-				return errors.New("QQ 运行时解压后超过 500 MB 限制")
-			}
-			total += fileSize
 			if err = os.MkdirAll(filepath.Dir(target), 0o755); err == nil {
 				var handle *os.File
 				handle, err = os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.FileMode(mode&0o777)|0o600)
@@ -297,7 +290,7 @@ func readRPMHeader(reader io.Reader) (string, error) {
 	}
 	entries := binary.BigEndian.Uint32(header[8:12])
 	storeSize := binary.BigEndian.Uint32(header[12:16])
-	if entries > 4096 || storeSize > uint32(maxNapcatArchiveSize) {
+	if entries > 4096 {
 		return "", errors.New("RPM 头部大小无效")
 	}
 	index := make([]byte, int(entries)*16)

@@ -166,14 +166,20 @@ func loadState() (State, error) {
 			state.EnvironmentMode = "system"
 		}
 	}
-	// Before release governance existed, installations had no immutable source
-	// identity. Treat them as external associations; this prevents an upgrade
-	// from deleting or running an arbitrary pre-existing directory.
-	if state.InstallDir != "" && (state.Platform == "" || state.Fingerprint == "" || !state.Managed) {
-		state.Managed = false
-		if state.InstallMode == "" {
-			state.InstallMode = "external"
+	// Retain an explicit workbench-managed marker when it still points at the
+	// workbench-owned directory. Hashes are diagnostic now; their absence must
+	// not strand a previously installed NapCat after this upgrade.
+	if state.Managed && state.InstallMode == "" {
+		if expected, pathErr := managedInstallDir(); pathErr == nil && filepath.Clean(state.InstallDir) == filepath.Clean(expected) {
+			state.InstallMode = "managed"
+			if platform := napcatPlatform(); platform != nil && state.Platform == "" {
+				state.Platform = platform.Key
+			}
 		}
+	}
+	if state.InstallDir != "" && (!state.Managed || state.InstallMode != "managed") {
+		state.Managed = false
+		state.InstallMode = "external"
 	}
 	return state, nil
 }

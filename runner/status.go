@@ -5,9 +5,6 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"os/exec"
-	"os/user"
-	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -17,51 +14,34 @@ import (
 // the web UI can poll and render it precisely. Other actions keep returning
 // plain ✓/!? text.
 type statusPayload struct {
-	Engine                 string                 `json:"engine"`
-	Installed              bool                   `json:"installed"`
-	InstallHealthy         bool                   `json:"installHealthy"`
-	Running                bool                   `json:"running"`
-	PortReachable          bool                   `json:"portReachable"`
-	WebUIReady             bool                   `json:"webUiReady"`
-	OneBotReady            bool                   `json:"oneBotReady"`
-	LoginPending           bool                   `json:"loginPending"`
-	Watchdog               bool                   `json:"watchdog"`
-	Version                string                 `json:"version,omitempty"`
-	PID                    int                    `json:"pid,omitempty"`
-	WebUIURL               string                 `json:"webUiUrl,omitempty"`
-	OneBotURL              string                 `json:"oneBotUrl,omitempty"`
-	QRCodeAvailable        bool                   `json:"qrCodeAvailable"`
-	QRCodeUpdatedAt        string                 `json:"qrCodeUpdatedAt,omitempty"`
-	InstallerReady         bool                   `json:"installerReady"`
-	InstallerPath          string                 `json:"installerPath,omitempty"`
-	LauncherPath           string                 `json:"launcherPath,omitempty"`
-	DiagnosticHint         string                 `json:"diagnosticHint,omitempty"`
-	Supported              bool                   `json:"supported"`
-	Managed                bool                   `json:"managed"`
-	Platform               string                 `json:"platform,omitempty"`
-	InstallMode            string                 `json:"installMode,omitempty"`
-	ReleaseTag             string                 `json:"releaseTag,omitempty"`
-	Asset                  string                 `json:"asset,omitempty"`
-	ArchiveSHA256          string                 `json:"archiveSha256,omitempty"`
-	QQRuntimeAsset         string                 `json:"qqRuntimeAsset,omitempty"`
-	QQRuntimeArchiveSHA256 string                 `json:"qqRuntimeArchiveSha256,omitempty"`
-	RuntimeID              string                 `json:"runtimeId,omitempty"`
-	RuntimeAsset           string                 `json:"runtimeAsset,omitempty"`
-	RuntimeSHA256          string                 `json:"runtimeSha256,omitempty"`
-	RuntimeFingerprint     string                 `json:"runtimeFingerprint,omitempty"`
-	EnvironmentMode        string                 `json:"environmentMode,omitempty"`
-	FallbackReason         string                 `json:"fallbackReason,omitempty"`
-	EnvironmentDiagnostic  string                 `json:"environmentDiagnostic,omitempty"`
-	Fingerprint            string                 `json:"fingerprint,omitempty"`
-	ValidatedAt            string                 `json:"validatedAt,omitempty"`
-	Verified               bool                   `json:"verified"`
-	VerificationReason     string                 `json:"verificationReason,omitempty"`
-	ManagedActions         bool                   `json:"managedActions"`
-	LinuxDependencies      *linuxDependencyStatus `json:"linuxDependencies,omitempty"`
-	Accounts               []napcatAccount        `json:"accounts,omitempty"`
-	SelectedAccount        string                 `json:"selectedAccount,omitempty"`
-	UpdatedAt              string                 `json:"updatedAt"`
-	Error                  string                 `json:"error,omitempty"`
+	Engine          string          `json:"engine"`
+	Installed       bool            `json:"installed"`
+	InstallHealthy  bool            `json:"installHealthy"`
+	Running         bool            `json:"running"`
+	PortReachable   bool            `json:"portReachable"`
+	WebUIReady      bool            `json:"webUiReady"`
+	OneBotReady     bool            `json:"oneBotReady"`
+	LoginPending    bool            `json:"loginPending"`
+	Watchdog        bool            `json:"watchdog"`
+	Version         string          `json:"version,omitempty"`
+	PID             int             `json:"pid,omitempty"`
+	WebUIURL        string          `json:"webUiUrl,omitempty"`
+	OneBotURL       string          `json:"oneBotUrl,omitempty"`
+	QRCodeAvailable bool            `json:"qrCodeAvailable"`
+	QRCodeUpdatedAt string          `json:"qrCodeUpdatedAt,omitempty"`
+	InstallerReady  bool            `json:"installerReady"`
+	InstallerPath   string          `json:"installerPath,omitempty"`
+	LauncherPath    string          `json:"launcherPath,omitempty"`
+	LogPath         string          `json:"logPath,omitempty"`
+	DiagnosticHint  string          `json:"diagnosticHint,omitempty"`
+	Supported       bool            `json:"supported"`
+	Managed         bool            `json:"managed"`
+	Platform        string          `json:"platform,omitempty"`
+	InstallMode     string          `json:"installMode,omitempty"`
+	Accounts        []napcatAccount `json:"accounts,omitempty"`
+	SelectedAccount string          `json:"selectedAccount,omitempty"`
+	UpdatedAt       string          `json:"updatedAt"`
+	Error           string          `json:"error,omitempty"`
 }
 
 type napcatAccount struct {
@@ -70,38 +50,15 @@ type napcatAccount struct {
 	OneBotReady bool   `json:"oneBotReady"`
 }
 
-type linuxDependencyStatus struct {
-	Supported              bool     `json:"supported"`
-	Ready                  bool     `json:"ready"`
-	SystemPackageAvailable bool     `json:"systemPackageAvailable"`
-	RequiresAuthorization  bool     `json:"requiresAuthorization"`
-	PackageManager         string   `json:"packageManager,omitempty"`
-	SystemAccount          string   `json:"systemAccount,omitempty"`
-	Missing                []string `json:"missing,omitempty"`
-	Hint                   string   `json:"hint,omitempty"`
-}
-
 // collectStatus gathers the live status from state + process probes.
 func collectStatus(state State) statusPayload {
 	platform := napcatPlatform()
 	payload := statusPayload{
 		Engine: "napcat", Version: state.Version, PID: state.PID,
-		Managed: state.Managed, InstallMode: state.InstallMode, ReleaseTag: state.ReleaseTag,
-		Asset: state.Asset, ArchiveSHA256: state.ArchiveSHA256, QQRuntimeAsset: state.QQRuntimeAsset, QQRuntimeArchiveSHA256: state.QQRuntimeArchiveSHA256,
-		RuntimeID: state.RuntimeID, RuntimeAsset: state.RuntimeAsset, RuntimeSHA256: state.RuntimeSHA256, RuntimeFingerprint: state.RuntimeFingerprint,
-		EnvironmentMode: state.EnvironmentMode, FallbackReason: state.FallbackReason, EnvironmentDiagnostic: state.EnvironmentDiagnostic, Fingerprint: state.Fingerprint,
-		ValidatedAt: state.ValidatedAt, UpdatedAt: time.Now().UTC().Format(time.RFC3339),
+		Managed: state.Managed, InstallMode: state.InstallMode, UpdatedAt: time.Now().UTC().Format(time.RFC3339),
 	}
 	if platform != nil {
 		payload.Supported, payload.Platform = true, platform.Key
-	}
-	// Verified answers the install-time question: does this platform have an
-	// official automatic-install contract? ManagedActions answers the runtime
-	// question: does this installed copy still match its recorded identity?
-	payload.Verified = napcatVerified()
-	payload.ManagedActions = state.Managed && napcatStateVerified(state)
-	if !payload.Verified && platform != nil && platform.AutoInstall {
-		payload.VerificationReason = napcatVerificationReason()
 	}
 	payload.Installed = state.InstallDir != "" && dirExists(state.InstallDir)
 	if platform != nil && platform.Key == "darwin-external" && !payload.Installed && macQQInstalled() && macNapcatInjected() {
@@ -125,7 +82,7 @@ func collectStatus(state State) statusPayload {
 		payload.LauncherPath = windowsNapcatLauncherPath()
 	}
 	payload.Running = isRunning(state)
-	payload.Watchdog = payload.ManagedActions && processAlive(state.WatchdogPID)
+	payload.Watchdog = state.Managed && napcatStateVerified(state) && processAlive(state.WatchdogPID)
 	payload.WebUIURL = webUIBridge()
 	payload.PortReachable = payload.WebUIURL != ""
 	payload.WebUIReady = payload.PortReachable
@@ -146,7 +103,9 @@ func collectStatus(state State) statusPayload {
 	}
 	payload.LoginPending = payload.Running && payload.WebUIReady && !payload.OneBotReady
 	payload.QRCodeAvailable, payload.QRCodeUpdatedAt = napcatQRCodeStatus(state)
-	payload.LinuxDependencies = napcatLinuxDependencies()
+	if path, err := logPath(); err == nil {
+		payload.LogPath = path
+	}
 
 	reasons := []string{}
 	if !payload.Supported {
@@ -157,9 +116,6 @@ func collectStatus(state State) statusPayload {
 	if payload.Installed && !state.Managed {
 		reasons = append(reasons, "这是外部关联实例，自动操作已禁用")
 	}
-	if state.Managed && !payload.ManagedActions {
-		reasons = append(reasons, "当前受管安装信息或运行文件已变化")
-	}
 	if payload.Installed && !payload.Running {
 		reasons = append(reasons, "进程未运行")
 	}
@@ -168,109 +124,9 @@ func collectStatus(state State) statusPayload {
 	}
 	if payload.LoginPending {
 		payload.DiagnosticHint = "NapCat 已启动，等待在 WebUI 中扫码登录；OneBot 服务会在登录后就绪。"
-	} else if payload.VerificationReason != "" {
-		payload.DiagnosticHint = payload.VerificationReason
 	}
 	payload.Error = strings.Join(reasons, "；")
 	return payload
-}
-
-func napcatLinuxDependencies() *linuxDependencyStatus {
-	installed := dpkgPackageInstalled
-	if _, err := exec.LookPath("apt-get"); err != nil {
-		installed = rpmPackageInstalled
-	}
-	return napcatLinuxDependenciesFor(runtime.GOOS, exec.LookPath, installed)
-}
-
-func napcatLinuxDependenciesFor(goos string, lookPath func(string) (string, error), installed func(string) bool) *linuxDependencyStatus {
-	if goos != "linux" {
-		return nil
-	}
-	packageManager := ""
-	if _, err := lookPath("apt-get"); err == nil {
-		packageManager = "apt"
-	} else if _, err := lookPath("dnf"); err == nil {
-		packageManager = "dnf"
-	} else {
-		// The managed runtime is the normal automatic path on an unknown or
-		// musl distribution. Do not turn this into a password prompt for a
-		// package manager which does not exist.
-		return &linuxDependencyStatus{Supported: true, Ready: false, Hint: "将自动准备兼容运行环境。"}
-	}
-	packages := napcatLinuxPackages(packageManager)
-	missing := make([]string, 0, len(packages)+1)
-	for _, packageName := range packages {
-		if !installed(packageName) {
-			missing = append(missing, packageName)
-		}
-	}
-	// A package database entry alone does not prove that the X server binary is
-	// available on PATH. Keep this separate runtime check so the following
-	// managed launch cannot fail after the UI already declared the host ready.
-	if _, err := lookPath("Xvfb"); err != nil && !containsString(missing, packages[0]) {
-		missing = append(missing, packages[0])
-	}
-	status := &linuxDependencyStatus{Supported: true, Ready: len(missing) == 0, SystemPackageAvailable: true, RequiresAuthorization: len(missing) > 0, PackageManager: packageManager, SystemAccount: currentSystemAccount(), Missing: missing}
-	if !status.Ready {
-		status.Hint = "首次安装会自动准备 NapCat 所需的 Linux 运行环境，然后继续下载、启动并显示登录二维码。"
-	}
-	return status
-}
-
-func napcatLinuxPackages(packageManager string) []string {
-	switch packageManager {
-	case "apt":
-		return []string{"xvfb", "libnss3", "libgbm1", "libglib2.0-0", "libatk1.0-0", "libatspi2.0-0", "libgtk-3-0", "libasound2"}
-	case "dnf":
-		return []string{"xorg-x11-server-Xvfb", "nss", "mesa-libgbm", "glib2", "atk", "at-spi2-atk", "gtk3", "alsa-lib"}
-	default:
-		return nil
-	}
-}
-
-func containsString(values []string, wanted string) bool {
-	for _, value := range values {
-		if value == wanted {
-			return true
-		}
-	}
-	return false
-}
-
-func currentSystemAccount() string {
-	account, err := user.Current()
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(account.Username)
-}
-
-func dpkgPackageInstalled(packageName string) bool {
-	data, err := os.ReadFile("/var/lib/dpkg/status")
-	if err != nil {
-		return false
-	}
-	for _, paragraph := range strings.Split(string(data), "\n\n") {
-		name, status := "", ""
-		for _, line := range strings.Split(paragraph, "\n") {
-			if value, ok := strings.CutPrefix(line, "Package: "); ok {
-				name = strings.TrimSpace(value)
-			}
-			if value, ok := strings.CutPrefix(line, "Status: "); ok {
-				status = strings.TrimSpace(value)
-			}
-		}
-		if name == packageName && status == "install ok installed" {
-			return true
-		}
-	}
-	return false
-}
-
-func rpmPackageInstalled(packageName string) bool {
-	result := exec.Command("rpm", "-q", packageName)
-	return result.Run() == nil
 }
 
 func napcatAccounts(state State) ([]napcatAccount, error) {

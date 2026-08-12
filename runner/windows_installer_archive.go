@@ -17,7 +17,7 @@ func extractWindowsNapcatInstaller(archive string) error {
 	}
 	defer os.RemoveAll(stage)
 	reportNapcatProgress("extract", 80, "安全解压 Windows NapCat 安装器")
-	if err := unzipLimited(archive, stage); err != nil {
+	if err := unzipArchive(archive, stage); err != nil {
 		return err
 	}
 	launcher := filepath.Join(stage, "NapCatInstaller.exe")

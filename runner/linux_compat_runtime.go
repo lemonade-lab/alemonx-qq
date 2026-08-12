@@ -25,11 +25,7 @@ import (
 // to publish a plugin whose automatic fallback silently points at a missing
 // second tag, or have an old runner consume a newer incompatible payload.
 const linuxCompatibilityRuntimeReleaseBaseURL = "https://api.github.com/repos/lemonade-lab/alemonx-qq/releases/tags/"
-
-const (
-	linuxCompatibilityArchiveLimit = int64(300 << 20)
-	linuxCompatibilityExtractLimit = int64(500 << 20)
-)
+const linuxCompatibilityRuntimeLatestURL = "https://api.github.com/repos/lemonade-lab/alemonx-qq/releases/latest"
 
 var managedRuntimeIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,95}$`)
 
@@ -112,10 +108,17 @@ func linuxSystemRuntimeUsable() bool {
 func linuxEnvironmentForState(state State) (linuxEnvironment, error) {
 	if state.EnvironmentMode == "managed-runtime" {
 		runtimeValue, err := loadManagedLinuxRuntime(state.RuntimeID, state.RuntimeAsset, state.RuntimeSHA256)
-		if err != nil {
-			return linuxEnvironment{}, fmt.Errorf("受管兼容运行环境不可用：%w", err)
+		if err == nil {
+			return linuxEnvironment{Mode: "managed-runtime", Runtime: &runtimeValue, Reason: state.FallbackReason, Diagnostic: state.EnvironmentDiagnostic}, nil
 		}
-		return linuxEnvironment{Mode: "managed-runtime", Runtime: &runtimeValue, Reason: state.FallbackReason, Diagnostic: state.EnvironmentDiagnostic}, nil
+		// Cached native files can be removed by a package cleanup or a user. This
+		// is a recoverable condition: refresh the workbench-owned runtime instead
+		// of turning an old fingerprint into a user-facing installation block.
+		runtimeValue, refreshErr := ensureManagedLinuxRuntime()
+		if refreshErr != nil {
+			return linuxEnvironment{}, fmt.Errorf("兼容运行环境无法自动恢复：%w", refreshErr)
+		}
+		return linuxEnvironment{Mode: "managed-runtime", Runtime: &runtimeValue, Reason: "已自动恢复兼容运行环境", Diagnostic: "已使用受管兼容运行环境"}, nil
 	}
 	if linuxSystemRuntimeUsable() {
 		return linuxEnvironment{Mode: "system", Diagnostic: "已使用系统图形运行环境"}, nil
@@ -135,28 +138,22 @@ func ensureManagedLinuxRuntime() (managedLinuxRuntime, error) {
 		return managedLinuxRuntime{}, err
 	}
 	tag := strings.TrimSpace(os.Getenv("ALX_PLUGIN_INSTALLED_TAG"))
-	if tag == "" {
-		return managedLinuxRuntime{}, errors.New("当前 QQ 插件未记录正式 Release 版本；请重新安装 QQ 插件后重试")
+	releaseURL := linuxCompatibilityRuntimeLatestURL
+	if strings.HasPrefix(tag, "v") && !strings.ContainsAny(tag, "/?#") {
+		releaseURL = linuxCompatibilityRuntimeReleaseBaseURL + tag
 	}
-	if !strings.HasPrefix(tag, "v") || strings.ContainsAny(tag, "/?#") {
-		return managedLinuxRuntime{}, errors.New("当前 QQ 插件 Release 版本无效")
+	release, err := fetchRelease(releaseURL, "NapCat Linux 兼容运行环境")
+	if err != nil && releaseURL != linuxCompatibilityRuntimeLatestURL {
+		release, err = fetchRelease(linuxCompatibilityRuntimeLatestURL, "NapCat Linux 兼容运行环境")
 	}
-	release, err := fetchRelease(linuxCompatibilityRuntimeReleaseBaseURL+tag, "NapCat Linux 兼容运行环境")
 	if err != nil {
 		return managedLinuxRuntime{}, err
-	}
-	if release.TagName != tag {
-		return managedLinuxRuntime{}, errors.New("兼容运行环境 Release 标签无效")
 	}
 	asset, err := releaseAssetByName(release, assetContract.Name)
 	if err != nil {
 		return managedLinuxRuntime{}, fmt.Errorf("当前 QQ 插件 Release（%s）尚未附带 %s；请更新到包含兼容运行环境的 QQ 插件版本", release.TagName, assetContract.Name)
 	}
-	digest := normalizedSHA(asset.Digest)
-	if !validSHA(digest) {
-		return managedLinuxRuntime{}, errors.New("兼容运行环境 Release 未提供有效 SHA-256 校验和")
-	}
-	return installManagedLinuxRuntime(assetContract, asset, digest)
+	return installManagedLinuxRuntime(assetContract, asset)
 }
 
 func managedRuntimeBaseDir() (string, error) {
@@ -167,7 +164,7 @@ func managedRuntimeBaseDir() (string, error) {
 	return filepath.Join(dir, "runtime"), nil
 }
 
-func installManagedLinuxRuntime(contract linuxCompatibilityAsset, asset releaseAsset, digest string) (managedLinuxRuntime, error) {
+func installManagedLinuxRuntime(contract linuxCompatibilityAsset, asset releaseAsset) (managedLinuxRuntime, error) {
 	base, err := managedRuntimeBaseDir()
 	if err != nil {
 		return managedLinuxRuntime{}, err
@@ -175,7 +172,7 @@ func installManagedLinuxRuntime(contract linuxCompatibilityAsset, asset releaseA
 	if err := os.MkdirAll(base, 0o700); err != nil {
 		return managedLinuxRuntime{}, err
 	}
-	if cached, err := findCachedManagedLinuxRuntime(base, asset.Name, digest); err == nil {
+	if cached, err := findCachedManagedLinuxRuntime(base, asset.Name, ""); err == nil {
 		reportNapcatProgress("runtime", 15, "复用已准备的兼容运行环境")
 		return cached, nil
 	}
@@ -188,31 +185,28 @@ func installManagedLinuxRuntime(contract linuxCompatibilityAsset, asset releaseA
 	defer os.RemoveAll(stage)
 	archive := filepath.Join(stage, "package.tar.zst")
 	reportNapcatProgress("runtime", 15, "正在准备兼容运行环境")
-	actual, err := downloadFileLimitedWithProgress(asset.URL, archive, linuxCompatibilityArchiveLimit, napcatDownloadProgress("下载兼容运行环境", 15, 25))
+	actual, err := downloadFileWithProgress(asset.URL, archive, napcatDownloadProgress("下载兼容运行环境", 15, 25))
 	if err != nil {
 		return managedLinuxRuntime{}, err
-	}
-	if !strings.EqualFold(actual, digest) {
-		return managedLinuxRuntime{}, errors.New("兼容运行环境 SHA-256 校验失败")
 	}
 	extracted := filepath.Join(stage, "extracted")
 	reportNapcatProgress("runtime", 25, "验证兼容运行环境")
 	if err := extractCompatibilityRuntime(archive, extracted); err != nil {
 		return managedLinuxRuntime{}, err
 	}
-	manifest, runtimeValue, err := readManagedLinuxRuntime(extracted, contract, asset.Name, digest)
+	manifest, runtimeValue, err := readManagedLinuxRuntime(extracted, contract, asset.Name, actual)
 	if err != nil {
 		return managedLinuxRuntime{}, err
 	}
-	cacheRoot := filepath.Join(base, manifest.ID, digest)
-	if cached, err := loadManagedLinuxRuntime(manifest.ID, asset.Name, digest); err == nil {
+	cacheRoot := filepath.Join(base, manifest.ID, actual)
+	if cached, err := loadManagedLinuxRuntime(manifest.ID, asset.Name, actual); err == nil {
 		return cached, nil
 	}
 	if err := os.MkdirAll(filepath.Dir(cacheRoot), 0o700); err != nil {
 		return managedLinuxRuntime{}, err
 	}
 	if err := os.Rename(stage, cacheRoot); err != nil {
-		if cached, cacheErr := loadManagedLinuxRuntime(manifest.ID, asset.Name, digest); cacheErr == nil {
+		if cached, cacheErr := loadManagedLinuxRuntime(manifest.ID, asset.Name, actual); cacheErr == nil {
 			return cached, nil
 		}
 		return managedLinuxRuntime{}, err
@@ -232,16 +226,32 @@ func findCachedManagedLinuxRuntime(base, asset, digest string) (managedLinuxRunt
 		if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
 			continue
 		}
-		value, err := loadManagedLinuxRuntime(entry.Name(), asset, digest)
-		if err == nil && value.ID != "" {
-			return value, nil
+		if digest != "" {
+			value, err := loadManagedLinuxRuntime(entry.Name(), asset, digest)
+			if err == nil && value.ID != "" {
+				return value, nil
+			}
+			continue
+		}
+		versions, versionErr := os.ReadDir(filepath.Join(base, entry.Name()))
+		if versionErr != nil {
+			continue
+		}
+		for _, version := range versions {
+			if !version.IsDir() {
+				continue
+			}
+			value, loadErr := loadManagedLinuxRuntime(entry.Name(), asset, version.Name())
+			if loadErr == nil && value.ID != "" {
+				return value, nil
+			}
 		}
 	}
 	return managedLinuxRuntime{}, errors.New("未命中兼容运行环境缓存")
 }
 
 func loadManagedLinuxRuntime(id, asset, digest string) (managedLinuxRuntime, error) {
-	if strings.TrimSpace(id) == "" || !validSHA(digest) || strings.TrimSpace(asset) == "" {
+	if strings.TrimSpace(id) == "" || strings.TrimSpace(digest) == "" || strings.TrimSpace(asset) == "" {
 		return managedLinuxRuntime{}, errors.New("兼容运行环境身份不完整")
 	}
 	base, err := managedRuntimeBaseDir()
@@ -269,7 +279,6 @@ func extractCompatibilityRuntime(archive, destination string) error {
 	}
 	defer reader.Close()
 	tarReader := tar.NewReader(reader)
-	var total int64
 	for {
 		header, err := tarReader.Next()
 		if errors.Is(err, io.EOF) {
@@ -288,10 +297,9 @@ func extractCompatibilityRuntime(archive, destination string) error {
 				return err
 			}
 		case tar.TypeReg, tar.TypeRegA:
-			if header.Size < 0 || total > linuxCompatibilityExtractLimit-header.Size {
-				return errors.New("兼容运行环境解压后超过 500 MB 限制")
+			if header.Size < 0 {
+				return errors.New("兼容运行环境包含无效文件大小")
 			}
-			total += header.Size
 			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 				return err
 			}

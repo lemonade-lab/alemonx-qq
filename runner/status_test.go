@@ -17,13 +17,9 @@ func TestCollectStatusNotInstalled(t *testing.T) {
 	}
 }
 
-func TestCollectStatusSeparatesAutomaticSupportFromManagedIdentity(t *testing.T) {
-	platform := napcatPlatform()
-	if platform == nil || !platform.AutoInstall {
-		t.Skip("automatic NapCat install is unavailable on this test platform")
-	}
+func TestCollectStatusDoesNotExposeInstallationEvidence(t *testing.T) {
 	payload := collectStatus(State{})
-	if !payload.Verified || payload.ManagedActions {
+	if payload.Managed || payload.Installed {
 		t.Fatalf("new installation status = %#v", payload)
 	}
 }
@@ -124,35 +120,5 @@ func TestNapCatStatusKeepsOneBotAccountsSeparate(t *testing.T) {
 	payload := collectStatus(State{InstallDir: install, SelectedQQ: "10002"})
 	if len(payload.Accounts) != 2 || payload.SelectedAccount != "10002" || payload.OneBotURL != "ws://127.0.0.1:3102" {
 		t.Fatalf("accounts=%+v selected=%q url=%q", payload.Accounts, payload.SelectedAccount, payload.OneBotURL)
-	}
-}
-
-func TestNapcatLinuxDependencyPreflight(t *testing.T) {
-	lookup := func(name string) (string, error) {
-		if name == "apt-get" || name == "Xvfb" {
-			return "/usr/bin/" + name, nil
-		}
-		return "", os.ErrNotExist
-	}
-	status := napcatLinuxDependenciesFor("linux", lookup, func(name string) bool { return name != "libgbm1" })
-	if status == nil || !status.Supported || status.Ready || len(status.Missing) != 1 || status.Missing[0] != "libgbm1" {
-		t.Fatalf("dependency preflight = %#v", status)
-	}
-	dnfLookup := func(name string) (string, error) {
-		if name == "dnf" || name == "Xvfb" {
-			return "/usr/bin/" + name, nil
-		}
-		return "", os.ErrNotExist
-	}
-	dnf := napcatLinuxDependenciesFor("linux", dnfLookup, func(name string) bool { return name != "gtk3" })
-	if dnf == nil || dnf.PackageManager != "dnf" || dnf.Ready || len(dnf.Missing) != 1 || dnf.Missing[0] != "gtk3" {
-		t.Fatalf("dnf dependency preflight = %#v", dnf)
-	}
-	if got := napcatLinuxDependenciesFor("darwin", lookup, func(string) bool { return true }); got != nil {
-		t.Fatalf("non-Linux dependencies = %#v, want nil", got)
-	}
-	unknown := napcatLinuxDependenciesFor("linux", func(string) (string, error) { return "", os.ErrNotExist }, func(string) bool { return false })
-	if unknown == nil || !unknown.Supported || unknown.RequiresAuthorization || unknown.SystemPackageAvailable {
-		t.Fatalf("unknown Linux should use automatic managed runtime: %#v", unknown)
 	}
 }

@@ -26,7 +26,7 @@ var assets = map[string]Asset{
 	},
 	"dnf/amd64": {
 		Name: "QQ_3.2.31_260710_x86_64_01.rpm", Kind: "rpm",
-		SHA256: "0dcb6f8201817ae74973a01cf6c8b77256acdaf8e2c1bca302581c4351a8dfe1",
+		SHA256: "be897976f9481be2d224dc4e11592126a3adf71b2c395e8273cf14ea99b5519d",
 	},
 	"dnf/arm64": {
 		Name: "QQ_3.2.31_260710_aarch64_01.rpm", Kind: "rpm",

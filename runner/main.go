@@ -222,9 +222,8 @@ func installAction(params map[string]string, confirmed bool) (string, error) {
 	if runtime.GOOS == "darwin" || runtime.GOOS == "windows" {
 		return "", errors.New("当前系统请使用工作台下载并打开官方 NapCat 启动器；工作台不会修改 QQ 注入文件")
 	}
-	forceManagedRuntime := runtime.GOOS == "linux" && params["environment"] == "managed-runtime"
 	previousState := state
-	installation, err := installNapCat(forceManagedRuntime)
+	installation, err := installNapCat()
 	if err != nil {
 		return "", err
 	}
@@ -249,11 +248,11 @@ func installAction(params map[string]string, confirmed bool) (string, error) {
 			_ = saveState(previousState)
 			return "", err
 		}
-		if !waitNapcatWebUI(45 * time.Second) {
+		if !waitNapcatWebUI(webUIStartupTimeout) {
 			stopProcess(process.ProcessGroupID)
 			_ = rollbackNapcatInstallation(installation)
 			_ = saveState(previousState)
-			return "", errors.New("NapCat 未能在 45 秒内启动管理面板，安装已自动恢复到安装前状态，请查看执行日志")
+			return "", errors.New("NapCat 未能启动管理页面，安装已自动恢复到安装前状态，请查看执行日志")
 		}
 		discardNapcatBackup(installation)
 		reportNapcatProgress("complete", 100, "NapCat 已安装并启动，等待扫码登录")
@@ -325,11 +324,11 @@ func startAction(confirmed bool) (string, error) {
 		stopProcess(process.ProcessGroupID)
 		return "", err
 	}
-	if !waitNapcatWebUI(45 * time.Second) {
+	if !waitNapcatWebUI(webUIStartupTimeout) {
 		stopProcess(process.ProcessGroupID)
 		state.PID, state.ProcessGroupID = 0, 0
 		_ = saveState(state)
-		return "", errors.New("NapCat 未能在 45 秒内启动管理面板，已停止受管进程组，请查看执行日志")
+		return "", errors.New("NapCat 未能启动管理页面，已停止受管进程组，请查看执行日志")
 	}
 	return fmt.Sprintf("✓ NapCat 已启动（PID %d）。\n✓ 现在请用手机 QQ 扫码登录。", process.PID), nil
 }
@@ -407,7 +406,7 @@ func updateNapcat(confirmed bool) (string, error) {
 			return "", errors.New("旧 NapCat 进程组未能停止，未开始更新")
 		}
 	}
-	installation, installErr := installNapCat(state.EnvironmentMode == "managed-runtime")
+	installation, installErr := installNapCat()
 	if installErr != nil {
 		if wasRunning {
 			if process, startErr := startNapCat(state); startErr == nil {
