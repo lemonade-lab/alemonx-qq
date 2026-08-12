@@ -189,7 +189,13 @@ jobs:
           printf '%s\n' "${checksum_files[@]}" >&2
           cat "${checksum_files[@]}" > release/SHA256SUMS
           find release -name '*.sha256' -type f -delete
-          gh release create "${GITHUB_REF_NAME}" release/* --generate-notes
+          mapfile -d '' release_assets < <(find release -type f -print0 | sort -z)
+          if [ "${#release_assets[@]}" -eq 0 ]; then
+            echo "No release assets were prepared." >&2
+            exit 1
+          fi
+          printf '%s\n' "${release_assets[@]}" >&2
+          gh release create "${GITHUB_REF_NAME}" "${release_assets[@]}" --generate-notes
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
