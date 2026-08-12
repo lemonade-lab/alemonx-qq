@@ -171,6 +171,9 @@ jobs:
     permissions:
       contents: write
     steps:
+      # gh needs repository context when creating the release. Downloaded
+      # artifacts do not contain .git, so check out the tagged repository too.
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           path: release
@@ -178,11 +181,18 @@ jobs:
           merge-multiple: true
       - name: Publish plugin and compatibility runtime assets together
         run: |
-          find release -name '*.sha256' -type f -print0 | xargs -0 cat > release/SHA256SUMS
+          mapfile -d '' checksum_files < <(find release -name '*.sha256' -type f -print0 | sort -z)
+          if [ "${#checksum_files[@]}" -eq 0 ]; then
+            echo "No checksum artifacts were downloaded." >&2
+            exit 1
+          fi
+          printf '%s\n' "${checksum_files[@]}" >&2
+          cat "${checksum_files[@]}" > release/SHA256SUMS
           find release -name '*.sha256' -type f -delete
           gh release create "${GITHUB_REF_NAME}" release/* --generate-notes
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
 
   luckylillia-e2e-linux-arm64:
     if: github.event_name == 'workflow_dispatch' && inputs.luckylillia_e2e
