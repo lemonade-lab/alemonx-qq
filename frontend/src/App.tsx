@@ -51,6 +51,7 @@ function ResultPanel({
   steps?: TaskStep[]
 }) {
   const lines = useMemo(() => splitStatusLines(result?.output ?? ''), [result])
+	const current = steps.at(-1)
   if (state === 'idle') return null
   return (
     <section className="grid gap-2 rounded-panel border border-[var(--theme-border-default)] bg-[var(--theme-surface-panel)] p-3 text-xs">
@@ -71,20 +72,16 @@ function ResultPanel({
           {result.error}
         </div>
       )}
-      {steps.length > 0 && (
-        <details open={state === 'running'} className="rounded-md border border-[var(--theme-border-default)] bg-[var(--theme-surface-input)] px-2 py-1.5">
-          <summary className="cursor-pointer text-xs font-semibold text-[var(--theme-text-secondary)]">
-            本次操作流程（{steps.length} 个阶段）
-          </summary>
-          <ol className="mt-2 grid gap-1.5 border-l border-[var(--theme-border-default)] pl-3">
-            {steps.map((step, index) => (
-              <li key={`${step.at}-${index}`} className="grid grid-cols-[3.25rem_1fr] gap-2 text-[11px] leading-4">
-                <span className="font-mono text-[var(--theme-text-muted)]">{step.progress}%</span>
-                <span className="break-words text-[var(--theme-text-secondary)]">{step.message}</span>
-              </li>
-            ))}
-          </ol>
-        </details>
+      {current && (
+        <div className="grid gap-1.5 rounded-md border border-[var(--theme-border-default)] bg-[var(--theme-surface-input)] px-2.5 py-2">
+          <div className="flex items-center justify-between gap-3 text-xs">
+            <span className="min-w-0 truncate text-[var(--theme-text-secondary)]">{current.message}</span>
+            <span className="shrink-0 font-mono text-[var(--theme-text-muted)]">{current.progress}%</span>
+          </div>
+          <div className="h-1.5 overflow-hidden rounded-full bg-[var(--theme-surface-hover)]">
+            <div className="h-full rounded-full bg-[var(--theme-accent)] transition-[width] duration-300" style={{ width: `${current.progress}%` }} />
+          </div>
+        </div>
       )}
       {state === 'running' && !result?.output ? (
         <div className="grid gap-2 py-1">

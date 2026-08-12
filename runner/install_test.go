@@ -249,6 +249,39 @@ func TestReadRPMHeaderReadsPayloadCompressor(t *testing.T) {
 	}
 }
 
+func TestExtractNewcCPIOAlignsHeaderAndFileNameTogether(t *testing.T) {
+	var payload bytes.Buffer
+	writeNewcEntry(t, &payload, "opt/QQ/resources/app/package.json", 0o100644, []byte(`{"name":"qq"}`))
+	writeNewcEntry(t, &payload, "TRAILER!!!", 0, nil)
+	destination := t.TempDir()
+	if err := extractNewcCPIO(bytes.NewReader(payload.Bytes()), destination); err != nil {
+		t.Fatalf("extract valid newc payload: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(destination, "opt", "QQ", "resources", "app", "package.json"))
+	if err != nil || string(data) != `{"name":"qq"}` {
+		t.Fatalf("extracted payload = %q, err=%v", data, err)
+	}
+}
+
+func writeNewcEntry(t *testing.T, writer *bytes.Buffer, name string, mode int64, data []byte) {
+	t.Helper()
+	nameSize := int64(len(name) + 1)
+	header := fmt.Sprintf("070701%08x%08x%08x%08x%08x%08x%08x%08x%08x%08x%08x%08x%08x", 0, mode, 0, 0, 1, 0, len(data), 0, 0, 0, 0, nameSize, 0)
+	if len(header) != 110 {
+		t.Fatalf("newc header length = %d", len(header))
+	}
+	writer.WriteString(header)
+	writer.WriteString(name)
+	writer.WriteByte(0)
+	for padding := (4 - ((110 + nameSize) % 4)) % 4; padding > 0; padding-- {
+		writer.WriteByte(0)
+	}
+	writer.Write(data)
+	for padding := (4 - (int64(len(data)) % 4)) % 4; padding > 0; padding-- {
+		writer.WriteByte(0)
+	}
+}
+
 func TestWindowsNapcatCommandRejectsBatchLauncher(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "launcher.bat"), []byte("@echo off"), 0o600); err != nil {

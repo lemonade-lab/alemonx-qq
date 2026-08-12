@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // napcatReleaseValidationEvidence is optional release metadata. It may be
@@ -44,6 +45,10 @@ func requireNapcatConfirmation(confirmed bool, action string) error {
 }
 
 func reportNapcatProgress(stage string, percent int, message string) {
+	if strings.TrimSpace(os.Getenv("ALX_PLUGIN_PROGRESS_MODE")) != "structured" {
+		fmt.Fprintf(os.Stderr, "\r\033[2K[%3d%%] %s", percent, message)
+		return
+	}
 	payload, err := json.Marshal(map[string]any{"stage": stage, "percent": percent, "message": message})
 	if err == nil {
 		_, _ = fmt.Fprintf(os.Stderr, "@alx-progress %s\n", payload)

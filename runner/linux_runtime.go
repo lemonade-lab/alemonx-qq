@@ -204,6 +204,19 @@ func discardAligned(reader *bufio.Reader, count int64) error {
 	return err
 }
 
+// discardCPIONamePadding aligns the complete newc header plus file name. The
+// fixed header is 110 bytes (not a multiple of four), so aligning only the
+// name length shifts the following entry by two bytes and corrupts otherwise
+// valid RPM payloads.
+func discardCPIONamePadding(reader *bufio.Reader, nameSize int64) error {
+	padding := (4 - ((110 + nameSize) % 4)) % 4
+	if padding == 0 {
+		return nil
+	}
+	_, err := io.CopyN(io.Discard, reader, padding)
+	return err
+}
+
 func extractNewcCPIO(reader io.Reader, destination string) error {
 	buffered := bufio.NewReader(reader)
 	for {
@@ -230,7 +243,7 @@ func extractNewcCPIO(reader io.Reader, destination string) error {
 		if _, err := io.ReadFull(buffered, name); err != nil {
 			return err
 		}
-		if err := discardAligned(buffered, nameSize); err != nil {
+		if err := discardCPIONamePadding(buffered, nameSize); err != nil {
 			return err
 		}
 		path := strings.TrimSuffix(string(name), "\x00")
