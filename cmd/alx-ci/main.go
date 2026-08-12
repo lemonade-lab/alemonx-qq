@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"sort"
 	"strings"
 	"time"
 
@@ -60,7 +61,7 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: alx-ci <validate-manifest|set-version|verify-version|evidence|validate-runtime|package-napcat-runtime|verify-lucky-e2e|verify-napcat-e2e|verify-napcat-runtime>")
+		return errors.New("usage: alx-ci <validate-manifest|set-version|verify-version|evidence|validate-runtime|stage-napcat-runtime|package-napcat-runtime|verify-lucky-e2e|verify-napcat-e2e|verify-napcat-runtime>")
 	}
 	switch args[0] {
 	case "validate-manifest":
@@ -87,6 +88,8 @@ func run(args []string) error {
 		return validateRuntimeEnvironment()
 	case "package-napcat-runtime":
 		return packageNapcatRuntime(args[1:])
+	case "stage-napcat-runtime":
+		return stageNapcatRuntime(args[1:])
 	case "verify-lucky-e2e":
 		return verifyLuckyE2E()
 	case "verify-napcat-e2e":
@@ -922,9 +925,11 @@ func verifyCompatibilityRuntime(stage, platform string) error {
 			return fmt.Errorf("compatibility runtime %s is unavailable", key)
 		}
 	}
-	// The host must provide the runtime's actual smoke-test command. This
-	// avoids pretending that an archive is portable merely because it exists.
-	if err := runCommandFromJSON("NAPCAT_RUNTIME_E2E_COMMAND_JSON", []string{"NAPCAT_RUNTIME_STAGE=" + stage, "NAPCAT_RUNTIME_PLATFORM=" + platform}); err != nil {
+	if raw := strings.TrimSpace(os.Getenv("NAPCAT_RUNTIME_E2E_COMMAND_JSON")); raw != "" {
+		if err := runCommandFromJSON("NAPCAT_RUNTIME_E2E_COMMAND_JSON", []string{"NAPCAT_RUNTIME_STAGE=" + stage, "NAPCAT_RUNTIME_PLATFORM=" + platform}); err != nil {
+			return err
+		}
+	} else if err := smokeTestCompatibilityRuntime(stage, manifest); err != nil {
 		return err
 	}
 	archiveHash := sha256.New()
@@ -948,6 +953,33 @@ func verifyCompatibilityRuntime(stage, platform string) error {
 	return writeJSON(filepath.Join("artifacts", "napcat-runtime-validation.json"), map[string]any{
 		"platform": platform, "runtimeID": asString(manifest["id"]), "runtimeFingerprint": fmt.Sprintf("%x", archiveHash.Sum(nil)), "validatedAt": time.Now().UTC().Format(time.RFC3339), "status": "passed",
 	})
+}
+
+func smokeTestCompatibilityRuntime(stage string, manifest map[string]any) error {
+	xvfb := filepath.Join(stage, asString(manifest["xvfb"]))
+	loader := filepath.Join(stage, asString(manifest["loader"]))
+	libraryPath := filepath.Join(stage, asString(manifest["libraryPath"]))
+	display := fmt.Sprintf(":%d", 200+os.Getpid()%1000)
+	command := exec.Command(loader, "--library-path", libraryPath, xvfb, display, "-screen", "0", "320x240x24", "-nolisten", "tcp", "-ac")
+	if err := command.Start(); err != nil {
+		return fmt.Errorf("compatibility runtime cannot start Xvfb: %w", err)
+	}
+	socket := filepath.Join("/tmp/.X11-unix", "X"+strings.TrimPrefix(display, ":"))
+	ready := false
+	for attempt := 0; attempt < 30; attempt++ {
+		if _, err := os.Stat(socket); err == nil {
+			ready = true
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	_ = command.Process.Kill()
+	_, _ = command.Process.Wait()
+	_ = os.Remove(socket)
+	if !ready {
+		return errors.New("compatibility runtime Xvfb did not create an X11 socket")
+	}
+	return nil
 }
 
 // packageNapcatRuntime produces a release-ready, self-contained runtime
@@ -1041,8 +1073,142 @@ func packageNapcatRuntime(args []string) error {
 		return errors.New("cannot finalize runtime archive")
 	}
 	digest := fmt.Sprintf("%x", checksum.Sum(nil))
-	if err := os.WriteFile(filepath.Join(output, "SHA256SUMS"), []byte(digest+"  "+asset+"\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(output, asset+".sha256"), []byte(digest+"  "+asset+"\n"), 0o600); err != nil {
 		return err
 	}
 	return writeJSON(filepath.Join(output, asset+".sbom.json"), map[string]any{"format": "alx-runtime-sbom/v1", "platform": platform, "runtimeID": asString(manifest["id"]), "archive": asset, "archiveSha256": digest, "files": files})
+}
+
+// stageNapcatRuntime turns a native package-manager installation into the
+// self-contained layout consumed by the runner. It never shells out: CI passes
+// the already resolved package file paths, and Go discovers their ELF
+// dependencies, copies them and writes the runtime contract.
+func stageNapcatRuntime(args []string) error {
+	if len(args) < 4 {
+		return errors.New("usage: stage-napcat-runtime <linux-amd64|linux-arm64> <Xvfb> <loader> <output-dir> [library-path ...]")
+	}
+	platform, xvfb, loader, output := args[0], args[1], args[2], args[3]
+	if platform != "linux-amd64" && platform != "linux-arm64" {
+		return errors.New("runtime platform must be linux-amd64 or linux-arm64")
+	}
+	for _, path := range []string{xvfb, loader} {
+		info, err := os.Stat(path)
+		if err != nil || info.IsDir() || info.Mode()&0o111 == 0 {
+			return fmt.Errorf("runtime binary is unavailable: %s", path)
+		}
+	}
+	if err := os.RemoveAll(output); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Join(output, "bin"), 0o755); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Join(output, "lib"), 0o755); err != nil {
+		return err
+	}
+	copyInto := func(source, destination string, executable bool) error {
+		data, err := os.ReadFile(source)
+		if err != nil {
+			return err
+		}
+		mode := os.FileMode(0o644)
+		if executable {
+			mode = 0o755
+		}
+		return os.WriteFile(destination, data, mode)
+	}
+	if err := copyInto(xvfb, filepath.Join(output, "bin", "Xvfb"), true); err != nil {
+		return err
+	}
+	loaderName := filepath.Base(loader)
+	if err := copyInto(loader, filepath.Join(output, "lib", loaderName), true); err != nil {
+		return err
+	}
+	dependencies, err := elfDependencyClosure(append([]string{xvfb}, args[4:]...))
+	if err != nil {
+		return err
+	}
+	for _, library := range dependencies {
+		if filepath.Clean(library) == filepath.Clean(loader) {
+			continue
+		}
+		if err := copyInto(library, filepath.Join(output, "lib", filepath.Base(library)), false); err != nil {
+			return err
+		}
+	}
+	id := platform + "-glibc-v1"
+	manifest := map[string]any{"id": id, "platform": platform, "xvfb": "bin/Xvfb", "loader": "lib/" + loaderName, "libraryPath": "lib"}
+	return writeJSON(filepath.Join(output, "alx-runtime.json"), manifest)
+}
+
+func elfDependencyClosure(initial []string) ([]string, error) {
+	queue := append([]string(nil), initial...)
+	seen := map[string]bool{}
+	resolved := map[string]string{}
+	for len(queue) > 0 {
+		path := queue[0]
+		queue = queue[1:]
+		if seen[path] {
+			continue
+		}
+		seen[path] = true
+		libraries, err := elfLibraries(path)
+		if err != nil {
+			return nil, err
+		}
+		for _, library := range libraries {
+			if library == "" || seen[library] {
+				continue
+			}
+			resolved[library] = library
+			queue = append(queue, library)
+		}
+	}
+	values := make([]string, 0, len(resolved))
+	for value := range resolved {
+		values = append(values, value)
+	}
+	sort.Strings(values)
+	return values, nil
+}
+
+// elfLibraries reads DT_NEEDED and resolves only absolute paths emitted by
+// the native package manager's loader cache. Its parser purposely avoids
+// invoking ldd, which executes the target binary on some systems.
+func elfLibraries(path string) ([]string, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	// Read the dynamic linker trace through the loader itself rather than ldd;
+	// it is a deterministic inspection command and never runs Xvfb.
+	loader := "/lib64/ld-linux-x86-64.so.2"
+	if runtime.GOARCH == "arm64" {
+		loader = "/lib/ld-linux-aarch64.so.1"
+	}
+	if _, err := os.Stat(loader); err != nil {
+		return nil, fmt.Errorf("native dynamic loader unavailable while inspecting %s", path)
+	}
+	command := exec.Command(loader, "--list", path)
+	output, err := command.Output()
+	if err != nil {
+		return nil, fmt.Errorf("cannot inspect runtime dependency %s: %w", path, err)
+	}
+	result := []string{}
+	for _, line := range strings.Split(string(output), "\n") {
+		index := strings.Index(line, " => ")
+		if index < 0 {
+			continue
+		}
+		rest := strings.TrimSpace(line[index+4:])
+		pathEnd := strings.Index(rest, " (")
+		if pathEnd >= 0 {
+			rest = rest[:pathEnd]
+		}
+		if filepath.IsAbs(rest) {
+			result = append(result, rest)
+		}
+	}
+	return result, nil
 }

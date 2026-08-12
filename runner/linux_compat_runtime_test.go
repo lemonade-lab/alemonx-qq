@@ -6,6 +6,7 @@ import (
 	"archive/tar"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/klauspost/compress/zstd"
@@ -103,5 +104,14 @@ func TestManagedRuntimeIDCannotEscapeCacheRoot(t *testing.T) {
 	}
 	if !managedRuntimeIDPattern.MatchString("linux-amd64-glibc-v1") {
 		t.Fatal("valid runtime ID rejected")
+	}
+}
+
+func TestManagedRuntimeRequiresInstalledPluginTag(t *testing.T) {
+	previous := os.Getenv("ALX_PLUGIN_INSTALLED_TAG")
+	t.Cleanup(func() { _ = os.Setenv("ALX_PLUGIN_INSTALLED_TAG", previous) })
+	_ = os.Unsetenv("ALX_PLUGIN_INSTALLED_TAG")
+	if _, err := ensureManagedLinuxRuntime(); err == nil || !strings.Contains(err.Error(), "未记录正式 Release 版本") {
+		t.Fatalf("missing installed tag must reject runtime lookup: %v", err)
 	}
 }

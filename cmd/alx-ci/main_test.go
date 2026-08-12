@@ -103,7 +103,7 @@ func TestPackageNapcatRuntimeCreatesArchiveChecksumAndSBOM(t *testing.T) {
 	if _, err := os.Stat(archive); err != nil {
 		t.Fatal(err)
 	}
-	if data, err := os.ReadFile(filepath.Join(output, "SHA256SUMS")); err != nil || !strings.Contains(string(data), filepath.Base(archive)) {
+	if data, err := os.ReadFile(archive + ".sha256"); err != nil || !strings.Contains(string(data), filepath.Base(archive)) {
 		t.Fatalf("checksum file = %q, err=%v", data, err)
 	}
 	if _, err := os.Stat(archive + ".sbom.json"); err != nil {

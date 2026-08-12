@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    tags: ['v*', 'runtime-v*']
+    tags: ['v*']
   workflow_dispatch:
     inputs:
       luckylillia_e2e:
@@ -120,58 +120,53 @@ jobs:
           name: ${{ matrix.bundle }}
           path: release/
 
-  release:
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: package
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          path: release
-          merge-multiple: true
-          pattern: '*.zip'
-      - run: |
-          cat release/*.sha256 > release/SHA256SUMS
-          rm release/*.sha256
-          gh release create "${GITHUB_REF_NAME}" release/*.zip release/SHA256SUMS --generate-notes
-        env:
-          GH_TOKEN: ${{ github.token }}
-
   package-compatibility-runtime:
-    if: startsWith(github.ref, 'refs/tags/runtime-v')
+    if: startsWith(github.ref, 'refs/tags/v')
     needs: verify
     strategy:
       matrix:
         include:
-          - { platform: linux-amd64, runner: '[self-hosted, linux, x64, napcat-runtime-build]', stage_var: NAPCAT_RUNTIME_STAGE_LINUX_AMD64, e2e_var: NAPCAT_RUNTIME_E2E_COMMAND_JSON_LINUX_AMD64 }
-          - { platform: linux-arm64, runner: '[self-hosted, linux, arm64, napcat-runtime-build]', stage_var: NAPCAT_RUNTIME_STAGE_LINUX_ARM64, e2e_var: NAPCAT_RUNTIME_E2E_COMMAND_JSON_LINUX_ARM64 }
-    runs-on: ${{ fromJSON(matrix.runner) }}
+          - { platform: linux-amd64, runner: ubuntu-24.04 }
+          - { platform: linux-arm64, runner: ubuntu-24.04-arm }
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version: '1.23.x'
-      - name: Smoke-test staged runtime on its native platform
+      - name: Install native Xvfb build dependency
+        run: |
+          if command -v apt-get >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y xvfb
+          elif command -v dnf >/dev/null; then
+            sudo dnf install -y xorg-x11-server-Xvfb
+          else
+            echo "No supported native package manager on runtime builder" >&2
+            exit 1
+          fi
+      - name: Stage self-contained runtime with Go
+        run: |
+          case "${{ matrix.platform }}" in
+            linux-amd64) loader=/lib64/ld-linux-x86-64.so.2 ;;
+            linux-arm64) loader=/lib/ld-linux-aarch64.so.1 ;;
+          esac
+          go run ./cmd/alx-ci stage-napcat-runtime "${{ matrix.platform }}" "$(command -v Xvfb)" "$loader" runtime-stage
+      - name: Smoke-test self-contained runtime on its native platform
         run: go run ./cmd/alx-ci verify-napcat-runtime
         env:
           NAPCAT_RUNTIME_PLATFORM: ${{ matrix.platform }}
-          NAPCAT_RUNTIME_STAGE: ${{ vars[matrix.stage_var] }}
-          NAPCAT_RUNTIME_E2E_COMMAND_JSON: ${{ vars[matrix.e2e_var] }}
+          NAPCAT_RUNTIME_STAGE: runtime-stage
       - name: Package staged runtime and generate SBOM
-        run: go run ./cmd/alx-ci package-napcat-runtime "${{ matrix.platform }}" "$NAPCAT_RUNTIME_STAGE" release
-        env:
-          NAPCAT_RUNTIME_STAGE: ${{ vars[matrix.stage_var] }}
+        run: go run ./cmd/alx-ci package-napcat-runtime "${{ matrix.platform }}" runtime-stage release/${{ matrix.platform }}
       - uses: actions/upload-artifact@v4
         with:
           name: napcat-runtime-${{ matrix.platform }}
           path: release/
 
-  release-compatibility-runtime:
-    if: startsWith(github.ref, 'refs/tags/runtime-v')
-    needs: package-compatibility-runtime
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [package, package-compatibility-runtime]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -179,10 +174,13 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: release
-          pattern: napcat-runtime-*
+          pattern: '*'
           merge-multiple: true
-      - name: Publish immutable compatibility runtime
-        run: gh release create "${GITHUB_REF_NAME}" release/* --generate-notes
+      - name: Publish plugin and compatibility runtime assets together
+        run: |
+          find release -name '*.sha256' -type f -print0 | xargs -0 cat > release/SHA256SUMS
+          find release -name '*.sha256' -type f -delete
+          gh release create "${GITHUB_REF_NAME}" release/* --generate-notes
         env:
           GH_TOKEN: ${{ github.token }}
 

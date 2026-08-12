@@ -20,12 +20,11 @@ import (
 	"github.com/klauspost/compress/zstd"
 )
 
-// linuxCompatibilityRuntimeReleaseURL is a separate, reviewed release line.
-// The runtime archive is not a plugin bundle and never executes an installer
-// script: it is a versioned collection of Xvfb, libraries and a descriptor.
-// runtime-v1 is immutable in the release workflow; the asset digest returned
-// by GitHub is checked before it is admitted to the cache.
-const linuxCompatibilityRuntimeReleaseURL = "https://api.github.com/repos/lemonade-lab/alemonx-qq/releases/tags/runtime-v1"
+// The compatibility runtime is attached to the exact QQ plugin release that
+// contains this runner. Keeping both assets in one release makes it impossible
+// to publish a plugin whose automatic fallback silently points at a missing
+// second tag, or have an old runner consume a newer incompatible payload.
+const linuxCompatibilityRuntimeReleaseBaseURL = "https://api.github.com/repos/lemonade-lab/alemonx-qq/releases/tags/"
 
 const (
 	linuxCompatibilityArchiveLimit = int64(300 << 20)
@@ -135,16 +134,23 @@ func ensureManagedLinuxRuntime() (managedLinuxRuntime, error) {
 	if err != nil {
 		return managedLinuxRuntime{}, err
 	}
-	release, err := fetchRelease(linuxCompatibilityRuntimeReleaseURL, "NapCat Linux 兼容运行环境")
+	tag := strings.TrimSpace(os.Getenv("ALX_PLUGIN_INSTALLED_TAG"))
+	if tag == "" {
+		return managedLinuxRuntime{}, errors.New("当前 QQ 插件未记录正式 Release 版本；请重新安装 QQ 插件后重试")
+	}
+	if !strings.HasPrefix(tag, "v") || strings.ContainsAny(tag, "/?#") {
+		return managedLinuxRuntime{}, errors.New("当前 QQ 插件 Release 版本无效")
+	}
+	release, err := fetchRelease(linuxCompatibilityRuntimeReleaseBaseURL+tag, "NapCat Linux 兼容运行环境")
 	if err != nil {
 		return managedLinuxRuntime{}, err
 	}
-	if !strings.HasPrefix(release.TagName, "runtime-v") {
+	if release.TagName != tag {
 		return managedLinuxRuntime{}, errors.New("兼容运行环境 Release 标签无效")
 	}
 	asset, err := releaseAssetByName(release, assetContract.Name)
 	if err != nil {
-		return managedLinuxRuntime{}, err
+		return managedLinuxRuntime{}, fmt.Errorf("当前 QQ 插件 Release（%s）尚未附带 %s；请更新到包含兼容运行环境的 QQ 插件版本", release.TagName, assetContract.Name)
 	}
 	digest := normalizedSHA(asset.Digest)
 	if !validSHA(digest) {
