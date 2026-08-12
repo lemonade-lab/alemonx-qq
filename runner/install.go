@@ -558,8 +558,8 @@ func installLinuxNapCat() (napcatInstallation, error) {
 		return rollback(err)
 	}
 	reportNapcatProgress("verify", 68, "写入 NapCat 启动入口")
-	if _, err := os.Stat(filepath.Join(stage, "napcat", "napcat.mjs")); err != nil {
-		return rollback(errors.New("NapCat Shell Release 缺少 napcat/napcat.mjs 启动模块"))
+	if _, err := napcatShellEntrypoint(stage); err != nil {
+		return rollback(err)
 	}
 	if err := patchLinuxQQEntrypoint(stage, root); err != nil {
 		return rollback(err)

@@ -440,7 +440,28 @@ func patchLinuxQQEntrypoint(root, runtimeRoot string) error {
 	if err := os.Rename(packagePath+".new", packagePath); err != nil {
 		return err
 	}
+	if _, err := napcatShellEntrypoint(runtimeRoot); err != nil {
+		return err
+	}
 	entrypoint := filepath.Join(root, "opt", "QQ", "resources", "app", "loadNapCat.js")
-	content := "const path = require('path');\nconst home = process.env.NAPCAT_HOME || " + strconv.Quote(runtimeRoot) + ";\n(async () => { await import('file://' + path.join(home, 'napcat', 'napcat.mjs')); })();\n"
+	// Since v4.18.18 the official Shell archive puts napcat.mjs at its root.
+	// Older Releases used napcat/napcat.mjs. Resolve both layouts at runtime so
+	// an upstream packaging-only move never turns into an installation failure.
+	content := "const fs = require('fs');\nconst path = require('path');\nconst home = process.env.NAPCAT_HOME || " + strconv.Quote(runtimeRoot) + ";\nconst candidates = [path.join(home, 'napcat.mjs'), path.join(home, 'napcat', 'napcat.mjs')];\nconst entry = candidates.find(fs.existsSync);\nif (!entry) throw new Error('NapCat Shell entrypoint missing');\n(async () => { await import('file://' + entry); })();\n"
 	return os.WriteFile(entrypoint, []byte(content), 0o600)
+}
+
+// napcatShellEntrypoint accepts both official archive layouts. NapCat v4.18.18
+// moved the module from napcat/napcat.mjs to the archive root; both formats are
+// genuine official Releases and both are supported by the generated loader.
+func napcatShellEntrypoint(root string) (string, error) {
+	for _, candidate := range []string{
+		filepath.Join(root, "napcat.mjs"),
+		filepath.Join(root, "napcat", "napcat.mjs"),
+	} {
+		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+			return candidate, nil
+		}
+	}
+	return "", errors.New("NapCat Shell Release 缺少启动模块")
 }

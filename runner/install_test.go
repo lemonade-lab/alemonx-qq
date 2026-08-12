@@ -220,15 +220,45 @@ func TestPatchLinuxQQEntrypointCreatesManagedLoader(t *testing.T) {
 	if err := os.WriteFile(packagePath, []byte(`{"main": "./application.asar/app_launcher/index.js"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := patchLinuxQQEntrypoint(root, "/home/test/Napcat"); err != nil {
+	runtimeRoot := filepath.Join(root, "napcat-runtime")
+	if err := os.MkdirAll(runtimeRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(runtimeRoot, "napcat.mjs"), []byte("fixture"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := patchLinuxQQEntrypoint(root, runtimeRoot); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(packagePath + ".alx-original"); err != nil {
 		t.Fatal(err)
 	}
 	loader, err := os.ReadFile(filepath.Join(filepath.Dir(packagePath), "loadNapCat.js"))
-	if err != nil || !bytes.Contains(loader, []byte("/home/test/Napcat")) {
+	if err != nil || !bytes.Contains(loader, []byte(runtimeRoot)) || !bytes.Contains(loader, []byte("candidates")) {
 		t.Fatalf("managed loader = %q, err=%v", loader, err)
+	}
+}
+
+func TestNapcatShellEntrypointSupportsCurrentAndLegacyLayouts(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "napcat.mjs"), []byte("current"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if entry, err := napcatShellEntrypoint(root); err != nil || entry != filepath.Join(root, "napcat.mjs") {
+		t.Fatalf("current shell entry = %q, %v", entry, err)
+	}
+	if err := os.Remove(filepath.Join(root, "napcat.mjs")); err != nil {
+		t.Fatal(err)
+	}
+	legacy := filepath.Join(root, "napcat", "napcat.mjs")
+	if err := os.MkdirAll(filepath.Dir(legacy), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(legacy, []byte("legacy"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if entry, err := napcatShellEntrypoint(root); err != nil || entry != legacy {
+		t.Fatalf("legacy shell entry = %q, %v", entry, err)
 	}
 }
 
