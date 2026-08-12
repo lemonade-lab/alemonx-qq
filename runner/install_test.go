@@ -263,6 +263,28 @@ func TestExtractNewcCPIOAlignsHeaderAndFileNameTogether(t *testing.T) {
 	}
 }
 
+func TestExtractNewcCPIOAllowsOnlyContainedRelativeSymlink(t *testing.T) {
+	var payload bytes.Buffer
+	writeNewcEntry(t, &payload, "opt/QQ/qq", 0o100755, []byte("qq"))
+	writeNewcEntry(t, &payload, "usr/lib/.build-id/link", 0o120777, []byte("../../../opt/QQ/qq"))
+	writeNewcEntry(t, &payload, "TRAILER!!!", 0, nil)
+	destination := t.TempDir()
+	if err := extractNewcCPIO(bytes.NewReader(payload.Bytes()), destination); err != nil {
+		t.Fatalf("extract contained symlink: %v", err)
+	}
+	link, err := os.Readlink(filepath.Join(destination, "usr", "lib", ".build-id", "link"))
+	if err != nil || link != "../../../opt/QQ/qq" {
+		t.Fatalf("symlink = %q, err=%v", link, err)
+	}
+
+	payload.Reset()
+	writeNewcEntry(t, &payload, "usr/lib/escape", 0o120777, []byte("../../../../outside"))
+	writeNewcEntry(t, &payload, "TRAILER!!!", 0, nil)
+	if err := extractNewcCPIO(bytes.NewReader(payload.Bytes()), t.TempDir()); err == nil {
+		t.Fatal("escaping symlink must be rejected")
+	}
+}
+
 func writeNewcEntry(t *testing.T, writer *bytes.Buffer, name string, mode int64, data []byte) {
 	t.Helper()
 	nameSize := int64(len(name) + 1)

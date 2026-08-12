@@ -217,6 +217,25 @@ func discardCPIONamePadding(reader *bufio.Reader, nameSize int64) error {
 	return err
 }
 
+func createCPIOSymlink(destination, target, linkValue string) error {
+	linkValue = strings.TrimSpace(linkValue)
+	if linkValue == "" || filepath.IsAbs(linkValue) {
+		return errors.New("QQ RPM 包含不安全的符号链接")
+	}
+	resolved := filepath.Clean(filepath.Join(filepath.Dir(target), filepath.FromSlash(linkValue)))
+	root := filepath.Clean(destination)
+	if resolved != root && !strings.HasPrefix(resolved, root+string(filepath.Separator)) {
+		return errors.New("QQ RPM 符号链接越出安装目录")
+	}
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		return err
+	}
+	if err := os.Remove(target); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return os.Symlink(linkValue, target)
+}
+
 func extractNewcCPIO(reader io.Reader, destination string) error {
 	buffered := bufio.NewReader(reader)
 	for {
@@ -274,13 +293,18 @@ func extractNewcCPIO(reader io.Reader, destination string) error {
 					err = closeErr
 				}
 			}
+		case 0o120000:
+			linkData := make([]byte, fileSize)
+			if _, err = io.ReadFull(buffered, linkData); err == nil {
+				err = createCPIOSymlink(destination, target, string(linkData))
+			}
 		default:
 			return errors.New("QQ RPM 包含不受支持的链接或特殊文件")
 		}
 		if err != nil {
 			return err
 		}
-		if fileType != 0o100000 {
+		if fileType != 0o100000 && fileType != 0o120000 {
 			if _, err := io.CopyN(io.Discard, buffered, fileSize); err != nil {
 				return err
 			}
