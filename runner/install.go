@@ -286,12 +286,23 @@ func downloadFile(url, dest string) error {
 }
 
 func unzipArchive(srcZip, destDir string) error {
+	return unzipArchiveWithProgress(srcZip, destDir, nil)
+}
+
+// unzipArchiveWithProgress keeps the archive-path protections while exposing
+// real entry progress to long-running installers. A Linux QQ install may
+// spend minutes expanding the official runtime, so a single static “extract”
+// event makes a healthy install look frozen.
+func unzipArchiveWithProgress(srcZip, destDir string, progress func(completed, total int)) error {
 	reader, err := zip.OpenReader(srcZip)
 	if err != nil {
 		return fmt.Errorf("无法打开下载包：%w", err)
 	}
 	defer reader.Close()
-	for _, file := range reader.File {
+	if progress != nil {
+		progress(0, len(reader.File))
+	}
+	for index, file := range reader.File {
 		if file.FileInfo().Mode()&os.ModeSymlink != 0 {
 			return errors.New("下载包包含符号链接，已拒绝解压")
 		}
@@ -302,6 +313,9 @@ func unzipArchive(srcZip, destDir string) error {
 		if file.FileInfo().IsDir() {
 			if err := os.MkdirAll(target, 0o755); err != nil {
 				return err
+			}
+			if progress != nil {
+				progress(index+1, len(reader.File))
 			}
 			continue
 		}
@@ -326,8 +340,31 @@ func unzipArchive(srcZip, destDir string) error {
 		if closeErr != nil {
 			return closeErr
 		}
+		if progress != nil {
+			progress(index+1, len(reader.File))
+		}
 	}
 	return nil
+}
+
+// startNapcatInstallPulse makes CPU/disk-bound archive expansion observable.
+// It reports elapsed time rather than inventing a completion percentage.
+func startNapcatInstallPulse(percent int, message string) func() {
+	done := make(chan struct{})
+	go func() {
+		started := time.Now()
+		ticker := time.NewTicker(2 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case now := <-ticker.C:
+				reportNapcatProgress("extract", percent, fmt.Sprintf("%s（已处理 %s）", message, now.Sub(started).Round(time.Second)))
+			}
+		}
+	}()
+	return func() { close(done) }
 }
 
 func napcatExtractRoot(stage string) string {
@@ -513,10 +550,16 @@ func installLinuxNapCat() (napcatInstallation, error) {
 		return rollback(err)
 	}
 	defer os.RemoveAll(stage)
-	reportNapcatProgress("extract", 55, "安全解压 NapCat Shell 与 Linux QQ")
-	if err := unzipArchive(shellArchive, stage); err != nil {
+	reportNapcatProgress("extract", 56, "正在展开 NapCat Shell")
+	if err := unzipArchiveWithProgress(shellArchive, stage, func(completed, total int) {
+		if total > 0 && (completed == total || completed%20 == 0) {
+			reportNapcatProgress("extract", 56, fmt.Sprintf("正在展开 NapCat Shell（%d/%d 个文件）", completed, total))
+		}
+	}); err != nil {
 		return rollback(err)
 	}
+	reportNapcatProgress("extract", 58, "正在展开 Linux QQ 运行环境")
+	stopPulse := startNapcatInstallPulse(58, "正在展开 Linux QQ 运行环境")
 	switch qqAsset.Kind {
 	case "deb":
 		err = extractDebQQ(qqArchive, stage)
@@ -525,10 +568,11 @@ func installLinuxNapCat() (napcatInstallation, error) {
 	default:
 		err = errors.New("未知 Linux QQ 安装包格式")
 	}
+	stopPulse()
 	if err != nil {
 		return rollback(err)
 	}
-	reportNapcatProgress("verify", 68, "写入 NapCat 启动入口")
+	reportNapcatProgress("verify", 68, "正在写入 NapCat 启动入口")
 	if _, err := napcatShellEntrypoint(stage); err != nil {
 		return rollback(err)
 	}

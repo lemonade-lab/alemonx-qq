@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { fetchHostRobotContext, fetchLocalServices, fetchRobotProjects, fetchStatus, napcatQRCodeURL, runActionAndPoll, syncRobotOneBot, type ActionResult, type LocalService, type RobotProject, type StatusPayload, type Task, type TaskStep } from './api'
 import { splitStatusLines, type StatusLine } from './status'
+import { loadSession, saveSession, type QQEngine, type QQView } from './session'
 
-type View = 'manage' | 'config' | 'webui'
-type Engine = 'napcat' | 'luckylillia'
+type View = QQView
+type Engine = QQEngine
 
 const statusColor: Record<StatusLine['kind'], string> = {
   ok: 'text-[var(--theme-success-text)]',
@@ -227,8 +228,9 @@ function actionTitle(action: string | null) {
 }
 
 export default function App() {
-  const [view, setView] = useState<View>('manage')
-	const [engine, setEngine] = useState<Engine>('napcat')
+	const [initialSession] = useState(loadSession)
+  const [view, setView] = useState<View>(initialSession.view)
+	const [engine, setEngine] = useState<Engine>(initialSession.engine)
   const [result, setResult] = useState<ActionResult | undefined>()
 	const [operationSteps, setOperationSteps] = useState<TaskStep[]>([])
 	const [activeAction, setActiveAction] = useState<string | null>(null)
@@ -241,10 +243,12 @@ export default function App() {
     description: string
     action: () => Promise<void>
   } | null>(null)
-  const [liveStatus, setLiveStatus] = useState<StatusPayload | null>(null)
+	const [statusByEngine, setStatusByEngine] = useState<Partial<Record<Engine, StatusPayload>>>({})
+	const [statusLoading, setStatusLoading] = useState<Partial<Record<Engine, boolean>>>({})
+	const liveStatus = statusByEngine[engine] ?? null
 	const [projects, setProjects] = useState<RobotProject[]>([])
 	const [services, setServices] = useState<LocalService[]>([])
-	const [robotRoot, setRobotRoot] = useState('')
+	const [robotRoot, setRobotRoot] = useState(initialSession.robotRoot)
 	const [syncToken, setSyncToken] = useState('')
 	const webServiceID = engine === 'napcat' ? 'napcat-webui' : 'luckylillia-webui'
 	const webService = services.find(service => service.id === webServiceID)
@@ -261,7 +265,10 @@ export default function App() {
 	const luckyManaged = liveStatus?.managed === true
 	const luckyInstalled = liveStatus?.installed === true
 	const napcatManagedActions = engine === 'napcat' && liveStatus?.managed === true
-	const [napcatQQ, setNapcatQQ] = useState('')
+	const [napcatQQ, setNapcatQQ] = useState(initialSession.napcatQQ)
+	useEffect(() => {
+		saveSession({ version: 1, engine, view, robotRoot, napcatQQ })
+	}, [engine, view, robotRoot, napcatQQ])
 	const selectedNapcatAccount = liveStatus?.accounts?.find(account => account.qq === (napcatQQ || liveStatus.selectedAccount))
 	const selectedOneBotReady = engine === 'napcat' ? Boolean(selectedNapcatAccount?.oneBotReady) : Boolean(liveStatus?.oneBotReady)
 	const selectedOneBotURL = engine === 'napcat'
@@ -303,14 +310,17 @@ export default function App() {
 		await run('install', {}, true)
 	}
 
-	const refreshStatus = useCallback(async () => {
+	const refreshStatus = useCallback(async (targetEngine: Engine = engine) => {
+		setStatusLoading(current => ({ ...current, [targetEngine]: true }))
 		try {
-			const [status, nextServices] = await Promise.all([fetchStatus(engine), fetchLocalServices()])
-			setLiveStatus(status)
+			const [status, nextServices] = await Promise.all([fetchStatus(targetEngine), fetchLocalServices()])
+			setStatusByEngine(current => ({ ...current, [targetEngine]: status }))
 			setServices(nextServices)
-			setNapcatQQ(current => current || status.selectedAccount || '')
+			if (targetEngine === 'napcat') setNapcatQQ(current => current || status.selectedAccount || '')
 		} catch {
 			// Keep the last usable state while a local service is changing.
+		} finally {
+			setStatusLoading(current => ({ ...current, [targetEngine]: false }))
 		}
 	}, [engine])
 
@@ -350,7 +360,12 @@ export default function App() {
   }
 
 	const guide = useMemo(() => {
-		if (!liveStatus) return null
+		if (!liveStatus) return {
+			title: engine === 'napcat' ? 'NapCat' : 'LuckyLillia',
+			description: statusLoading[engine] ? '正在读取当前状态…' : '暂时无法读取状态，点击刷新重试。',
+			label: statusLoading[engine] ? '读取中' : '刷新状态',
+			action: () => { if (!statusLoading[engine]) void refreshStatus() }
+		}
 		if (engine === 'napcat' && liveStatus.platform === 'darwin-external' && !liveStatus.installed) return liveStatus.installerReady ? {
 			title: '安装 NapCat',
 			description: liveStatus.installerPath ? `${liveStatus.installerPath}` : '安装器已下载。',
@@ -392,7 +407,7 @@ export default function App() {
 		if (liveStatus.loginPending) return { title: '请用手机 QQ 扫码', description: '扫码后会自动继续。', label: webUrl ? '打开登录页' : '等待登录', action: () => webUrl ? setView('webui') : undefined }
 		if (!liveStatus.oneBotReady) return { title: '正在连接', description: '请稍候。', label: '刷新', action: () => void refreshStatus() }
 		return { title: 'QQ 已就绪', description: '现在可同步到机器人。', label: '同步到机器人', action: () => setView('config') }
-	}, [engine, liveStatus, refreshStatus, webUrl])
+	}, [engine, liveStatus, refreshStatus, statusLoading, webUrl])
 
   return (
     <div className="mx-auto grid max-w-[860px] gap-4 p-4">
@@ -404,7 +419,7 @@ export default function App() {
         </div>
 		<div className="flex gap-1">
 			{(['napcat', 'luckylillia'] as Engine[]).map(item => (
-				<button key={item} className={engine === item ? 'primary-button' : 'secondary-button'} onClick={() => { setEngine(item); setView('manage'); setResult(undefined); setOperationSteps([]); setState('idle') }}>
+				<button key={item} className={engine === item ? 'primary-button' : 'secondary-button'} onClick={() => { setEngine(item); setView('manage'); setResult(undefined); setOperationSteps([]); setState('idle'); void refreshStatus(item) }}>
 					{item === 'napcat' ? 'NapCat' : 'LuckyLillia'}
 				</button>
 			))}
@@ -438,7 +453,7 @@ export default function App() {
 						<strong className="text-sm font-semibold text-[var(--theme-text-strong)]">{guide.title}</strong>
 						<p className="m-0 text-xs leading-5 text-[var(--theme-text-muted)]">{guide.description}</p>
 					</div>
-					<ActionButton label={state === 'running' ? actionTitle(activeAction) : guide.label} running={state === 'running'} disabled={guide.label === '等待二维码'} onClick={guide.action} />
+					<ActionButton label={state === 'running' ? actionTitle(activeAction) : guide.label} running={state === 'running'} disabled={guide.label === '等待二维码' || guide.label === '读取中'} onClick={guide.action} />
 				</div>
 			</section>
 		  )}
