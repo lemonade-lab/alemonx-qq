@@ -38,11 +38,26 @@ func main() {
 		write(response{Error: fmt.Sprintf("不支持的 ALX Setup 插件协议（protocol=%q method=%q）", input.Protocol, input.Method)})
 		return
 	}
+	if napcatOperationAction(input.Action) {
+		resetActionDiagnostic("install")
+		appendActionDiagnostic("install", fmt.Sprintf("[%s] action=%s started", time.Now().UTC().Format(time.RFC3339), input.Action))
+	}
 	output, err := run(input.Action, input.Params, input.Confirm)
 	if err != nil {
 		recordActionFailure(input.Action, err)
+	} else if napcatOperationAction(input.Action) {
+		appendActionDiagnostic("install", fmt.Sprintf("[%s] action=%s completed\n%s", time.Now().UTC().Format(time.RFC3339), input.Action, output))
 	}
 	write(response{Output: output, Error: errorText(err)})
+}
+
+func napcatOperationAction(action string) bool {
+	switch action {
+	case "install", "update", "start", "restart":
+		return true
+	default:
+		return false
+	}
 }
 
 func write(result response) { _ = json.NewEncoder(os.Stdout).Encode(result) }
@@ -120,6 +135,8 @@ func runNapcatAction(action string, params map[string]string, confirmed bool) (s
 		return logAction(params)
 	case "napcat-log-status":
 		return logStatusAction(false)
+	case "napcat-operation-status":
+		return napcatOperationStatusAction()
 	case "onebot-config":
 		return onebotConfigAction(params)
 	case "onebot-http-set":
@@ -167,6 +184,22 @@ func runNapcatAction(action string, params map[string]string, confirmed bool) (s
 	default:
 		return "", fmt.Errorf("未知操作：%s", action)
 	}
+}
+
+func napcatOperationStatusAction() (string, error) {
+	path, err := napcatOperationLogPath()
+	if err != nil {
+		return "", err
+	}
+	output, err := tailLogAt(path, 500)
+	if err != nil {
+		return "", err
+	}
+	payload, err := json.Marshal(map[string]string{"output": output})
+	if err != nil {
+		return "", err
+	}
+	return string(payload), nil
 }
 
 func statusAction() (string, error) { return statusJSON() }

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { fetchHostRobotContext, fetchLocalServices, fetchPluginLog, fetchRobotProjects, fetchStatus, napcatQRCodeURL, runActionAndPoll, syncRobotOneBot, type ActionResult, type LocalService, type RobotProject, type StatusPayload, type Task, type TaskStep } from './api'
+import { fetchHostRobotContext, fetchLocalServices, fetchOperationLog, fetchPluginLog, fetchRobotProjects, fetchStatus, napcatQRCodeURL, runActionAndPoll, syncRobotOneBot, type ActionResult, type LocalService, type RobotProject, type StatusPayload, type Task, type TaskStep } from './api'
 import { splitStatusLines, type StatusLine } from './status'
 import { loadSession, saveSession, type QQEngine, type QQView } from './session'
 
@@ -46,11 +46,13 @@ function ResultPanel({
   state,
   result,
   steps = [],
+  liveDetail = '',
   onViewLog
 }: {
   state: 'idle' | 'running' | 'done' | 'failed'
   result?: ActionResult
   steps?: TaskStep[]
+  liveDetail?: string
   onViewLog?: () => void
 }) {
   const lines = useMemo(() => splitStatusLines(result?.output ?? ''), [result])
@@ -94,6 +96,18 @@ function ResultPanel({
           </div>
         </div>
       )}
+			{state === 'running' && liveDetail && (
+				<div className="grid gap-1.5 rounded-md border border-[var(--theme-border-default)] bg-[var(--theme-surface-input)] p-2.5">
+					<strong className="text-xs text-[var(--theme-text-secondary)]">当前执行详情</strong>
+					<pre className="m-0 max-h-56 overflow-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-5 text-[var(--theme-text-secondary)]">{liveDetail}</pre>
+				</div>
+			)}
+			{steps.length > 1 && (
+				<details className="text-[11px] text-[var(--theme-text-muted)]">
+					<summary className="cursor-pointer">已完成步骤（{steps.length}）</summary>
+					<div className="mt-1 grid gap-1 font-mono">{steps.map((step, index) => <div key={`${step.at}-${index}`}>{step.progress}% {step.message}</div>)}</div>
+				</details>
+			)}
       {state === 'running' && !result?.output ? (
         <div className="grid gap-2 py-1">
           <div className="h-3 w-2/3 animate-pulse rounded bg-[var(--theme-surface-hover)]" />
@@ -258,6 +272,7 @@ export default function App() {
     action: () => Promise<void>
 	} | null>(null)
 	const [logText, setLogText] = useState<string | null>(null)
+	const [operationDetail, setOperationDetail] = useState('')
 	const [statusByEngine, setStatusByEngine] = useState<Partial<Record<Engine, StatusPayload>>>({})
 	const [statusLoading, setStatusLoading] = useState<Partial<Record<Engine, boolean>>>({})
 	const liveStatus = statusByEngine[engine] ?? null
@@ -304,8 +319,9 @@ export default function App() {
 		actionInFlight.current = true
 	setActiveAction(action)
     setState('running')
-    setResult(undefined)
+		setResult(undefined)
 		setOperationSteps([])
+		setOperationDetail('正在创建本次操作记录…')
     try {
 		const outcome = await runActionAndPoll(action, params, confirm, task => {
 		applyOperationTask(task)
@@ -328,6 +344,20 @@ export default function App() {
 		} catch (reason) {
 			setLogText(reason instanceof Error ? reason.message : String(reason))
 		}
+
+	useEffect(() => {
+		if (state !== 'running' || engine !== 'napcat') return
+		let stopped = false
+		const refresh = async () => {
+			try {
+				const detail = await fetchOperationLog('napcat')
+				if (!stopped && detail) setOperationDetail(detail)
+			} catch { /* task progress remains the primary display */ }
+		}
+		void refresh()
+		const timer = window.setInterval(() => void refresh(), 1000)
+		return () => { stopped = true; window.clearInterval(timer) }
+	}, [engine, state])
 	}
 
 	const requestNapcatInstall = async () => {
@@ -551,8 +581,7 @@ export default function App() {
 		  </details>}
 
 
-		  <ResultPanel state={state} result={result ?? (state === 'running' ? { output: actionTitle(activeAction) } : undefined)} steps={operationSteps} onViewLog={() => void openLiveLog()} />
-		  {state === 'running' && <div><button className="secondary-button" onClick={() => void openLiveLog()}>查看实时日志</button></div>}
+			  <ResultPanel state={state} result={result ?? (state === 'running' ? { output: actionTitle(activeAction) } : undefined)} steps={operationSteps} liveDetail={operationDetail} onViewLog={() => void openLiveLog()} />
 
 		  {!coreNeedsInstall && !nativeLauncherNapcat && !napcatLoginJourney && webUrl && (
             <section className="grid gap-2 rounded-panel border border-[var(--theme-border-default)] bg-[var(--theme-surface-panel)] p-3 text-xs">

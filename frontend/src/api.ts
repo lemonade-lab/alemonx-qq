@@ -177,6 +177,14 @@ export async function fetchPluginLog(engine: 'napcat' | 'luckylillia'): Promise<
 	return payload.output || '（日志为空）'
 }
 
+// This is the current operation trace, reset by the runner when an install,
+// update or start begins. It must not be confused with the historical core log.
+export async function fetchOperationLog(engine: 'napcat' | 'luckylillia'): Promise<string> {
+	if (engine !== 'napcat') return ''
+	const payload = await json<{ output?: string }>(await fetch(`/api/v1/setup/plugins/${PLUGIN_ID}/status?action=napcat-operation-status`))
+	return payload.output || ''
+}
+
 export async function fetchRobotProjects(refresh = false): Promise<RobotProject[]> {
 	const payload = await json<{ items: RobotProject[] }>(await fetch(`/api/v1/robot/projects${refresh ? '?refresh=true' : ''}`))
 	return payload.items

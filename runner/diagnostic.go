@@ -38,7 +38,24 @@ func appendActionDiagnostic(action, text string) {
 	_, _ = fmt.Fprintln(handle, strings.TrimRight(text, "\n"))
 }
 
+// resetActionDiagnostic starts a fresh, operation-scoped trace. It is separate
+// from napcat.log, which is the long-lived child-process log and may contain
+// output from previous installs.
+func resetActionDiagnostic(action string) {
+	path, err := actionDiagnosticLogPath(action)
+	if err != nil || path == "" {
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return
+	}
+	_ = os.WriteFile(path, []byte{}, 0o600)
+}
+
 func actionDiagnosticLogPath(action string) (string, error) {
+	if action == "install" || action == "update" || action == "start" || action == "restart" {
+		return napcatOperationLogPath()
+	}
 	if strings.HasPrefix(action, "luckylillia-") {
 		return luckyLogPath()
 	}

@@ -116,6 +116,14 @@ func logPath() (string, error) {
 	return filepath.Join(dir, "napcat.log"), nil
 }
 
+func napcatOperationLogPath() (string, error) {
+	dir, err := stateDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "napcat-operation.log"), nil
+}
+
 func loadState() (State, error) {
 	path, err := statePath()
 	if err != nil {
