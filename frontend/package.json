@@ -4,9 +4,9 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc -b && vite build",
-    "preview": "vite preview"
+    "dev": "yarn install && vite",
+    "build": "yarn install && tsc -b && vite build",
+    "preview": "yarn install && vite preview"
   },
   "dependencies": {
     "react": "^19.0.0",
