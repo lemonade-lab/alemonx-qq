@@ -247,7 +247,9 @@ function ActionButton({
 function actionTitle(action: string | null) {
 	if (!action) return ''
 	if (action.includes('reinstall')) return '正在重装并保留现有配置'
-	if (action === 'install' || action.endsWith('-install')) return '正在下载、安装并启动核心'
+	if (action === 'luckylillia-install') return '正在下载、验证并准备 LuckyLillia'
+	if (action === 'luckylillia-auth-token-set' || action === 'luckylillia-auth-token-set-start') return '正在保存 Auth Token 并启动 LuckyLillia'
+	if (action === 'install') return '正在下载、安装并启动 NapCat'
 	if (action === 'start' || action.endsWith('-start')) return '正在启动 QQ 服务并等待二维码'
 	if (action === 'stop' || action.endsWith('-stop')) return '正在停止核心服务'
 	if (action.includes('update')) return '正在检查或更新核心版本'
@@ -346,11 +348,11 @@ export default function App() {
 		}
 
 	useEffect(() => {
-		if (state !== 'running' || engine !== 'napcat') return
+	if (state !== 'running') return
 		let stopped = false
 		const refresh = async () => {
 			try {
-				const detail = await fetchOperationLog('napcat')
+				const detail = await fetchOperationLog(engine)
 				if (!stopped && detail) setOperationDetail(detail)
 			} catch { /* task progress remains the primary display */ }
 		}
@@ -442,6 +444,26 @@ export default function App() {
 			label: '安装 NapCat',
 			action: () => confirm('安装 NapCat', '工作台将下载官方安装器。', () => run('napcat-windows-installer-download', {}, true)),
 		}
+		if (liveStatus.journey?.phase === 'repair') return {
+			title: liveStatus.journey.title,
+			description: liveStatus.journey.detail,
+			label: '重新安装',
+			action: () => engine === 'napcat'
+				? void requestNapcatInstall()
+				: confirm('重装 LuckyLillia', '会下载并验证官方组件，并保留已保存的私有配置。', () => run(luckyAction('reinstall'), {}, true))
+		}
+		if (liveStatus.journey?.phase === 'needs-auth-token') return {
+			title: liveStatus.journey.title,
+			description: liveStatus.journey.detail,
+			label: '填写 Token',
+			action: () => setView('config')
+		}
+		if (liveStatus.journey?.phase === 'starting' || liveStatus.journey?.phase === 'connecting') return {
+			title: liveStatus.journey.title,
+			description: liveStatus.journey.detail,
+			label: '查看实时日志',
+			action: () => void openLiveLog()
+		}
 		if (engine === 'napcat' && !liveStatus.installed) return { title: '安装 NapCat', description: '点击后自动安装并启动，随后显示登录二维码。', label: '安装 NapCat', action: () => void requestNapcatInstall() }
 		if (engine === 'napcat' && liveStatus.installed && liveStatus.running && !liveStatus.oneBotReady) {
 			if (liveStatus.loginPending) return null
@@ -455,8 +477,9 @@ export default function App() {
 		}
 		if (engine === 'napcat' && liveStatus.installed && !liveStatus.managed) return { title: 'NapCat 已关联', description: webUrl ? '可以继续登录 QQ。' : '正在检查登录状态。', label: webUrl ? '打开登录页' : '刷新', action: () => webUrl ? setView('webui') : void refreshStatus() }
 		if (engine === 'luckylillia' && liveStatus.supported === false) return { title: '此系统暂不支持', description: '请改用 NapCat，或手动安装后关联。', label: '关联目录', action: () => document.getElementById('luckylillia-association')?.scrollIntoView({ behavior: 'smooth', block: 'center' }) }
-		if (!liveStatus.installed) return { title: '安装 QQ 核心', description: '安装完成后会自动启动并进入登录。', label: engine === 'napcat' ? '安装 NapCat' : '安装 LuckyLillia', action: () => engine === 'napcat' ? void requestNapcatInstall() : confirm('安装 QQ 核心', '将下载、安装并启动官方组件。', () => run(luckyAction('install'), {}, true)) }
+		if (!liveStatus.installed) return { title: '安装 QQ 核心', description: engine === 'napcat' ? '安装完成后会自动启动并进入登录。' : '安装后需先填写官方 Auth Token，再启动登录服务。', label: engine === 'napcat' ? '安装 NapCat' : '安装 LuckyLillia', action: () => engine === 'napcat' ? void requestNapcatInstall() : confirm('安装 QQ 核心', '将下载并验证官方组件。填写 Auth Token 后才会启动。', () => run(luckyAction('install'), {}, true)) }
 		if (engine === 'luckylillia' && !liveStatus.managed) return { title: 'LuckyLillia 已关联', description: webUrl ? '可以继续登录 QQ。' : '正在检查登录状态。', label: webUrl ? '打开登录页' : '刷新', action: () => webUrl ? setView('webui') : void refreshStatus() }
+		if (engine === 'luckylillia' && !liveStatus.authTokenReady) return { title: '需要 Auth Token', description: '从 auth.luckylillia.com 获取 Token 后，在网络配置中保存。', label: '填写 Token', action: () => setView('config') }
 		if (!liveStatus.running) return { title: '启动 QQ', description: '启动后即可扫码登录。', label: engine === 'napcat' ? '启动 NapCat' : '启动 LuckyLillia', action: () => confirm('启动 QQ', '启动后请使用手机 QQ 扫码。', () => run(engine === 'napcat' ? 'start' : luckyAction('start'), {}, true)) }
 		if (liveStatus.loginPending) return { title: '请用手机 QQ 扫码', description: '扫码后会自动继续。', label: webUrl ? '打开登录页' : '等待登录', action: () => webUrl ? setView('webui') : undefined }
 		if (!liveStatus.oneBotReady) return { title: '正在连接', description: '请稍候。', label: '刷新', action: () => void refreshStatus() }
@@ -610,6 +633,21 @@ export default function App() {
 			<ActionButton label="读取当前配置" variant="secondary" running={state === 'running'} onClick={() => void run(engine === 'napcat' ? 'onebot-config' : luckyAction('onebot-config'), engine === 'napcat' && napcatQQ ? { qq: napcatQQ } : {})} />
 		  </section>
 		  <ResultPanel state={state} result={result} steps={operationSteps} onViewLog={() => void openLiveLog()} />
+
+		  {engine === 'luckylillia' && liveStatus?.managed && !liveStatus.authTokenReady && (
+			<form className="grid gap-3 rounded-panel border border-[var(--theme-warning-text)] bg-[var(--theme-warning-soft)] p-3" onSubmit={(event) => {
+				event.preventDefault()
+				const data = new FormData(event.currentTarget)
+				confirm('保存并启动 LuckyLillia', 'Token 只会保存到本机私有文件，不会在状态或日志中显示。保存后将立即启动并等待管理页面。', () => run(luckyAction('auth-token-set-start'), { authToken: String(data.get('authToken') || '') }, true))
+			}}>
+				<div className="grid gap-1">
+					<strong className="text-sm text-[var(--theme-text-strong)]">LuckyLillia Auth Token</strong>
+					<p className="m-0 text-xs leading-5 text-[var(--theme-text-muted)]">先到 <a className="text-[var(--theme-accent)] underline" href="https://auth.luckylillia.com" target="_blank" rel="noreferrer">auth.luckylillia.com</a> 获取 Token。保存后才可启动 WebUI。</p>
+				</div>
+				<Field label="Auth Token" name="authToken" type="password" hint="仅保存到本机 auth_token.txt；不会回显。" />
+				<div><button className="primary-button" type="submit" disabled={state === 'running'}>保存并启动</button></div>
+			</form>
+		  )}
 
           {engine === 'napcat' ? <><form
             className="grid grid-cols-[repeat(auto-fit,minmax(180px,1fr))] gap-3 rounded-panel border border-[var(--theme-border-default)] bg-[var(--theme-surface-panel)] p-3"

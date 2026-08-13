@@ -14,7 +14,7 @@ func TestRecordActionFailureWritesCoreSpecificDiagnostic(t *testing.T) {
 	t.Cleanup(func() { userConfigDir = original })
 
 	recordActionFailure("luckylillia-install", errors.New("底层启动程序不存在"))
-	path, err := luckyLogPath()
+	path, err := luckyOperationLogPath()
 	if err != nil {
 		t.Fatal(err)
 	}

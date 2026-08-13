@@ -164,6 +164,14 @@ func atomicPrivateJSON(path string, data []byte) error {
 	return os.Rename(temporary, path)
 }
 
+func atomicPrivateText(path, text string) error {
+	temporary := path + ".new"
+	if err := os.WriteFile(temporary, []byte(text), 0o600); err != nil {
+		return err
+	}
+	return os.Rename(temporary, path)
+}
+
 func setServerConfig(params map[string]string, websocket, confirmed bool) (string, error) {
 	if err := requireNapcatConfirmation(confirmed, "保存 OneBot 配置"); err != nil {
 		return "", err

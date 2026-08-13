@@ -69,7 +69,8 @@
     "luckylillia-status",
     "napcat-log-status",
     "napcat-operation-status",
-    "luckylillia-log-status"
+    "luckylillia-log-status",
+    "luckylillia-operation-status"
   ],
   "media": [
     {

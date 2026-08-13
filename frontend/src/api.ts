@@ -128,9 +128,16 @@ export type StatusPayload = {
 	supported?: boolean
 	platform?: string
 	managed?: boolean
+	authTokenReady?: boolean
+	journey?: {
+		phase: 'unsupported' | 'install' | 'repair' | 'external' | 'needs-auth-token' | 'start' | 'starting' | 'scan-qq' | 'connecting' | 'ready'
+		title: string
+		detail: string
+		nextAction: 'manual' | 'install' | 'repair' | 'open-webui' | 'auth-token' | 'start' | 'view-log' | 'scan-qq' | 'configure'
+	}
 	accounts?: Array<{ qq: string; oneBotUrl?: string; oneBotReady: boolean }>
 	selectedAccount?: string
-	state?: 'not-installed' | 'installing' | 'starting' | 'running' | 'login-pending' | 'stopped' | 'failed' | 'unsupported'
+	state?: 'not-installed' | 'installing' | 'needs-auth-token' | 'starting' | 'running' | 'login-pending' | 'stopped' | 'failed' | 'unsupported'
 	updatedAt?: string
   error?: string
 }
@@ -180,8 +187,8 @@ export async function fetchPluginLog(engine: 'napcat' | 'luckylillia'): Promise<
 // This is the current operation trace, reset by the runner when an install,
 // update or start begins. It must not be confused with the historical core log.
 export async function fetchOperationLog(engine: 'napcat' | 'luckylillia'): Promise<string> {
-	if (engine !== 'napcat') return ''
-	const payload = await json<{ output?: string }>(await fetch(`/api/v1/setup/plugins/${PLUGIN_ID}/status?action=napcat-operation-status`))
+	const action = engine === 'napcat' ? 'napcat-operation-status' : 'luckylillia-operation-status'
+	const payload = await json<{ output?: string }>(await fetch(`/api/v1/setup/plugins/${PLUGIN_ID}/status?action=${action}`))
 	return payload.output || ''
 }
 

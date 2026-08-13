@@ -5,8 +5,26 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
+
+var operationAction = struct {
+	sync.RWMutex
+	value string
+}{}
+
+func setCurrentOperationAction(action string) {
+	operationAction.Lock()
+	operationAction.value = action
+	operationAction.Unlock()
+}
+
+func currentOperationAction() string {
+	operationAction.RLock()
+	defer operationAction.RUnlock()
+	return operationAction.value
+}
 
 // recordActionFailure gives every failed lifecycle action a durable diagnostic
 // trail. Most install failures happen before an external process exists, so
@@ -57,7 +75,15 @@ func actionDiagnosticLogPath(action string) (string, error) {
 		return napcatOperationLogPath()
 	}
 	if strings.HasPrefix(action, "luckylillia-") {
-		return luckyLogPath()
+		return luckyOperationLogPath()
 	}
 	return logPath()
+}
+
+func luckyOperationLogPath() (string, error) {
+	dir, err := stateDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "luckylillia-operation.log"), nil
 }

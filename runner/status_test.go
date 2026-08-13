@@ -15,6 +15,9 @@ func TestCollectStatusNotInstalled(t *testing.T) {
 	if payload.Error == "" {
 		t.Fatal("uninstalled must carry an error reason")
 	}
+	if payload.Journey.Phase != "install" || payload.Journey.NextAction != "install" {
+		t.Fatalf("journey = %#v, want install", payload.Journey)
+	}
 }
 
 func TestCollectStatusDoesNotExposeInstallationEvidence(t *testing.T) {
@@ -73,6 +76,16 @@ func TestCollectStatusInstalledButDead(t *testing.T) {
 	}
 	if payload.Error == "" {
 		t.Fatal("dead process must carry an error reason")
+	}
+	if payload.Journey.Phase != "external" || payload.Journey.NextAction != "open-webui" {
+		t.Fatalf("journey = %#v, want external association", payload.Journey)
+	}
+}
+
+func TestNapcatJourneyStartsManagedInstallation(t *testing.T) {
+	journey := napcatJourney(statusPayload{Supported: true, Installed: true, InstallHealthy: true, Managed: true})
+	if journey.Phase != "start" || journey.NextAction != "start" {
+		t.Fatalf("journey = %#v, want start", journey)
 	}
 }
 

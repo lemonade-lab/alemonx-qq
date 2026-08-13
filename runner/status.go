@@ -43,6 +43,19 @@ type statusPayload struct {
 	SelectedAccount string          `json:"selectedAccount,omitempty"`
 	UpdatedAt       string          `json:"updatedAt"`
 	Error           string          `json:"error,omitempty"`
+	Journey         runtimeJourney  `json:"journey"`
+}
+
+// runtimeJourney is the user-facing runtime state machine.  It deliberately
+// describes the next safe action, rather than making the browser infer a
+// result from a single port probe.  Both cores expose the same contract so an
+// install that is complete-but-not-authorized cannot be mistaken for a hung
+// WebUI startup.
+type runtimeJourney struct {
+	Phase      string `json:"phase"`
+	Title      string `json:"title"`
+	Detail     string `json:"detail"`
+	NextAction string `json:"nextAction"`
 }
 
 type napcatAccount struct {
@@ -135,7 +148,40 @@ func collectStatus(state State) statusPayload {
 		}
 	}
 	payload.Error = strings.Join(reasons, "；")
+	payload.Journey = napcatJourney(payload)
 	return payload
+}
+
+func napcatJourney(status statusPayload) runtimeJourney {
+	switch {
+	case !status.Supported:
+		return runtimeJourney{Phase: "unsupported", Title: "当前系统暂不支持", Detail: firstStatusDetail(status.DiagnosticHint, status.Error, "请使用受支持的系统或手动部署 NapCat。"), NextAction: "manual"}
+	case !status.Installed:
+		return runtimeJourney{Phase: "install", Title: "安装 NapCat", Detail: "将先验证运行环境，再下载、安装并启动 QQ 登录服务。", NextAction: "install"}
+	case !status.InstallHealthy:
+		return runtimeJourney{Phase: "repair", Title: "NapCat 安装不完整", Detail: firstStatusDetail(status.DiagnosticHint, "请重新安装后再启动。"), NextAction: "repair"}
+	case !status.Managed:
+		return runtimeJourney{Phase: "external", Title: "NapCat 已关联", Detail: firstStatusDetail(status.DiagnosticHint, "这是外部实例；工作台不会修改其进程或配置。"), NextAction: "open-webui"}
+	case !status.Running:
+		return runtimeJourney{Phase: "start", Title: "启动 NapCat", Detail: "启动后将等待 QQ 登录二维码和 OneBot 服务就绪。", NextAction: "start"}
+	case !status.WebUIReady:
+		return runtimeJourney{Phase: "starting", Title: "正在启动 NapCat", Detail: firstStatusDetail(status.DiagnosticHint, "进程已启动，正在等待管理面板（6099）就绪。"), NextAction: "view-log"}
+	case status.LoginPending:
+		return runtimeJourney{Phase: "scan-qq", Title: "请用手机 QQ 扫码", Detail: "登录成功后会自动继续初始化 OneBot 服务。", NextAction: "scan-qq"}
+	case !status.OneBotReady:
+		return runtimeJourney{Phase: "connecting", Title: "正在等待 OneBot", Detail: "QQ 已登录，正在等待已配置的 OneBot 服务监听端口。", NextAction: "view-log"}
+	default:
+		return runtimeJourney{Phase: "ready", Title: "NapCat 已就绪", Detail: "QQ 与 OneBot 服务均已可用，可同步到机器人。", NextAction: "configure"}
+	}
+}
+
+func firstStatusDetail(values ...string) string {
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func napcatAccounts(state State) ([]napcatAccount, error) {

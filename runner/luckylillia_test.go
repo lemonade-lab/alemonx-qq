@@ -6,7 +6,9 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/ulikunitz/xz"
 )
@@ -95,6 +97,105 @@ func TestLuckyConfiguredPortsUsesOfficialConfig(t *testing.T) {
 	web, onebot := luckyConfiguredPorts()
 	if web != 4312 || onebot != 8312 {
 		t.Fatalf("ports = %d, %d; want 4312, 8312", web, onebot)
+	}
+}
+
+func TestLuckyAuthTokenIsPrivateAndSurvivesRestore(t *testing.T) {
+	original := userConfigDir
+	base := t.TempDir()
+	userConfigDir = func() (string, error) { return base, nil }
+	t.Cleanup(func() { userConfigDir = original })
+	install, err := luckyInstallDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(install, "bin", "llbot", "data"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(install, "start.sh"), []byte("#!/bin/sh\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := saveLuckyState(luckyState{InstallDir: install, Managed: true, InstallMode: "managed", Platform: luckyPlatform().Key}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := luckySetAuthToken(map[string]string{"authToken": "private-token"}, true); err != nil {
+		t.Fatal(err)
+	}
+	path := luckyAuthTokenPath(install)
+	info, err := os.Stat(path)
+	if err != nil || info.Mode().Perm() != 0o600 || !luckyAuthTokenReady(install) {
+		t.Fatalf("auth token file info=%v err=%v ready=%v", info, err, luckyAuthTokenReady(install))
+	}
+	previous, target := t.TempDir(), t.TempDir()
+	from := filepath.Join(previous, "bin", "llbot", "data")
+	if err := os.MkdirAll(from, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(from, "auth_token.txt"), []byte("restored-token\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := restoreLuckyConfig(previous, target); err != nil {
+		t.Fatal(err)
+	}
+	if !luckyAuthTokenReady(target) {
+		t.Fatal("auth token must survive a LuckyLillia reinstall")
+	}
+}
+
+func TestLuckyJourneyRequiresAuthTokenBeforeStart(t *testing.T) {
+	journey := luckyJourney(kernelStatus{Supported: true, Installed: true, InstallHealthy: true, Managed: true})
+	if journey.Phase != "needs-auth-token" || journey.NextAction != "auth-token" {
+		t.Fatalf("journey = %#v, want Auth Token step", journey)
+	}
+}
+
+func TestLuckyProgressUsesCurrentOperationLog(t *testing.T) {
+	original := userConfigDir
+	dir := t.TempDir()
+	userConfigDir = func() (string, error) { return dir, nil }
+	t.Cleanup(func() {
+		userConfigDir = original
+		setCurrentOperationAction("")
+	})
+	setCurrentOperationAction("luckylillia-update")
+	reportLuckyProgress("verify", 65, "验证官方包")
+	path, err := luckyOperationLogPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil || !strings.Contains(string(data), "65% 验证官方包") {
+		t.Fatalf("operation log = %q err=%v", data, err)
+	}
+}
+
+func TestLuckySetAuthTokenAndStartStopsBeforeLaunchingOnInvalidToken(t *testing.T) {
+	original := userConfigDir
+	dir := t.TempDir()
+	userConfigDir = func() (string, error) { return dir, nil }
+	t.Cleanup(func() { userConfigDir = original })
+	install, err := luckyInstallDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(install, "bin", "llbot", "data"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(install, "start.sh"), []byte("#!/bin/sh\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := saveLuckyState(luckyState{InstallDir: install, Managed: true, InstallMode: "managed", Platform: luckyPlatform().Key}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := luckySetAuthTokenAndStart(map[string]string{"authToken": "bad"}, true); err == nil || !strings.Contains(err.Error(), "Auth Token 无效") {
+		t.Fatalf("err = %v, want invalid token", err)
+	}
+}
+
+func TestWaitLuckyWebUIForProcessRejectsExitedProcess(t *testing.T) {
+	err := waitLuckyWebUIForProcess(99999999, 3080, 10*time.Millisecond)
+	if err == nil || !strings.Contains(err.Error(), "提前退出") {
+		t.Fatalf("err = %v, want early exit diagnosis", err)
 	}
 }
 

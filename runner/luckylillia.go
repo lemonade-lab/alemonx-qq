@@ -47,27 +47,29 @@ type luckyProcess struct {
 }
 
 type kernelStatus struct {
-	Engine         string `json:"engine"`
-	Installed      bool   `json:"installed"`
-	InstallHealthy bool   `json:"installHealthy"`
-	Running        bool   `json:"running"`
-	PortReachable  bool   `json:"portReachable"`
-	WebUIReady     bool   `json:"webUiReady"`
-	OneBotReady    bool   `json:"oneBotReady"`
-	LoginPending   bool   `json:"loginPending"`
-	Version        string `json:"version,omitempty"`
-	PID            int    `json:"pid,omitempty"`
-	WebUIURL       string `json:"webUiUrl,omitempty"`
-	OneBotURL      string `json:"oneBotUrl,omitempty"`
-	LogPath        string `json:"logPath,omitempty"`
-	DiagnosticHint string `json:"diagnosticHint,omitempty"`
-	Error          string `json:"error,omitempty"`
-	Supported      bool   `json:"supported"`
-	Platform       string `json:"platform,omitempty"`
-	InstallMode    string `json:"installMode,omitempty"`
-	Managed        bool   `json:"managed"`
-	State          string `json:"state"`
-	UpdatedAt      string `json:"updatedAt"`
+	Engine         string         `json:"engine"`
+	Installed      bool           `json:"installed"`
+	InstallHealthy bool           `json:"installHealthy"`
+	Running        bool           `json:"running"`
+	PortReachable  bool           `json:"portReachable"`
+	WebUIReady     bool           `json:"webUiReady"`
+	OneBotReady    bool           `json:"oneBotReady"`
+	LoginPending   bool           `json:"loginPending"`
+	Version        string         `json:"version,omitempty"`
+	PID            int            `json:"pid,omitempty"`
+	WebUIURL       string         `json:"webUiUrl,omitempty"`
+	OneBotURL      string         `json:"oneBotUrl,omitempty"`
+	LogPath        string         `json:"logPath,omitempty"`
+	DiagnosticHint string         `json:"diagnosticHint,omitempty"`
+	Error          string         `json:"error,omitempty"`
+	Supported      bool           `json:"supported"`
+	Platform       string         `json:"platform,omitempty"`
+	InstallMode    string         `json:"installMode,omitempty"`
+	Managed        bool           `json:"managed"`
+	AuthTokenReady bool           `json:"authTokenReady"`
+	State          string         `json:"state"`
+	UpdatedAt      string         `json:"updatedAt"`
+	Journey        runtimeJourney `json:"journey"`
 }
 
 // luckyPlatformSpec describes the official CLI contract for each supported
@@ -200,7 +202,7 @@ func requireManagedLucky(state luckyState, action string) error {
 }
 
 func reportLuckyProgress(stage string, percent int, message string) {
-	appendActionDiagnostic("luckylillia-install", fmt.Sprintf("[%s] %d%% %s", time.Now().UTC().Format(time.RFC3339), percent, message))
+	appendActionDiagnostic(currentLuckyOperationAction(), fmt.Sprintf("[%s] %d%% %s", time.Now().UTC().Format(time.RFC3339), percent, message))
 	if strings.TrimSpace(os.Getenv("ALX_PLUGIN_PROGRESS_MODE")) != "structured" {
 		fmt.Fprintf(os.Stderr, "\r\033[2K[%3d%%] %s", percent, message)
 		return
@@ -231,6 +233,7 @@ func luckyStatus() (string, error) {
 	entry := luckyEntryPoint(installDir)
 	installed := installDir != "" && dirExists(installDir)
 	healthy := installed && entry != ""
+	authTokenReady := luckyAuthTokenReady(installDir)
 	running := processAlive(state.PID)
 	webPort, oneBotPort := luckyConfiguredPorts()
 	webUI := luckyPortURL(webPort)
@@ -238,6 +241,9 @@ func luckyStatus() (string, error) {
 	stateName := "not-installed"
 	if installed {
 		stateName = "stopped"
+	}
+	if installed && !authTokenReady {
+		stateName = "needs-auth-token"
 	}
 	if running {
 		stateName = "running"
@@ -249,7 +255,7 @@ func luckyStatus() (string, error) {
 	if !luckySupported() {
 		stateName = "unsupported"
 	}
-	status := kernelStatus{Engine: "luckylillia", Installed: installed, InstallHealthy: healthy, Running: running, PortReachable: webUI != "", WebUIReady: webUI != "", OneBotReady: onebot != "", LoginPending: running && webUI != "" && onebot == "", Version: state.Version, PID: state.PID, WebUIURL: webUI, OneBotURL: "ws://127.0.0.1:" + strconv.Itoa(oneBotPort), Supported: luckySupported(), Managed: state.Managed, InstallMode: state.InstallMode, State: stateName, UpdatedAt: time.Now().UTC().Format(time.RFC3339)}
+	status := kernelStatus{Engine: "luckylillia", Installed: installed, InstallHealthy: healthy, Running: running, PortReachable: webUI != "", WebUIReady: webUI != "", OneBotReady: onebot != "", LoginPending: running && webUI != "" && onebot == "", Version: state.Version, PID: state.PID, WebUIURL: webUI, OneBotURL: "ws://127.0.0.1:" + strconv.Itoa(oneBotPort), Supported: luckySupported(), Managed: state.Managed, AuthTokenReady: authTokenReady, InstallMode: state.InstallMode, State: stateName, UpdatedAt: time.Now().UTC().Format(time.RFC3339)}
 	if platform != nil {
 		status.Platform = platform.Key
 	}
@@ -264,15 +270,51 @@ func luckyStatus() (string, error) {
 	}
 	if installed && !healthy {
 		status.Error, status.DiagnosticHint = "安装目录不完整", "缺少 LuckyLillia 启动入口，请执行重装。"
+	} else if installed && !authTokenReady {
+		status.Error, status.DiagnosticHint = "缺少 Auth Token", "请从 auth.luckylillia.com 获取 Token，并在“网络配置”中保存后再启动。"
 	}
 	if running && webUI == "" {
 		status.DiagnosticHint = "进程已启动但 WebUI 未就绪，请查看日志。"
 	}
+	status.Journey = luckyJourney(status)
 	data, err := json.Marshal(status)
 	if err != nil {
 		return "", err
 	}
 	return string(data), nil
+}
+
+func currentLuckyOperationAction() string {
+	action := currentOperationAction()
+	if strings.HasPrefix(action, "luckylillia-") {
+		return action
+	}
+	return "luckylillia-install"
+}
+
+func luckyJourney(status kernelStatus) runtimeJourney {
+	switch {
+	case !status.Supported:
+		return runtimeJourney{Phase: "unsupported", Title: "当前系统暂不支持", Detail: firstStatusDetail(status.DiagnosticHint, "请手动安装后再关联 LuckyLillia。"), NextAction: "manual"}
+	case !status.Installed:
+		return runtimeJourney{Phase: "install", Title: "安装 LuckyLillia", Detail: "将下载并验证官方 CLI；安装后还需填写官方 Auth Token。", NextAction: "install"}
+	case !status.InstallHealthy:
+		return runtimeJourney{Phase: "repair", Title: "LuckyLillia 安装不完整", Detail: firstStatusDetail(status.DiagnosticHint, "请重新安装后再启动。"), NextAction: "repair"}
+	case !status.Managed:
+		return runtimeJourney{Phase: "external", Title: "LuckyLillia 已关联", Detail: firstStatusDetail(status.DiagnosticHint, "这是外部实例；工作台不会修改其进程或配置。"), NextAction: "open-webui"}
+	case !status.AuthTokenReady:
+		return runtimeJourney{Phase: "needs-auth-token", Title: "需要 Auth Token", Detail: "从 auth.luckylillia.com 获取 Token，在网络配置中保存后才可启动 WebUI。", NextAction: "auth-token"}
+	case !status.Running:
+		return runtimeJourney{Phase: "start", Title: "启动 LuckyLillia", Detail: "启动后将等待 WebUI，并进入 QQ 登录流程。", NextAction: "start"}
+	case !status.WebUIReady:
+		return runtimeJourney{Phase: "starting", Title: "正在启动 LuckyLillia", Detail: firstStatusDetail(status.DiagnosticHint, "进程已启动，正在等待管理页面就绪。"), NextAction: "view-log"}
+	case status.LoginPending:
+		return runtimeJourney{Phase: "scan-qq", Title: "请在管理页面登录 QQ", Detail: "完成登录后 OneBot 服务会自动继续初始化。", NextAction: "open-webui"}
+	case !status.OneBotReady:
+		return runtimeJourney{Phase: "connecting", Title: "正在等待 OneBot", Detail: "管理页面已就绪，正在等待已配置的 OneBot 服务监听端口。", NextAction: "view-log"}
+	default:
+		return runtimeJourney{Phase: "ready", Title: "LuckyLillia 已就绪", Detail: "QQ 与 OneBot 服务均已可用，可同步到机器人。", NextAction: "configure"}
+	}
 }
 
 func luckyRelease() (githubRelease, error) {
@@ -442,9 +484,17 @@ func luckyInstall(force, confirmed bool) (string, error) {
 		restartPrevious()
 		return "", err
 	}
-	// A first installation must be usable immediately. The only success path is
-	// therefore a running CLI with its WebUI ready for login, not merely files
-	// written to disk.
+	// The CLI refuses to start without this token and then waits for stdin.
+	// ALX is non-interactive, so retain the verified installation and request
+	// the token instead of reporting a fabricated WebUI timeout.
+	if !luckyAuthTokenReady(target) {
+		reportLuckyProgress("auth", 90, "等待填写 LuckyLillia Auth Token")
+		if hadTarget {
+			_ = os.RemoveAll(backup)
+		}
+		return "? LuckyLillia 已安装，但尚未填写 Auth Token。\n? 请在“网络配置”中填写从 https://auth.luckylillia.com 获取的 Token，然后启动。", nil
+	}
+	// A reinstall retains the private token and can start normally.
 	reportLuckyProgress("start", 90, "启动 LuckyLillia 并等待登录")
 	if _, err := luckyStart(true); err != nil {
 		_ = os.RemoveAll(target)
@@ -612,7 +662,7 @@ func restoreLuckyConfig(previous, target string) error {
 		return err
 	}
 	for _, entry := range entries {
-		if entry.IsDir() || !(strings.HasSuffix(entry.Name(), ".json") || entry.Name() == "webui_token.txt") {
+		if entry.IsDir() || !(strings.HasSuffix(entry.Name(), ".json") || entry.Name() == "webui_token.txt" || entry.Name() == "auth_token.txt") {
 			continue
 		}
 		data, err := os.ReadFile(filepath.Join(sourceDir, entry.Name()))
@@ -628,6 +678,57 @@ func restoreLuckyConfig(previous, target string) error {
 
 func luckyEntryPoint(root string) string {
 	return luckyEntryPointFor(luckyPlatform(), root)
+}
+
+func luckyAuthTokenPath(root string) string {
+	return filepath.Join(root, "bin", "llbot", "data", "auth_token.txt")
+}
+
+func luckyAuthTokenReady(root string) bool {
+	data, err := os.ReadFile(luckyAuthTokenPath(root))
+	return err == nil && strings.TrimSpace(string(data)) != ""
+}
+
+func luckySetAuthToken(params map[string]string, confirmed bool) (string, error) {
+	if err := requireLuckyConfirmation(confirmed, "保存 LuckyLillia Auth Token"); err != nil {
+		return "", err
+	}
+	state, err := loadLuckyState()
+	if err != nil {
+		return "", err
+	}
+	if err := requireManagedLucky(state, "保存 Auth Token"); err != nil {
+		return "", err
+	}
+	token := param(params, "authToken")
+	if len(token) < 8 || len(token) > 4096 || strings.ContainsAny(token, "\r\n") {
+		return "", errors.New("Auth Token 无效；请粘贴从 auth.luckylillia.com 获取的完整 Token")
+	}
+	path := luckyAuthTokenPath(state.InstallDir)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return "", err
+	}
+	if err := atomicPrivateText(path, token+"\n"); err != nil {
+		return "", err
+	}
+	return "✓ Auth Token 已仅保存到本机私有文件。现在可以启动 LuckyLillia。", nil
+}
+
+// luckySetAuthTokenAndStart keeps the authorization handoff and process
+// startup in one observable operation. The token itself is deliberately never
+// included in progress text or logs.
+func luckySetAuthTokenAndStart(params map[string]string, confirmed bool) (string, error) {
+	if _, err := luckySetAuthToken(params, confirmed); err != nil {
+		return "", err
+	}
+	reportLuckyProgress("auth", 20, "Auth Token 已安全保存到本机私有文件")
+	reportLuckyProgress("start", 35, "启动 LuckyLillia 并等待管理页面")
+	output, err := luckyStart(true)
+	if err != nil {
+		return "", err
+	}
+	reportLuckyProgress("complete", 100, "LuckyLillia 管理页面已就绪，等待 QQ 登录")
+	return output, nil
 }
 
 func luckyEntryPointFor(platform *luckyPlatformSpec, root string) string {
@@ -693,6 +794,9 @@ func luckyStart(confirmed bool) (string, error) {
 	if err := requireManagedLucky(state, "启动"); err != nil {
 		return "", err
 	}
+	if !luckyAuthTokenReady(state.InstallDir) {
+		return "", errors.New("缺少 LuckyLillia Auth Token；请先在“网络配置”中保存从 https://auth.luckylillia.com 获取的 Token")
+	}
 	if processAlive(state.PID) {
 		return "? LuckyLillia 已在运行中。", nil
 	}
@@ -723,11 +827,11 @@ func luckyStart(confirmed bool) (string, error) {
 		return "", err
 	}
 	webPort, _ := luckyConfiguredPorts()
-	if !waitLuckyWebUI(webPort, webUIStartupTimeout) {
+	if err := waitLuckyWebUIForProcess(state.PID, webPort, webUIStartupTimeout); err != nil {
 		stopManagedProcess(state.PID)
 		state.PID, state.ProcessGroupID = 0, 0
 		_ = saveLuckyState(state)
-		return "", fmt.Errorf("LuckyLillia 启动后管理页面（端口 %d）未能就绪，请查看日志", webPort)
+		return "", fmt.Errorf("LuckyLillia 启动后管理页面（端口 %d）未能就绪：%w", webPort, err)
 	}
 	return fmt.Sprintf("✓ LuckyLillia 已启动（PID %d）。请进入 WebUI 扫码登录。", state.PID), nil
 }
@@ -747,14 +851,21 @@ func luckyStartCommand(platform *luckyPlatformSpec, root, entry string) (*exec.C
 }
 
 func waitLuckyWebUI(port int, timeout time.Duration) bool {
+	return waitLuckyWebUIForProcess(0, port, timeout) == nil
+}
+
+func waitLuckyWebUIForProcess(pid, port int, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		if luckyPortURL(port) != "" {
-			return true
+			return nil
+		}
+		if pid > 0 && !processAlive(pid) {
+			return errors.New("LuckyLillia 进程已提前退出；请查看日志中的最后错误")
 		}
 		time.Sleep(300 * time.Millisecond)
 	}
-	return false
+	return fmt.Errorf("管理页面端口 %d 在 %s 内未监听", port, timeout.Round(time.Second))
 }
 func luckyStop(confirmed bool) (string, error) {
 	if err := requireLuckyConfirmation(confirmed, "停止 LuckyLillia"); err != nil {

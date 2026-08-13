@@ -38,15 +38,17 @@ func main() {
 		write(response{Error: fmt.Sprintf("不支持的 ALX Setup 插件协议（protocol=%q method=%q）", input.Protocol, input.Method)})
 		return
 	}
-	if napcatOperationAction(input.Action) {
-		resetActionDiagnostic("install")
-		appendActionDiagnostic("install", fmt.Sprintf("[%s] action=%s started", time.Now().UTC().Format(time.RFC3339), input.Action))
+	if lifecycleOperationAction(input.Action) {
+		setCurrentOperationAction(input.Action)
+		defer setCurrentOperationAction("")
+		resetActionDiagnostic(input.Action)
+		appendActionDiagnostic(input.Action, fmt.Sprintf("[%s] action=%s started", time.Now().UTC().Format(time.RFC3339), input.Action))
 	}
 	output, err := run(input.Action, input.Params, input.Confirm)
 	if err != nil {
 		recordActionFailure(input.Action, err)
-	} else if napcatOperationAction(input.Action) {
-		appendActionDiagnostic("install", fmt.Sprintf("[%s] action=%s completed\n%s", time.Now().UTC().Format(time.RFC3339), input.Action, output))
+	} else if lifecycleOperationAction(input.Action) {
+		appendActionDiagnostic(input.Action, fmt.Sprintf("[%s] action=%s completed\n%s", time.Now().UTC().Format(time.RFC3339), input.Action, output))
 	}
 	write(response{Output: output, Error: errorText(err)})
 }
@@ -54,6 +56,18 @@ func main() {
 func napcatOperationAction(action string) bool {
 	switch action {
 	case "install", "update", "start", "restart":
+		return true
+	default:
+		return false
+	}
+}
+
+func lifecycleOperationAction(action string) bool {
+	if napcatOperationAction(action) {
+		return true
+	}
+	switch action {
+	case "luckylillia-install", "luckylillia-reinstall", "luckylillia-start", "luckylillia-restart", "luckylillia-update", "luckylillia-auth-token-set", "luckylillia-auth-token-set-start":
 		return true
 	default:
 		return false
@@ -137,6 +151,8 @@ func runNapcatAction(action string, params map[string]string, confirmed bool) (s
 		return logStatusAction(false)
 	case "napcat-operation-status":
 		return napcatOperationStatusAction()
+	case "luckylillia-operation-status":
+		return luckyOperationStatusAction()
 	case "onebot-config":
 		return onebotConfigAction(params)
 	case "onebot-http-set":
@@ -181,6 +197,10 @@ func runNapcatAction(action string, params map[string]string, confirmed bool) (s
 		return luckyOneBotConfig()
 	case "luckylillia-onebot-set":
 		return luckySetOneBotConfig(params, confirmed)
+	case "luckylillia-auth-token-set":
+		return luckySetAuthToken(params, confirmed)
+	case "luckylillia-auth-token-set-start":
+		return luckySetAuthTokenAndStart(params, confirmed)
 	default:
 		return "", fmt.Errorf("未知操作：%s", action)
 	}
@@ -188,6 +208,15 @@ func runNapcatAction(action string, params map[string]string, confirmed bool) (s
 
 func napcatOperationStatusAction() (string, error) {
 	path, err := napcatOperationLogPath()
+	return operationStatusAt(path, err)
+}
+
+func luckyOperationStatusAction() (string, error) {
+	path, err := luckyOperationLogPath()
+	return operationStatusAt(path, err)
+}
+
+func operationStatusAt(path string, err error) (string, error) {
 	if err != nil {
 		return "", err
 	}
