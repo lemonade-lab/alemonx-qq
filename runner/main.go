@@ -322,11 +322,11 @@ func installAction(params map[string]string, confirmed bool) (string, error) {
 			_ = saveState(previousState)
 			return "", err
 		}
-		if !waitNapcatWebUI(webUIStartupTimeout) {
+		if err := waitNapcatWebUIForProcess(state.PID, webUIStartupTimeout); err != nil {
 			stopProcess(process.ProcessGroupID)
 			_ = rollbackNapcatInstallation(installation)
 			_ = saveState(previousState)
-			return "", errors.New("NapCat 未能启动管理页面，安装已自动恢复到安装前状态，请查看执行日志")
+			return "", fmt.Errorf("NapCat 未能启动管理页面，安装已自动恢复到安装前状态：%w", err)
 		}
 		discardNapcatBackup(installation)
 		reportNapcatProgress("complete", 100, "NapCat 已安装并启动，等待扫码登录")
@@ -404,11 +404,11 @@ func startAction(confirmed bool) (string, error) {
 		stopProcess(process.ProcessGroupID)
 		return "", err
 	}
-	if !waitNapcatWebUI(webUIStartupTimeout) {
+	if err := waitNapcatWebUIForProcess(state.PID, webUIStartupTimeout); err != nil {
 		stopProcess(process.ProcessGroupID)
 		state.PID, state.ProcessGroupID = 0, 0
 		_ = saveState(state)
-		return "", errors.New("NapCat 未能启动管理页面，已停止受管进程组，请查看执行日志")
+		return "", fmt.Errorf("NapCat 未能启动管理页面，已停止受管进程组：%w", err)
 	}
 	return fmt.Sprintf("✓ NapCat 已启动（PID %d）。\n✓ 现在请用手机 QQ 扫码登录。", process.PID), nil
 }
@@ -564,12 +564,19 @@ func logAction(params map[string]string) (string, error) {
 func timeWait(ms int) { time.Sleep(time.Duration(ms) * time.Millisecond) }
 
 func waitNapcatWebUI(timeout time.Duration) bool {
+	return waitNapcatWebUIForProcess(0, timeout) == nil
+}
+
+func waitNapcatWebUIForProcess(pid int, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		if webUIBridge() != "" {
-			return true
+			return nil
+		}
+		if pid > 0 && !processAlive(pid) {
+			return errors.New("QQ/NapCat 进程已提前退出；请查看 NapCat 日志中的最后错误")
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
-	return false
+	return fmt.Errorf("管理页面端口 %d 在 %s 内未监听", webUIPort, timeout.Round(time.Second))
 }

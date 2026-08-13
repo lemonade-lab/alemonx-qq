@@ -63,11 +63,19 @@ func startNapCat(state State) (napcatProcess, error) {
 		stopXvfb()
 		return napcatProcess{}, errors.New("Xvfb 未能在 5 秒内就绪，请查看 NapCat 日志")
 	}
+	// Chromium refuses to run its sandbox as UID 0. Retain the sandbox for
+	// ordinary service accounts; root installations need this explicit fallback
+	// and the fact is visible in the operation log.
+	args := []string{}
+	if os.Geteuid() == 0 {
+		args = append(args, "--no-sandbox")
+		_, _ = fmt.Fprintln(logHandle, "NapCat: 检测到 root，QQ 将以 --no-sandbox 启动；建议生产环境使用普通服务用户。")
+	}
 	var qqCommand *exec.Cmd
 	if environment.Runtime != nil {
-		qqCommand = managedRuntimeCommand(*environment.Runtime, qq, "--no-sandbox")
+		qqCommand = managedRuntimeCommand(*environment.Runtime, qq, args...)
 	} else {
-		qqCommand = exec.Command(qq, "--no-sandbox")
+		qqCommand = exec.Command(qq, args...)
 	}
 	qqCommand.Dir = filepath.Dir(qq)
 	// NAPCAT_HOME also repairs installations created by older runners that
@@ -88,6 +96,9 @@ func startNapCat(state State) (napcatProcess, error) {
 func linuxQQBinary(state State) (string, error) {
 	if state.InstallDir == "" {
 		return "", errors.New("未记录 NapCat Linux 安装目录")
+	}
+	if err := validateLinuxQQRuntime(state.InstallDir); err != nil {
+		return "", err
 	}
 	qq := filepath.Join(state.InstallDir, "opt", "QQ", "qq")
 	info, err := os.Stat(qq)

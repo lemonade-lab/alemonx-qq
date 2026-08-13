@@ -73,6 +73,31 @@ func TestLuckyOneBotConfigPreservesTokenWhenRedacted(t *testing.T) {
 	}
 }
 
+func TestLuckyConfiguredPortsUsesOfficialConfig(t *testing.T) {
+	original := userConfigDir
+	dir := t.TempDir()
+	userConfigDir = func() (string, error) { return dir, nil }
+	t.Cleanup(func() { userConfigDir = original })
+	install, err := luckyInstallDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := filepath.Join(install, "bin", "llbot", "data", "default_config.json")
+	if err := os.MkdirAll(filepath.Dir(config), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(config, []byte(`{"webui":{"port":4312},"ob11":{"connect":[{"type":"ws","enable":true,"port":8312}]}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := saveLuckyState(luckyState{InstallDir: install}); err != nil {
+		t.Fatal(err)
+	}
+	web, onebot := luckyConfiguredPorts()
+	if web != 4312 || onebot != 8312 {
+		t.Fatalf("ports = %d, %d; want 4312, 8312", web, onebot)
+	}
+}
+
 func TestRestoreLuckyConfigCopiesOnlyManagedFiles(t *testing.T) {
 	previous, target := t.TempDir(), t.TempDir()
 	source := filepath.Join(previous, "bin", "llbot", "data")

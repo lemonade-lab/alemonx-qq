@@ -79,25 +79,33 @@ func linuxCompatibilityAssetFor(goarch string) (linuxCompatibilityAsset, error) 
 }
 
 func prepareLinuxEnvironment(forceManaged bool) (linuxEnvironment, error) {
-	if !forceManaged && linuxSystemRuntimeUsable() {
+	if err := linuxPreflightError(); err != nil {
+		return linuxEnvironment{}, err
+	}
+	if linuxSystemRuntimeUsable() {
 		if xvfb, err := exec.LookPath("Xvfb"); err == nil && xvfb != "" {
 			return linuxEnvironment{Mode: "system", Diagnostic: "已使用系统图形运行环境"}, nil
 		}
 	}
-	reason := "系统图形运行环境不可用"
+	// The old fallback contained Xvfb but not the complete Electron/GTK/XKB
+	// runtime. Launching QQ through it merely moved a missing-library error to
+	// the 85% wait. Do not claim this is portable compatibility: require the
+	// reviewed system dependency operation before an Electron process starts.
 	if forceManaged {
-		reason = "系统环境准备未完成，已自动切换兼容运行环境"
+		return linuxEnvironment{}, errors.New("系统 QQ 运行依赖仍不完整；请先执行“准备 QQ 登录运行环境”，完成后重新安装")
 	}
-	runtimeValue, err := ensureManagedLinuxRuntime()
-	if err != nil {
-		return linuxEnvironment{}, fmt.Errorf("准备受管兼容运行环境失败：%w", err)
-	}
-	return linuxEnvironment{Mode: "managed-runtime", Runtime: &runtimeValue, Reason: reason, Diagnostic: "已使用受管兼容运行环境"}, nil
+	return linuxEnvironment{}, errors.New("Linux 图形运行环境未就绪；请先执行“准备 QQ 登录运行环境”（会安装 Xvfb、XKB、GTK、NSS、GBM、音频和 X11 依赖）")
 }
 
 func linuxSystemRuntimeUsable() bool {
 	xvfb, err := exec.LookPath("Xvfb")
 	if err != nil {
+		return false
+	}
+	if _, err := exec.LookPath("xkbcomp"); err != nil {
+		return false
+	}
+	if !dirExists("/usr/share/X11/xkb") {
 		return false
 	}
 	if _, err := exec.LookPath("apt-get"); err != nil {
@@ -127,29 +135,22 @@ func linuxProgramDependenciesUsable(program string) bool {
 func linuxQQDependenciesUsable(program string) bool { return linuxProgramDependenciesUsable(program) }
 
 func linuxEnvironmentForState(state State) (linuxEnvironment, error) {
+	if err := linuxPreflightError(); err != nil {
+		return linuxEnvironment{}, err
+	}
 	if state.EnvironmentMode == "managed-runtime" {
-		runtimeValue, err := loadManagedLinuxRuntime()
-		if err == nil {
-			return linuxEnvironment{Mode: "managed-runtime", Runtime: &runtimeValue, Reason: state.FallbackReason, Diagnostic: state.EnvironmentDiagnostic}, nil
+		// Older plugin versions recorded a partial managed runtime. Re-evaluate
+		// the host instead of using that cache to launch Electron with an
+		// incomplete dynamic-library set.
+		if linuxSystemRuntimeUsable() && linuxProgramDependenciesUsable(filepath.Join(state.InstallDir, "opt", "QQ", "qq")) {
+			return linuxEnvironment{Mode: "system", Diagnostic: "已使用补齐后的系统图形运行环境"}, nil
 		}
-		// Cached native files can be removed by a package cleanup or a user. This
-		// is recoverable: rebuild the workbench-owned runtime automatically.
-		runtimeValue, refreshErr := ensureManagedLinuxRuntime()
-		if refreshErr != nil {
-			return linuxEnvironment{}, fmt.Errorf("兼容运行环境无法自动恢复：%w", refreshErr)
-		}
-		return linuxEnvironment{Mode: "managed-runtime", Runtime: &runtimeValue, Reason: "已自动恢复兼容运行环境", Diagnostic: "已使用受管兼容运行环境"}, nil
+		return linuxEnvironment{}, errors.New("检测到旧版兼容运行时记录，但它不包含完整 Electron 依赖；请先执行“准备 QQ 登录运行环境”，然后重新安装 NapCat")
 	}
 	if linuxSystemRuntimeUsable() && linuxProgramDependenciesUsable(filepath.Join(state.InstallDir, "opt", "QQ", "qq")) {
 		return linuxEnvironment{Mode: "system", Diagnostic: "已使用系统图形运行环境"}, nil
 	}
-	// A system package may have been removed after install. Re-create the
-	// managed fallback automatically rather than requiring a new user action.
-	runtimeValue, err := ensureManagedLinuxRuntime()
-	if err != nil {
-		return linuxEnvironment{}, fmt.Errorf("系统图形运行环境不可用，且兼容运行环境无法准备：%w", err)
-	}
-	return linuxEnvironment{Mode: "managed-runtime", Runtime: &runtimeValue, Reason: "系统图形运行环境或 QQ 动态库已不可用", Diagnostic: "已自动切换受管兼容运行环境"}, nil
+	return linuxEnvironment{}, errors.New("系统图形运行环境或 QQ 动态库缺失；请先执行“准备 QQ 登录运行环境”，完成后再启动")
 }
 
 func ensureManagedLinuxRuntime() (managedLinuxRuntime, error) {

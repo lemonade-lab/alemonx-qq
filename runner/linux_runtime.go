@@ -421,6 +421,29 @@ func extractRPMQQ(archivePath, destination string) error {
 	return extractNewcCPIO(payload, destination)
 }
 
+// validateLinuxQQRuntime verifies Electron's non-library runtime data before
+// the installer commits the staged directory. ldd cannot detect these files:
+// a missing icudtl.dat otherwise surfaces later as the opaque Chromium error
+// "Invalid file descriptor to ICU data received" while the UI waits at 85%.
+func validateLinuxQQRuntime(root string) error {
+	required := []struct {
+		path    string
+		minimum int64
+	}{
+		{path: filepath.Join("opt", "QQ", "qq"), minimum: 1},
+		{path: filepath.Join("opt", "QQ", "icudtl.dat"), minimum: 1024},
+		{path: filepath.Join("opt", "QQ", "resources.pak"), minimum: 1},
+		{path: filepath.Join("opt", "QQ", "locales", "zh-CN.pak"), minimum: 1},
+	}
+	for _, item := range required {
+		info, err := os.Stat(filepath.Join(root, item.path))
+		if err != nil || info.IsDir() || info.Size() < item.minimum {
+			return fmt.Errorf("Linux QQ 运行时不完整：缺少或损坏 %s", item.path)
+		}
+	}
+	return nil
+}
+
 // patchLinuxQQEntrypoint validates Shell files in shellRoot and writes a QQ
 // loader under root. installRoot is deliberately distinct: Linux installation
 // prepares root in a temporary staging directory, then atomically renames it

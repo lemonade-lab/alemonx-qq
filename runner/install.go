@@ -3,6 +3,7 @@ package main
 import (
 	"archive/zip"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -34,8 +35,9 @@ const (
 )
 
 type releaseAsset struct {
-	Name string `json:"name"`
-	URL  string `json:"browser_download_url"`
+	Name   string `json:"name"`
+	URL    string `json:"browser_download_url"`
+	Digest string `json:"digest"`
 }
 
 type githubRelease struct {
@@ -285,6 +287,81 @@ func downloadFile(url, dest string) error {
 	return downloadFileWithProgress(url, dest, nil)
 }
 
+// cacheOfficialNapcatAsset keeps a completed official archive outside the
+// disposable installation stage. A startup failure must roll back the staged
+// runtime, but it must not force another 200 MB download on the next retry.
+// The cache file is published only by an atomic rename after downloadFile has
+// checked the complete response length and synced it to disk.
+func cacheOfficialNapcatAsset(stateRoot, releaseTag string, asset releaseAsset, label string, start, end int) (string, bool, error) {
+	name := filepath.Base(strings.TrimSpace(asset.Name))
+	if name == "." || name == "" || name != asset.Name {
+		return "", false, errors.New("官方安装包名称无效")
+	}
+	releaseTag = strings.TrimSpace(releaseTag)
+	if releaseTag == "" || filepath.Base(releaseTag) != releaseTag || releaseTag == "." {
+		return "", false, errors.New("NapCat 发布版本标识无效")
+	}
+	cacheDir := filepath.Join(stateRoot, "cache", "napcat", releaseTag)
+	path := filepath.Join(cacheDir, name)
+	if info, err := os.Stat(path); err == nil && info.Mode().IsRegular() && info.Size() > 0 {
+		if err := verifyReleaseAssetDigest(path, asset); err == nil {
+			reportNapcatProgress("download", end, fmt.Sprintf("复用 %s 的官方缓存（%s）", releaseTag, humanBytes(info.Size())))
+			return path, true, nil
+		}
+		// A cache entry is an optimization, never an authority. Replace a file
+		// whose official digest no longer matches before using it for extraction.
+		_ = os.Remove(path)
+	}
+	if err := os.MkdirAll(cacheDir, 0o700); err != nil {
+		return "", false, err
+	}
+	temporary := path + ".download"
+	_ = os.Remove(temporary)
+	reportNapcatProgress("download", start, "下载官方 "+label)
+	if err := downloadFileWithProgress(asset.URL, temporary, napcatDownloadProgress("下载官方 "+label, start, end)); err != nil {
+		_ = os.Remove(temporary)
+		return "", false, err
+	}
+	if err := verifyReleaseAssetDigest(temporary, asset); err != nil {
+		_ = os.Remove(temporary)
+		return "", false, err
+	}
+	if err := os.Rename(temporary, path); err != nil {
+		_ = os.Remove(temporary)
+		return "", false, err
+	}
+	return path, false, nil
+}
+
+// verifyReleaseAssetDigest verifies the SHA-256 digest returned by GitHub's
+// release API. Older API responses and the Tencent QQ download do not expose
+// a digest, so an empty digest remains valid while keeping those sources
+// compatible. A supplied but unsupported digest is a hard failure: silently
+// accepting it would turn a release-integrity signal into decoration.
+func verifyReleaseAssetDigest(path string, asset releaseAsset) error {
+	digest := strings.TrimSpace(asset.Digest)
+	if digest == "" {
+		return nil
+	}
+	parts := strings.SplitN(digest, ":", 2)
+	if len(parts) != 2 || !strings.EqualFold(parts[0], "sha256") || len(parts[1]) != sha256.Size*2 {
+		return fmt.Errorf("官方 %s 的校验摘要格式无效", asset.Name)
+	}
+	handle, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer handle.Close()
+	hash := sha256.New()
+	if _, err := io.Copy(hash, handle); err != nil {
+		return err
+	}
+	if !strings.EqualFold(fmt.Sprintf("%x", hash.Sum(nil)), parts[1]) {
+		return fmt.Errorf("官方 %s 的 SHA-256 校验失败", asset.Name)
+	}
+	return nil
+}
+
 func unzipArchive(srcZip, destDir string) error {
 	return unzipArchiveWithProgress(srcZip, destDir, nil)
 }
@@ -512,18 +589,14 @@ func installLinuxNapCat() (napcatInstallation, error) {
 	if err := os.MkdirAll(stateRoot, 0o700); err != nil {
 		return napcatInstallation{}, err
 	}
-	shellArchive := filepath.Join(stateRoot, "napcat-shell.zip")
-	qqArchive := filepath.Join(stateRoot, qqAsset.Name)
-	reportNapcatProgress("download", 20, "下载官方 NapCat Linux Release 包")
-	if err := downloadFileWithProgress(shellAsset.URL, shellArchive, napcatDownloadProgress("下载官方 NapCat Linux Release 包", 20, 35)); err != nil {
+	shellArchive, _, err := cacheOfficialNapcatAsset(stateRoot, release.TagName, shellAsset, "NapCat Linux Release 包", 20, 35)
+	if err != nil {
 		return napcatInstallation{}, err
 	}
-	defer os.Remove(shellArchive)
-	reportNapcatProgress("download", 35, "下载官方 Linux QQ 运行时")
-	if err := downloadFileWithProgress(qqAsset.URL, qqArchive, napcatDownloadProgress("下载官方 Linux QQ 运行时", 35, 55)); err != nil {
+	qqArchive, _, err := cacheOfficialNapcatAsset(stateRoot, release.TagName, releaseAsset{Name: qqAsset.Name, URL: qqAsset.URL}, "Linux QQ 运行时", 35, 55)
+	if err != nil {
 		return napcatInstallation{}, err
 	}
-	defer os.Remove(qqArchive)
 	root, err := managedInstallDir()
 	if err != nil {
 		return napcatInstallation{}, err
@@ -556,6 +629,8 @@ func installLinuxNapCat() (napcatInstallation, error) {
 			reportNapcatProgress("extract", 56, fmt.Sprintf("正在展开 NapCat Shell（%d/%d 个文件）", completed, total))
 		}
 	}); err != nil {
+		// A cached archive that cannot be opened is never reused on a retry.
+		_ = os.Remove(shellArchive)
 		return rollback(err)
 	}
 	reportNapcatProgress("extract", 58, "正在展开 Linux QQ 运行环境")
@@ -570,6 +645,13 @@ func installLinuxNapCat() (napcatInstallation, error) {
 	}
 	stopPulse()
 	if err != nil {
+		// The same rule applies to the QQ RPM/DEB cache: preserve completed
+		// downloads, but discard an archive that fails its own extraction.
+		_ = os.Remove(qqArchive)
+		return rollback(err)
+	}
+	reportNapcatProgress("verify", 66, "验证 Linux QQ Electron 运行文件")
+	if err := validateLinuxQQRuntime(stage); err != nil {
 		return rollback(err)
 	}
 	// The initial environment check can only inspect Xvfb because QQ has not

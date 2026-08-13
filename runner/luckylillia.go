@@ -232,26 +232,7 @@ func luckyStatus() (string, error) {
 	installed := installDir != "" && dirExists(installDir)
 	healthy := installed && entry != ""
 	running := processAlive(state.PID)
-	webPort, oneBotPort := luckyWebUIPort, luckyOneBotPort
-	for _, file := range luckyConfigFiles() {
-		data, readErr := os.ReadFile(file)
-		if readErr != nil {
-			continue
-		}
-		var root map[string]any
-		if json.Unmarshal(data, &root) != nil {
-			continue
-		}
-		if webui, ok := root["webui"].(map[string]any); ok {
-			if port, err := strconv.Atoi(fmt.Sprint(webui["port"])); err == nil && port > 0 {
-				webPort = port
-			}
-		}
-		if onebot, ok := luckyReadOneBot(root); ok && onebot.port > 0 {
-			oneBotPort = onebot.port
-		}
-		break
-	}
+	webPort, oneBotPort := luckyConfiguredPorts()
 	webUI := luckyPortURL(webPort)
 	onebot := luckyPortURL(oneBotPort)
 	stateName := "not-installed"
@@ -741,11 +722,12 @@ func luckyStart(confirmed bool) (string, error) {
 		stopManagedProcess(state.PID)
 		return "", err
 	}
-	if !waitLuckyWebUI(luckyWebUIPort, webUIStartupTimeout) {
+	webPort, _ := luckyConfiguredPorts()
+	if !waitLuckyWebUI(webPort, webUIStartupTimeout) {
 		stopManagedProcess(state.PID)
 		state.PID, state.ProcessGroupID = 0, 0
 		_ = saveLuckyState(state)
-		return "", errors.New("LuckyLillia 启动后管理页面未能就绪，请查看日志")
+		return "", fmt.Errorf("LuckyLillia 启动后管理页面（端口 %d）未能就绪，请查看日志", webPort)
 	}
 	return fmt.Sprintf("✓ LuckyLillia 已启动（PID %d）。请进入 WebUI 扫码登录。", state.PID), nil
 }
@@ -903,6 +885,34 @@ func luckyConfigFiles() []string {
 		}
 	}
 	return append(files, filepath.Join(dataDir, "default_config.json"), filepath.Join(dataDir, "config.json"))
+}
+
+// luckyConfiguredPorts is deliberately shared by status and startup. A user
+// may change webui.port in the official configuration; waiting on the old
+// default 3080 would otherwise report a healthy instance as failed after
+// three minutes and kill it.
+func luckyConfiguredPorts() (webPort, oneBotPort int) {
+	webPort, oneBotPort = luckyWebUIPort, luckyOneBotPort
+	for _, file := range luckyConfigFiles() {
+		data, err := os.ReadFile(file)
+		if err != nil {
+			continue
+		}
+		var root map[string]any
+		if json.Unmarshal(data, &root) != nil {
+			continue
+		}
+		if webui, ok := root["webui"].(map[string]any); ok {
+			if port, err := strconv.Atoi(fmt.Sprint(webui["port"])); err == nil && port > 0 && port < 65536 {
+				webPort = port
+			}
+		}
+		if onebot, ok := luckyReadOneBot(root); ok && onebot.port > 0 && onebot.port < 65536 {
+			oneBotPort = onebot.port
+		}
+		return webPort, oneBotPort
+	}
+	return webPort, oneBotPort
 }
 
 type luckyOneBot struct {

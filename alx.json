@@ -95,13 +95,22 @@
             "install",
             "-y",
             "xvfb",
+            "x11-xkb-utils",
+            "xkb-data",
             "libnss3",
             "libgbm1",
             "libglib2.0-0",
             "libatk1.0-0",
+            "libatk-bridge2.0-0",
             "libatspi2.0-0",
             "libgtk-3-0",
-            "libasound2"
+            "libasound2",
+            "libcups2",
+            "libxcomposite1",
+            "libxdamage1",
+            "libxfixes3",
+            "libxrandr2",
+            "libxkbcommon0"
           ]
         },
         {
@@ -111,13 +120,20 @@
             "--allowerasing",
             "-y",
             "xorg-x11-server-Xvfb",
+            "xkbcomp",
+            "xkeyboard-config",
             "nss",
             "mesa-libgbm",
             "glib2",
             "atk",
             "at-spi2-atk",
             "gtk3",
-            "alsa-lib"
+            "alsa-lib",
+            "cups-libs",
+            "libXcomposite",
+            "libXdamage",
+            "libXfixes",
+            "libXrandr"
           ]
         }
       ]

@@ -87,6 +87,50 @@ func TestDownloadFileRejectsTruncatedContentLength(t *testing.T) {
 	}
 }
 
+func TestCacheOfficialNapcatAssetReusesCompletedDownload(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		requests++
+		_, _ = writer.Write([]byte("official archive"))
+	}))
+	defer server.Close()
+
+	root := t.TempDir()
+	asset := releaseAsset{Name: "NapCat.Shell.zip", URL: server.URL}
+	path, reused, err := cacheOfficialNapcatAsset(root, "v4.18.18", asset, "NapCat Linux Release 包", 20, 35)
+	if err != nil || reused || requests != 1 {
+		t.Fatalf("first cache result path=%q reused=%v requests=%d err=%v", path, reused, requests, err)
+	}
+	if _, reused, err = cacheOfficialNapcatAsset(root, "v4.18.18", asset, "NapCat Linux Release 包", 20, 35); err != nil || !reused || requests != 1 {
+		t.Fatalf("cached retry reused=%v requests=%d err=%v", reused, requests, err)
+	}
+	if _, reused, err = cacheOfficialNapcatAsset(root, "v4.18.19", asset, "NapCat Linux Release 包", 20, 35); err != nil || reused || requests != 2 {
+		t.Fatalf("new release must not reuse old archive: reused=%v requests=%d err=%v", reused, requests, err)
+	}
+}
+
+func TestVerifyReleaseAssetDigest(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "asset.zip")
+	if err := os.WriteFile(path, []byte("official archive"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	asset := releaseAsset{Name: "asset.zip", Digest: "sha256:764884ced8d4b07eac08febddb267116e3422a66ce76eb6dddb016e36d7cd286"}
+	if err := verifyReleaseAssetDigest(path, asset); err != nil {
+		t.Fatal(err)
+	}
+	asset.Digest = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+	if err := verifyReleaseAssetDigest(path, asset); err == nil {
+		t.Fatal("digest mismatch must be rejected")
+	}
+}
+
+func TestWaitNapcatWebUIForProcessRejectsExitedProcess(t *testing.T) {
+	err := waitNapcatWebUIForProcess(99999999, 10*time.Millisecond)
+	if err == nil || !strings.Contains(err.Error(), "提前退出") {
+		t.Fatalf("err = %v, want early exit diagnosis", err)
+	}
+}
+
 func TestOfficialReleaseHTTPClientUsesHostGitHubMirror(t *testing.T) {
 	var requestedURL, authorization string
 	broker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -182,6 +226,33 @@ func TestExtractDebQQExtractsDataTarGzip(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(destination, "opt", "QQ", "resources", "app", "package.json")); err != nil {
 		t.Fatalf("extracted package.json missing: %v", err)
+	}
+}
+
+func TestValidateLinuxQQRuntimeRejectsMissingICUData(t *testing.T) {
+	root := t.TempDir()
+	for path, content := range map[string][]byte{
+		"opt/QQ/qq":                []byte("binary"),
+		"opt/QQ/resources.pak":     []byte("resources"),
+		"opt/QQ/locales/zh-CN.pak": []byte("locale"),
+	} {
+		full := filepath.Join(root, path)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, content, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := validateLinuxQQRuntime(root); err == nil || !strings.Contains(err.Error(), "icudtl.dat") {
+		t.Fatalf("missing ICU data error = %v", err)
+	}
+	icu := filepath.Join(root, "opt", "QQ", "icudtl.dat")
+	if err := os.WriteFile(icu, bytes.Repeat([]byte("i"), 1024), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateLinuxQQRuntime(root); err != nil {
+		t.Fatalf("complete runtime rejected: %v", err)
 	}
 }
 

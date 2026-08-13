@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -61,6 +62,12 @@ func collectStatus(state State) statusPayload {
 		payload.Supported, payload.Platform = true, platform.Key
 	}
 	payload.Installed = state.InstallDir != "" && dirExists(state.InstallDir)
+	if runtime.GOOS == "linux" {
+		compatibility := currentLinuxHostCompatibility()
+		if !compatibility.NativeSupported {
+			payload.DiagnosticHint = compatibility.Diagnostic
+		}
+	}
 	if platform != nil && platform.Key == "darwin-external" && !payload.Installed && macQQInstalled() && macNapcatInjected() {
 		if root, err := macInstallDir(); err == nil && dirExists(root) {
 			payload.Installed, payload.InstallHealthy = true, true
@@ -123,7 +130,9 @@ func collectStatus(state State) statusPayload {
 		reasons = append(reasons, "管理面板（6099）不可达")
 	}
 	if payload.LoginPending {
-		payload.DiagnosticHint = "NapCat 已启动，等待在 WebUI 中扫码登录；OneBot 服务会在登录后就绪。"
+		if payload.DiagnosticHint == "" {
+			payload.DiagnosticHint = "NapCat 已启动，等待在 WebUI 中扫码登录；OneBot 服务会在登录后就绪。"
+		}
 	}
 	payload.Error = strings.Join(reasons, "；")
 	return payload
