@@ -1,14 +1,11 @@
 package main
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
-	"strings"
 )
 
 // State tracks the installed NapCat location and the running process. It lives
@@ -16,38 +13,20 @@ import (
 // read-only (for example when installed next to the alx executable).
 
 type State struct {
-	Version        string `json:"version,omitempty"`
-	InstallDir     string `json:"installDir,omitempty"`
-	PID            int    `json:"pid,omitempty"`
-	ProcessGroupID int    `json:"processGroupId,omitempty"`
-	WatchdogPID    int    `json:"watchdogPid,omitempty"`
-	Managed        bool   `json:"managed"`
-	Platform       string `json:"platform,omitempty"`
-	InstallMode    string `json:"installMode,omitempty"`
-	ReleaseTag     string `json:"releaseTag,omitempty"`
-	Asset          string `json:"asset,omitempty"`
-	ArchiveSHA256  string `json:"archiveSha256,omitempty"`
-	// QQRuntime* identifies the official Tencent QQ package installed beside
-	// NapCat.  Older state files used RuntimeAsset for these fields; loadState
-	// migrates that representation before any lifecycle decision is made.
-	QQRuntimeAsset         string `json:"qqRuntimeAsset,omitempty"`
-	QQRuntimeArchiveSHA256 string `json:"qqRuntimeArchiveSha256,omitempty"`
-	// Runtime* identifies ALX's self-contained Linux compatibility runtime.
-	// It is deliberately separate from QQRuntime*: the former supplies Xvfb
-	// and compatible libraries, while the latter is the official QQ payload.
-	RuntimeID             string `json:"runtimeId,omitempty"`
-	RuntimeAsset          string `json:"runtimeAsset,omitempty"`
-	RuntimeSHA256         string `json:"runtimeSha256,omitempty"`
-	RuntimeFingerprint    string `json:"runtimeFingerprint,omitempty"`
+	Version               string `json:"version,omitempty"`
+	InstallDir            string `json:"installDir,omitempty"`
+	PID                   int    `json:"pid,omitempty"`
+	ProcessGroupID        int    `json:"processGroupId,omitempty"`
+	WatchdogPID           int    `json:"watchdogPid,omitempty"`
+	Managed               bool   `json:"managed"`
+	Platform              string `json:"platform,omitempty"`
+	InstallMode           string `json:"installMode,omitempty"`
+	ReleaseTag            string `json:"releaseTag,omitempty"`
+	Asset                 string `json:"asset,omitempty"`
 	EnvironmentMode       string `json:"environmentMode,omitempty"`
 	FallbackReason        string `json:"fallbackReason,omitempty"`
 	EnvironmentDiagnostic string `json:"environmentDiagnostic,omitempty"`
-	// RuntimeArchiveSHA256 is retained solely to migrate pre-compatibility
-	// state files. New writes always use QQRuntimeArchiveSHA256 or RuntimeSHA256.
-	RuntimeArchiveSHA256 string `json:"runtimeArchiveSha256,omitempty"`
-	Fingerprint          string `json:"fingerprint,omitempty"`
-	ValidatedAt          string `json:"validatedAt,omitempty"`
-	SelectedQQ           string `json:"selectedQq,omitempty"`
+	SelectedQQ            string `json:"selectedQq,omitempty"`
 }
 
 type napcatPlatformSpec struct {
@@ -153,19 +132,6 @@ func loadState() (State, error) {
 	if err := json.Unmarshal(data, &state); err != nil {
 		return State{}, err
 	}
-	// Version 1 Linux state used RuntimeAsset/RuntimeArchiveSHA256 for the
-	// official QQ package.  A compatibility runtime always has a RuntimeID, so
-	// this conversion is unambiguous and keeps existing managed installations
-	// usable without granting any new permission.
-	if state.QQRuntimeAsset == "" && state.RuntimeID == "" && state.RuntimeAsset != "" && state.RuntimeArchiveSHA256 != "" {
-		state.QQRuntimeAsset = state.RuntimeAsset
-		state.QQRuntimeArchiveSHA256 = state.RuntimeArchiveSHA256
-		state.RuntimeAsset = ""
-		state.RuntimeArchiveSHA256 = ""
-		if state.EnvironmentMode == "" {
-			state.EnvironmentMode = "system"
-		}
-	}
 	// Retain an explicit workbench-managed marker when it still points at the
 	// workbench-owned directory. Hashes are diagnostic now; their absence must
 	// not strand a previously installed NapCat after this upgrade.
@@ -182,29 +148,6 @@ func loadState() (State, error) {
 		state.InstallMode = "external"
 	}
 	return state, nil
-}
-
-func napcatFingerprint(root string) (string, error) {
-	if strings.TrimSpace(root) == "" {
-		return "", fmt.Errorf("NapCat 安装目录为空")
-	}
-	candidates := []string{
-		filepath.Join(root, "resources", "app", "package.json"),
-		filepath.Join(root, "opt", "QQ", "resources", "app", "package.json"),
-		filepath.Join(root, "package.json"),
-	}
-	for _, candidate := range candidates {
-		data, err := os.ReadFile(candidate)
-		if os.IsNotExist(err) {
-			continue
-		}
-		if err != nil {
-			return "", err
-		}
-		sum := sha256.Sum256(data)
-		return hex.EncodeToString(sum[:]), nil
-	}
-	return "", fmt.Errorf("未找到 NapCat 运行时 package.json")
 }
 
 func saveState(state State) error {

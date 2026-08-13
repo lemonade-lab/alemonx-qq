@@ -23,22 +23,21 @@ func TestSecureArchiveTargetRejectsEscapingPath(t *testing.T) {
 	}
 }
 
-func TestLinuxQQReleaseAssetsArePinned(t *testing.T) {
+func TestLinuxQQReleaseAssetsMatchPlatformContracts(t *testing.T) {
 	want := []struct {
 		manager      string
 		architecture string
 		name         string
 		kind         string
-		sha          string
 	}{
-		{"apt", "amd64", "QQ_3.2.31_260710_amd64_01.deb", "deb", "02f677feb1ce01ed293a3c7761e5dd85bd79936f57dcaa4cdb53178ae30e3d6d"},
-		{"apt", "arm64", "QQ_3.2.31_260710_arm64_01.deb", "deb", "ac604371f5c486acf6cbf83dd667e622ee1f487d0c8bd425627de6d68fe34974"},
-		{"dnf", "amd64", "QQ_3.2.31_260710_x86_64_01.rpm", "rpm", "be897976f9481be2d224dc4e11592126a3adf71b2c395e8273cf14ea99b5519d"},
-		{"dnf", "arm64", "QQ_3.2.31_260710_aarch64_01.rpm", "rpm", "0a48d0a82881ab6a6716b7f90250ecaab1305727e7b5bf2d16c9205cb0c28995"},
+		{"apt", "amd64", "QQ_3.2.31_260710_amd64_01.deb", "deb"},
+		{"apt", "arm64", "QQ_3.2.31_260710_arm64_01.deb", "deb"},
+		{"dnf", "amd64", "QQ_3.2.31_260710_x86_64_01.rpm", "rpm"},
+		{"dnf", "arm64", "QQ_3.2.31_260710_aarch64_01.rpm", "rpm"},
 	}
 	for _, expected := range want {
 		asset, err := linuxQQReleaseAssetFor(expected.architecture, expected.manager)
-		if err != nil || asset.Name != expected.name || asset.Kind != expected.kind || asset.SHA256 != expected.sha || !validSHA(asset.SHA256) {
+		if err != nil || asset.Name != expected.name || asset.Kind != expected.kind || asset.URL == "" {
 			t.Fatalf("%s/%s = %#v, err=%v", expected.manager, expected.architecture, asset, err)
 		}
 	}
@@ -47,7 +46,7 @@ func TestLinuxQQReleaseAssetsArePinned(t *testing.T) {
 	}
 }
 
-func TestDownloadFileReportsProgressAndHash(t *testing.T) {
+func TestDownloadFileReportsProgress(t *testing.T) {
 	payload := bytes.Repeat([]byte("napcat"), 32*1024)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(payload)))
@@ -56,7 +55,7 @@ func TestDownloadFileReportsProgressAndHash(t *testing.T) {
 	defer server.Close()
 	var updates []int64
 	destination := filepath.Join(t.TempDir(), "napcat.zip")
-	digest, err := downloadFileWithProgress(server.URL, destination, func(downloaded, total int64) {
+	err := downloadFileWithProgress(server.URL, destination, func(downloaded, total int64) {
 		if total != int64(len(payload)) {
 			t.Fatalf("progress total = %d, want %d", total, len(payload))
 		}
@@ -64,9 +63,6 @@ func TestDownloadFileReportsProgressAndHash(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
-	}
-	if digest != "d2e1fa9733407bfafd03c68c999eef9e4dcb3dd8236c02ccadd3946aa9deabe2" {
-		t.Fatalf("unexpected digest: %s", digest)
 	}
 	if len(updates) == 0 || updates[len(updates)-1] != int64(len(payload)) {
 		t.Fatalf("progress updates = %#v", updates)
@@ -85,9 +81,9 @@ func TestDownloadFileRejectsTruncatedContentLength(t *testing.T) {
 	}))
 	defer server.Close()
 
-	_, err := downloadFileWithProgress(server.URL, filepath.Join(t.TempDir(), "partial.zip"), nil)
-	if err == nil || !strings.Contains(err.Error(), "下载未完成") {
-		t.Fatalf("err = %v, want simple download failure", err)
+	err := downloadFileWithProgress(server.URL, filepath.Join(t.TempDir(), "partial.zip"), nil)
+	if err == nil || !strings.Contains(err.Error(), "下载重试后仍未完成") || !strings.Contains(err.Error(), "下载内容不完整") {
+		t.Fatalf("err = %v, want detailed download failure", err)
 	}
 }
 
@@ -234,7 +230,7 @@ func TestPatchLinuxQQEntrypointCreatesManagedLoader(t *testing.T) {
 		t.Fatal(err)
 	}
 	loader, err := os.ReadFile(filepath.Join(filepath.Dir(packagePath), "loadNapCat.js"))
-	if err != nil || !bytes.Contains(loader, []byte(runtimeRoot)) || !bytes.Contains(loader, []byte("candidates")) {
+	if err != nil || !bytes.Contains(loader, []byte(runtimeRoot)) || !bytes.Contains(loader, []byte("napcat.mjs")) {
 		t.Fatalf("managed loader = %q, err=%v", loader, err)
 	}
 }
@@ -259,6 +255,40 @@ func TestNapcatShellEntrypointSupportsCurrentAndLegacyLayouts(t *testing.T) {
 	}
 	if entry, err := napcatShellEntrypoint(root); err != nil || entry != legacy {
 		t.Fatalf("legacy shell entry = %q, %v", entry, err)
+	}
+	if err := os.RemoveAll(filepath.Join(root, "napcat")); err != nil {
+		t.Fatal(err)
+	}
+	wrapped := filepath.Join(root, "NapCat.Shell", "napcat.mjs")
+	if err := os.MkdirAll(filepath.Dir(wrapped), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(wrapped, []byte("wrapped"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if entry, err := napcatShellEntrypoint(root); err != nil || entry != wrapped {
+		t.Fatalf("wrapped shell entry = %q, %v", entry, err)
+	}
+}
+
+func TestPatchLinuxQQEntrypointUsesExtractedShellLocation(t *testing.T) {
+	root, shellRoot := t.TempDir(), t.TempDir()
+	packagePath := filepath.Join(root, "opt", "QQ", "resources", "app", "package.json")
+	if err := os.MkdirAll(filepath.Dir(packagePath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(packagePath, []byte(`{"main": "./application.asar/app_launcher/index.js"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(shellRoot, "napcat.mjs"), []byte("fixture"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := patchLinuxQQEntrypoint(root, shellRoot); err != nil {
+		t.Fatal(err)
+	}
+	loader, err := os.ReadFile(filepath.Join(filepath.Dir(packagePath), "loadNapCat.js"))
+	if err != nil || !bytes.Contains(loader, []byte(shellRoot)) || !bytes.Contains(loader, []byte("napcat.mjs")) {
+		t.Fatalf("loader = %q, err=%v", loader, err)
 	}
 }
 

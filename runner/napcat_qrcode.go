@@ -14,7 +14,7 @@ const maxNapCatQRCodeSize = 2 << 20
 type napcatQRCode struct {
 	Available bool   `json:"available"`
 	UpdatedAt string `json:"updatedAt,omitempty"`
-	PNG       string `json:"png,omitempty"`
+	Data      string `json:"data,omitempty"`
 }
 
 // napcatQRCodeFile intentionally searches only the known NapCat runtime
@@ -70,7 +70,7 @@ func napcatQRCodeAction() (string, error) {
 			return "", errors.New("NapCat 二维码不是有效 PNG 图片")
 		}
 		payload.UpdatedAt = info.ModTime().UTC().Format(time.RFC3339Nano)
-		payload.PNG = base64.StdEncoding.EncodeToString(data)
+		payload.Data = base64.StdEncoding.EncodeToString(data)
 	}
 	encoded, err := json.Marshal(payload)
 	if err != nil {

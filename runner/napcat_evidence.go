@@ -9,12 +9,6 @@ import (
 	"strings"
 )
 
-// napcatReleaseValidationEvidence is optional release metadata. It may be
-// embedded by CI for diagnostics, but local installation never depends on it:
-// the official Release Asset digest and installed runtime fingerprint remain
-// the authority used by the workbench.
-var napcatReleaseValidationEvidence = ""
-
 func napcatStateVerified(state State) bool {
 	platform := napcatPlatform()
 	if platform == nil || !state.Managed || state.InstallMode != "managed" || state.Platform != platform.Key {

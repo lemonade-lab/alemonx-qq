@@ -140,7 +140,7 @@ export type LocalService = { pluginId: string; id: string; name: string; reachab
 type HostContext = { robot?: RobotProject | null }
 
 export function napcatQRCodeURL(updatedAt?: string): string {
-	return `/api/v1/setup/plugins/${PLUGIN_ID}/qrcode?updatedAt=${encodeURIComponent(updatedAt || '')}`
+	return `/api/v1/setup/plugins/${PLUGIN_ID}/media/napcat-qrcode?updatedAt=${encodeURIComponent(updatedAt || '')}`
 }
 
 export async function fetchLocalServices(): Promise<LocalService[]> {

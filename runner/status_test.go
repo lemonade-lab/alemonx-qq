@@ -48,7 +48,7 @@ func TestNapCatQRCodeActionReadsOnlyKnownCacheFile(t *testing.T) {
 	if err := json.Unmarshal([]byte(output), &payload); err != nil {
 		t.Fatal(err)
 	}
-	if !payload.Available || payload.PNG == "" || payload.UpdatedAt == "" {
+	if !payload.Available || payload.Data == "" || payload.UpdatedAt == "" {
 		t.Fatalf("unexpected QR payload: %+v", payload)
 	}
 }

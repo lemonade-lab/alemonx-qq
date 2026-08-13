@@ -25,10 +25,9 @@ const (
 )
 
 type linuxQQAsset struct {
-	Name   string
-	URL    string
-	Kind   string
-	SHA256 string
+	Name string
+	URL  string
+	Kind string
 }
 
 // linuxQQReleaseAssets are official Tencent Linux QQ packages. The values are
@@ -52,9 +51,8 @@ func linuxQQReleaseAssetForEnvironment(environment string) (linuxQQAsset, error)
 }
 
 // linuxQQReleaseAssetFor is kept free of host inspection so every supported
-// package can be tested. Tencent does not publish a stable checksum manifest
-// for these direct downloads; the reviewed hashes below are therefore part of
-// this release contract and must be updated together with linuxQQVersion.
+// package can be tested. Installation success is based on downloading,
+// unpacking, and launching the selected package successfully.
 func linuxQQReleaseAssetFor(goarch, packageManager string) (linuxQQAsset, error) {
 	asset, err := qqruntime.AssetFor(goarch, packageManager)
 	if err != nil {
@@ -63,7 +61,7 @@ func linuxQQReleaseAssetFor(goarch, packageManager string) (linuxQQAsset, error)
 		}
 		return linuxQQAsset{}, fmt.Errorf("Linux %s 暂不支持自动安装 QQ 运行时", goarch)
 	}
-	return linuxQQAsset{Name: asset.Name, Kind: asset.Kind, URL: asset.URL, SHA256: asset.SHA256}, nil
+	return linuxQQAsset{Name: asset.Name, Kind: asset.Kind, URL: asset.URL}, nil
 }
 
 func secureArchiveTarget(destination, name string) (string, error) {
@@ -420,7 +418,7 @@ func extractRPMQQ(archivePath, destination string) error {
 	return extractNewcCPIO(payload, destination)
 }
 
-func patchLinuxQQEntrypoint(root, runtimeRoot string) error {
+func patchLinuxQQEntrypoint(root, shellRoot string) error {
 	packagePath := filepath.Join(root, "opt", "QQ", "resources", "app", "package.json")
 	data, err := os.ReadFile(packagePath)
 	if err != nil {
@@ -440,14 +438,19 @@ func patchLinuxQQEntrypoint(root, runtimeRoot string) error {
 	if err := os.Rename(packagePath+".new", packagePath); err != nil {
 		return err
 	}
-	if _, err := napcatShellEntrypoint(runtimeRoot); err != nil {
+	entry, err := napcatShellEntrypoint(shellRoot)
+	if err != nil {
 		return err
 	}
 	entrypoint := filepath.Join(root, "opt", "QQ", "resources", "app", "loadNapCat.js")
 	// Since v4.18.18 the official Shell archive puts napcat.mjs at its root.
 	// Older Releases used napcat/napcat.mjs. Resolve both layouts at runtime so
 	// an upstream packaging-only move never turns into an installation failure.
-	content := "const fs = require('fs');\nconst path = require('path');\nconst home = process.env.NAPCAT_HOME || " + strconv.Quote(runtimeRoot) + ";\nconst candidates = [path.join(home, 'napcat.mjs'), path.join(home, 'napcat', 'napcat.mjs')];\nconst entry = candidates.find(fs.existsSync);\nif (!entry) throw new Error('NapCat Shell entrypoint missing');\n(async () => { await import('file://' + entry); })();\n"
+	relativeEntry, err := filepath.Rel(shellRoot, entry)
+	if err != nil || relativeEntry == "." || filepath.IsAbs(relativeEntry) || strings.HasPrefix(relativeEntry, ".."+string(filepath.Separator)) {
+		return errors.New("NapCat Shell 启动模块路径无效")
+	}
+	content := "const path = require('path');\nconst home = process.env.NAPCAT_HOME || " + strconv.Quote(shellRoot) + ";\n(async () => { await import('file://' + path.join(home, " + strconv.Quote(filepath.ToSlash(relativeEntry)) + ")); })();\n"
 	return os.WriteFile(entrypoint, []byte(content), 0o600)
 }
 
@@ -455,10 +458,24 @@ func patchLinuxQQEntrypoint(root, runtimeRoot string) error {
 // moved the module from napcat/napcat.mjs to the archive root; both formats are
 // genuine official Releases and both are supported by the generated loader.
 func napcatShellEntrypoint(root string) (string, error) {
-	for _, candidate := range []string{
+	root = filepath.Clean(root)
+	// The official archive has shipped both flat and napcat/ layouts. Some
+	// mirrors also retain one additional top-level release folder. Limit the
+	// search to two levels and only accept the canonical module name.
+	candidates := []string{
 		filepath.Join(root, "napcat.mjs"),
 		filepath.Join(root, "napcat", "napcat.mjs"),
-	} {
+	}
+	entries, _ := os.ReadDir(root)
+	for _, item := range entries {
+		if item.IsDir() {
+			candidates = append(candidates,
+				filepath.Join(root, item.Name(), "napcat.mjs"),
+				filepath.Join(root, item.Name(), "napcat", "napcat.mjs"),
+			)
+		}
+	}
+	for _, candidate := range candidates {
 		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
 			return candidate, nil
 		}

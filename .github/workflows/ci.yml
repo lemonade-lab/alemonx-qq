@@ -51,10 +51,6 @@ jobs:
       - name: Validate release version
         if: startsWith(github.ref, 'refs/tags/v')
         run: go run ./cmd/alx-ci verify-version "$GITHUB_REF_NAME"
-      - name: Validate reviewed runtime evidence
-        run: |
-          go run ./cmd/alx-ci evidence check-tree
-          go test ./cmd/alx-ci
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -76,6 +72,7 @@ jobs:
       - run: yarn install --non-interactive && yarn build
         working-directory: frontend
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: web-dist
           path: web/
@@ -107,15 +104,14 @@ jobs:
       - name: Build plugin bundle
         run: |
           mkdir -p "bundle/alemonx-qq/dist" release
-          lucky_evidence="$(go run ./cmd/alx-ci evidence encode luckylillia ${{ matrix.lucky_platform }})"
-          napcat_evidence="$(go run ./cmd/alx-ci evidence encode napcat ${{ matrix.napcat_platform }})"
-          go run ./cmd/alx-ci evidence prepare-manifest ${{ matrix.bundle_platform }} alx.json "bundle/alemonx-qq/alx.json"
+          cp alx.json "bundle/alemonx-qq/alx.json"
           cp -r web "bundle/alemonx-qq/web"
           CGO_ENABLED=0 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} \
-            go build -trimpath -ldflags "-s -w -X main.luckyReleaseValidationEvidence=$lucky_evidence -X main.napcatReleaseValidationEvidence=$napcat_evidence" -o "bundle/alemonx-qq/dist/${{ matrix.binary }}" ./runner
+            go build -trimpath -ldflags "-s -w" -o "bundle/alemonx-qq/dist/${{ matrix.binary }}" ./runner
           (cd bundle && zip -r "../release/${{ matrix.bundle }}" alemonx-qq)
           (cd release && sha256sum "${{ matrix.bundle }}" > "${{ matrix.bundle }}.sha256")
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: ${{ matrix.bundle }}
           path: release/
@@ -160,6 +156,7 @@ jobs:
       - name: Package staged runtime and generate SBOM
         run: go run ./cmd/alx-ci package-napcat-runtime "${{ matrix.platform }}" runtime-stage release/${{ matrix.platform }}
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: napcat-runtime-${{ matrix.platform }}
           path: release/
@@ -214,9 +211,11 @@ jobs:
           LUCKYLILLIA_PLATFORM: linux-arm64
           LUCKYLILLIA_E2E_COMMAND_JSON: ${{ vars.LUCKYLILLIA_E2E_COMMAND_JSON_LINUX_ARM64 }}
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: luckylillia-linux-arm64-validation
-          path: artifacts/luckylillia-validation.json
+          path: artifacts/
+          if-no-files-found: warn
 
   luckylillia-e2e-linux-amd64:
     if: github.event_name == 'workflow_dispatch' && inputs.luckylillia_e2e
@@ -231,9 +230,11 @@ jobs:
           LUCKYLILLIA_PLATFORM: linux-amd64
           LUCKYLILLIA_E2E_COMMAND_JSON: ${{ vars.LUCKYLILLIA_E2E_COMMAND_JSON_LINUX_AMD64 }}
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: luckylillia-linux-amd64-validation
-          path: artifacts/luckylillia-validation.json
+          path: artifacts/
+          if-no-files-found: warn
 
   luckylillia-e2e-windows-amd64:
     if: github.event_name == 'workflow_dispatch' && inputs.luckylillia_e2e
@@ -248,9 +249,11 @@ jobs:
           LUCKYLILLIA_PLATFORM: windows-amd64
           LUCKYLILLIA_E2E_COMMAND_JSON: ${{ vars.LUCKYLILLIA_E2E_COMMAND_JSON_WINDOWS_AMD64 }}
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: luckylillia-windows-amd64-validation
-          path: artifacts/luckylillia-validation.json
+          path: artifacts/
+          if-no-files-found: warn
 
   luckylillia-e2e-darwin-arm64:
     if: github.event_name == 'workflow_dispatch' && inputs.luckylillia_e2e
@@ -265,9 +268,11 @@ jobs:
           LUCKYLILLIA_PLATFORM: darwin-arm64
           LUCKYLILLIA_E2E_COMMAND_JSON: ${{ vars.LUCKYLILLIA_E2E_COMMAND_JSON_DARWIN_ARM64 }}
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: luckylillia-darwin-arm64-validation
-          path: artifacts/luckylillia-validation.json
+          path: artifacts/
+          if-no-files-found: warn
 
   napcat-e2e-windows-amd64:
     if: github.event_name == 'workflow_dispatch' && inputs.napcat_runtime_check
@@ -283,9 +288,11 @@ jobs:
           NAPCAT_PLATFORM: windows-amd64
           NAPCAT_E2E_COMMAND_JSON: ${{ vars.NAPCAT_E2E_COMMAND_JSON_WINDOWS_AMD64 }}
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: napcat-windows-amd64-validation
-          path: artifacts/napcat-validation.json
+          path: artifacts/
+          if-no-files-found: warn
 
   napcat-e2e-linux-amd64:
     if: github.event_name == 'workflow_dispatch' && inputs.napcat_runtime_check
@@ -301,9 +308,11 @@ jobs:
           NAPCAT_PLATFORM: linux-amd64
           NAPCAT_E2E_COMMAND_JSON: ${{ vars.NAPCAT_E2E_COMMAND_JSON_LINUX_AMD64 }}
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: napcat-linux-amd64-validation
-          path: artifacts/napcat-validation.json
+          path: artifacts/
+          if-no-files-found: warn
 
   napcat-e2e-linux-arm64:
     if: github.event_name == 'workflow_dispatch' && inputs.napcat_runtime_check
@@ -319,9 +328,11 @@ jobs:
           NAPCAT_PLATFORM: linux-arm64
           NAPCAT_E2E_COMMAND_JSON: ${{ vars.NAPCAT_E2E_COMMAND_JSON_LINUX_ARM64 }}
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: napcat-linux-arm64-validation
-          path: artifacts/napcat-validation.json
+          path: artifacts/
+          if-no-files-found: warn
 
   compatibility-runtime-linux-amd64:
     if: github.event_name == 'workflow_dispatch' && inputs.compatibility_runtime_check
@@ -338,9 +349,11 @@ jobs:
           NAPCAT_RUNTIME_STAGE: ${{ vars.NAPCAT_RUNTIME_STAGE_LINUX_AMD64 }}
           NAPCAT_RUNTIME_E2E_COMMAND_JSON: ${{ vars.NAPCAT_RUNTIME_E2E_COMMAND_JSON_LINUX_AMD64 }}
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: napcat-runtime-linux-amd64-validation
-          path: artifacts/napcat-runtime-validation.json
+          path: artifacts/
+          if-no-files-found: warn
 
   compatibility-runtime-linux-arm64:
     if: github.event_name == 'workflow_dispatch' && inputs.compatibility_runtime_check
@@ -357,6 +370,8 @@ jobs:
           NAPCAT_RUNTIME_STAGE: ${{ vars.NAPCAT_RUNTIME_STAGE_LINUX_ARM64 }}
           NAPCAT_RUNTIME_E2E_COMMAND_JSON: ${{ vars.NAPCAT_RUNTIME_E2E_COMMAND_JSON_LINUX_ARM64 }}
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: napcat-runtime-linux-arm64-validation
-          path: artifacts/napcat-runtime-validation.json
+          path: artifacts/
+          if-no-files-found: warn

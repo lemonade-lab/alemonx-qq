@@ -6,7 +6,6 @@ import (
 	"archive/tar"
 	"archive/zip"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -30,7 +29,6 @@ const maxManifestSize = 64 << 10
 
 var (
 	idPattern      = regexp.MustCompile(`^[a-z][a-z0-9-]{1,63}$`)
-	shaPattern     = regexp.MustCompile(`^[0-9a-fA-F]{64}$`)
 	versionPattern = regexp.MustCompile(`^(?:0|[1-9]\d*)(?:\.(?:0|[1-9]\d*)){1,2}(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$`)
 )
 
@@ -42,9 +40,8 @@ var luckyAssets = map[string]string{
 }
 
 type releaseAsset struct {
-	Name   string `json:"name"`
-	URL    string `json:"browser_download_url"`
-	Digest string `json:"digest"`
+	Name string `json:"name"`
+	URL  string `json:"browser_download_url"`
 }
 
 type release struct {
@@ -82,10 +79,6 @@ func run(args []string) error {
 			return errors.New("usage: verify-version <tag>")
 		}
 		return verifyVersion("alx.json", args[1])
-	case "evidence":
-		return evidenceCommand(args[1:])
-	case "validate-runtime":
-		return validateRuntimeEnvironment()
 	case "package-napcat-runtime":
 		return packageNapcatRuntime(args[1:])
 	case "stage-napcat-runtime":
@@ -311,249 +304,6 @@ func validateSystemPickers(items []any) []string {
 	return errorsFound
 }
 
-func evidenceCommand(args []string) error {
-	if len(args) == 0 {
-		return errors.New("usage: evidence <check-tree|encode|prepare-manifest>")
-	}
-	switch args[0] {
-	case "check-tree":
-		return checkEvidenceTree(".")
-	case "encode":
-		if len(args) != 3 {
-			return errors.New("usage: evidence encode <core> <platform>")
-		}
-		record, err := loadEvidence(".", args[1], args[2])
-		if err != nil {
-			return err
-		}
-		if record == nil {
-			return nil
-		}
-		data, _ := json.Marshal(record)
-		fmt.Println(base64.RawURLEncoding.EncodeToString(data))
-		return nil
-	case "prepare-manifest":
-		if len(args) != 4 {
-			return errors.New("usage: evidence prepare-manifest <platform> <input> <output>")
-		}
-		return prepareManifest(".", args[1], args[2], args[3])
-	default:
-		return fmt.Errorf("unknown evidence command %q", args[0])
-	}
-}
-
-func loadEvidence(root, core, platform string) (map[string]any, error) {
-	path := filepath.Join(root, "evidence", core, platform+".json")
-	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
-		return nil, nil
-	}
-	record, err := readJSON(path)
-	if err != nil {
-		return nil, fmt.Errorf("%s: invalid JSON: %w", path, err)
-	}
-	if err := validateEvidence(core, platform, record); err != nil {
-		return nil, fmt.Errorf("%s: %w", path, err)
-	}
-	return record, nil
-}
-
-func requiredStrings(record map[string]any, fields ...string) error {
-	for _, field := range fields {
-		if strings.TrimSpace(asString(record[field])) == "" {
-			return fmt.Errorf("evidence requires %s", field)
-		}
-	}
-	return nil
-}
-
-func validateEvidence(core, platform string, record map[string]any) error {
-	if asString(record["core"]) != core || asString(record["platform"]) != platform {
-		return errors.New("core/platform does not match its path")
-	}
-	if err := requiredStrings(record, "validatedAt", "processModel", "runtimeFingerprint"); err != nil {
-		return err
-	}
-	if asString(record["status"]) != "passed" || asString(record["processModel"]) != "foreground" || !shaPattern.MatchString(asString(record["runtimeFingerprint"])) {
-		return errors.New("status, process model or runtime fingerprint is invalid")
-	}
-	if _, ok := record["websocketRequired"].(bool); !ok {
-		return errors.New("websocketRequired must be boolean")
-	}
-	switch core {
-	case "luckylillia":
-		if err := requiredStrings(record, "tag", "asset", "archiveSha256"); err != nil {
-			return err
-		}
-		if luckyAssets[platform] != asString(record["asset"]) || !shaPattern.MatchString(asString(record["archiveSha256"])) {
-			return errors.New("LuckyLillia asset or SHA-256 is invalid")
-		}
-	case "napcat":
-		return validateNapcatEvidence(platform, record)
-	default:
-		return fmt.Errorf("unknown core %q", core)
-	}
-	return nil
-}
-
-func validateNapcatEvidence(platform string, record map[string]any) error {
-	if err := requiredStrings(record, "tag", "asset", "archiveSha256"); err != nil {
-		return err
-	}
-	if platform == "windows-amd64" {
-		if asString(record["asset"]) != "NapCat.Shell.Windows.OneKey.zip" || !shaPattern.MatchString(asString(record["archiveSha256"])) {
-			return errors.New("Windows NapCat asset or SHA-256 is invalid")
-		}
-		return nil
-	}
-	if platform != "linux-amd64" && platform != "linux-arm64" {
-		return errors.New("unsupported NapCat platform")
-	}
-	if asString(record["asset"]) != "NapCat.Shell.zip" || !shaPattern.MatchString(asString(record["archiveSha256"])) {
-		return errors.New("Linux NapCat Shell asset or SHA-256 is invalid")
-	}
-	if err := requiredStrings(record, "runtimeAsset", "runtimeArchiveSha256"); err != nil {
-		return err
-	}
-	goarch := strings.TrimPrefix(platform, "linux-")
-	if !qqruntime.Matches(goarch, asString(record["runtimeAsset"]), asString(record["runtimeArchiveSha256"])) {
-		return errors.New("Linux NapCat QQ runtime asset or SHA-256 is not a reviewed contract")
-	}
-	return nil
-}
-
-func checkEvidenceTree(root string) error {
-	base := filepath.Join(root, "evidence")
-	entries, err := os.ReadDir(base)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	for _, entry := range entries {
-		if !entry.IsDir() || (entry.Name() != "napcat" && entry.Name() != "luckylillia") {
-			return fmt.Errorf("unexpected evidence directory: %s", entry.Name())
-		}
-		files, err := os.ReadDir(filepath.Join(base, entry.Name()))
-		if err != nil {
-			return err
-		}
-		for _, file := range files {
-			if !file.IsDir() && strings.HasSuffix(file.Name(), ".json") {
-				if _, err := loadEvidence(root, entry.Name(), strings.TrimSuffix(file.Name(), ".json")); err != nil {
-					return err
-				}
-			}
-		}
-	}
-	return nil
-}
-
-func prepareManifest(root, platform, input, output string) error {
-	manifest, err := readJSON(input)
-	if err != nil {
-		return err
-	}
-	flags := map[string]bool{"napcat-webui": false, "luckylillia-webui": false}
-	for core, service := range map[string]string{"napcat": "napcat-webui", "luckylillia": "luckylillia-webui"} {
-		record, err := loadEvidence(root, core, platform)
-		if err != nil {
-			return err
-		}
-		if record != nil {
-			flags[service], _ = record["websocketRequired"].(bool)
-		}
-	}
-	if services, ok := manifest["services"].([]any); ok {
-		for _, raw := range services {
-			if service, ok := raw.(map[string]any); ok {
-				if enabled, exists := flags[asString(service["id"])]; exists {
-					service["websocket"] = enabled
-				}
-			}
-		}
-	}
-	return writeJSON(output, manifest)
-}
-
-func recordsFromEnv(name, label string) ([]map[string]any, error) {
-	raw := strings.TrimSpace(os.Getenv(name))
-	if raw == "" {
-		fmt.Printf("%s validation evidence is absent; installation remains disabled.\n", label)
-		return nil, nil
-	}
-	var records []map[string]any
-	if strings.HasPrefix(raw, "{") {
-		var record map[string]any
-		if err := json.Unmarshal([]byte(raw), &record); err != nil {
-			return nil, err
-		}
-		records = []map[string]any{record}
-	} else if err := json.Unmarshal([]byte(raw), &records); err != nil {
-		return nil, err
-	}
-	if len(records) == 0 {
-		return nil, errors.New("validation evidence must be one record or a non-empty record list")
-	}
-	return records, nil
-}
-
-func validateRuntimeEnvironment() error {
-	lucky, err := recordsFromEnv("LUCKYLILLIA_VALIDATION_EVIDENCE", "LuckyLillia")
-	if err != nil {
-		return err
-	}
-	if err := validateRuntimeRecords("luckylillia", lucky); err != nil {
-		return err
-	}
-	if len(lucky) > 0 {
-		fmt.Println("LuckyLillia validation evidence accepted for release embedding.")
-	}
-	napcat, err := recordsFromEnv("NAPCAT_VALIDATION_EVIDENCE", "NapCat")
-	if err != nil {
-		return err
-	}
-	if err := validateRuntimeRecords("napcat", napcat); err != nil {
-		return err
-	}
-	if len(napcat) > 0 {
-		fmt.Println("NapCat validation evidence accepted for release embedding.")
-	}
-	return nil
-}
-
-func validateRuntimeRecords(core string, records []map[string]any) error {
-	seen := map[string]bool{}
-	for _, record := range records {
-		if err := requiredStrings(record, "platform", "runtimeFingerprint", "validatedAt", "processModel"); err != nil {
-			return err
-		}
-		platform := asString(record["platform"])
-		if seen[platform] || !shaPattern.MatchString(asString(record["runtimeFingerprint"])) || asString(record["processModel"]) != "foreground" {
-			return errors.New("duplicate platform, runtime fingerprint or process model is invalid")
-		}
-		if _, ok := record["websocketRequired"].(bool); !ok {
-			return errors.New("websocketRequired must be boolean")
-		}
-		if core == "luckylillia" {
-			if err := requiredStrings(record, "tag", "asset", "archiveSha256"); err != nil {
-				return err
-			}
-			if luckyAssets[platform] != asString(record["asset"]) || !shaPattern.MatchString(asString(record["archiveSha256"])) {
-				return errors.New("LuckyLillia evidence asset, platform or SHA-256 is invalid")
-			}
-		} else if core == "napcat" {
-			if err := validateNapcatEvidence(platform, record); err != nil {
-				return err
-			}
-		} else {
-			return fmt.Errorf("unknown core %q", core)
-		}
-		seen[platform] = true
-	}
-	return nil
-}
-
 func latestRelease(repository string) (release, error) {
 	response, err := (&http.Client{Timeout: 30 * time.Second}).Get("https://api.github.com/repos/" + repository + "/releases/latest")
 	if err != nil {
@@ -578,10 +328,6 @@ func assetByName(value release, name string) (releaseAsset, error) {
 	}
 	return releaseAsset{}, fmt.Errorf("release asset %s not found", name)
 }
-func digest(value string) string {
-	return strings.TrimPrefix(strings.ToLower(strings.TrimSpace(value)), "sha256:")
-}
-
 func downloadAndHash(url, path string) (string, error) {
 	response, err := (&http.Client{Timeout: 30 * time.Minute}).Get(url)
 	if err != nil {
@@ -597,12 +343,9 @@ func downloadAndHash(url, path string) (string, error) {
 	}
 	defer file.Close()
 	hash := sha256.New()
-	count, err := io.Copy(io.MultiWriter(file, hash), io.LimitReader(response.Body, 300<<20+1))
+	_, err = io.Copy(io.MultiWriter(file, hash), response.Body)
 	if err != nil {
 		return "", err
-	}
-	if count > 300<<20 {
-		return "", errors.New("official archive exceeds 300 MB limit")
 	}
 	return fmt.Sprintf("%x", hash.Sum(nil)), nil
 }
@@ -696,17 +439,11 @@ func verifyLuckyE2E() error {
 	if err != nil {
 		return err
 	}
-	if !shaPattern.MatchString(digest(asset.Digest)) {
-		return errors.New("official LuckyLillia asset lacks SHA-256")
-	}
 	archive := filepath.Join("artifacts", asset.Name)
 	defer os.Remove(archive)
 	actual, err := downloadAndHash(asset.URL, archive)
 	if err != nil {
 		return err
-	}
-	if actual != digest(asset.Digest) {
-		return errors.New("LuckyLillia asset SHA-256 mismatch")
 	}
 	if err := inspectCLIArchive(archive, asset.Name); err != nil {
 		return err
@@ -718,8 +455,8 @@ func verifyLuckyE2E() error {
 	if err != nil {
 		return err
 	}
-	if asString(report["processModel"]) != "foreground" || !shaPattern.MatchString(asString(report["runtimeFingerprint"])) {
-		return errors.New("LuckyLillia process report is invalid")
+	if asString(report["processModel"]) != "foreground" {
+		return errors.New("LuckyLillia process report must describe a foreground process")
 	}
 	if _, ok := report["websocketRequired"].(bool); !ok {
 		return errors.New("LuckyLillia process report must state websocketRequired")
@@ -729,11 +466,8 @@ func verifyLuckyE2E() error {
 			return fmt.Errorf("LuckyLillia process report requires %s", key)
 		}
 	}
-	evidence := map[string]any{"core": "luckylillia", "tag": releaseInfo.TagName, "platform": platform, "asset": asset.Name, "archiveSha256": actual, "runtimeFingerprint": asString(report["runtimeFingerprint"]), "validatedAt": time.Now().UTC().Format(time.RFC3339), "processModel": "foreground", "websocketRequired": report["websocketRequired"], "status": "passed"}
-	if err := validateRuntimeRecords("luckylillia", []map[string]any{evidence}); err != nil {
-		return err
-	}
-	return writeJSON(filepath.Join("artifacts", "luckylillia-validation.json"), evidence)
+	report["core"], report["tag"], report["platform"], report["asset"], report["archiveSha256"], report["validatedAt"], report["status"] = "luckylillia", releaseInfo.TagName, platform, asset.Name, actual, time.Now().UTC().Format(time.RFC3339), "passed"
+	return writeJSON(filepath.Join("artifacts", "luckylillia-validation.json"), report)
 }
 
 func verifyNapcatE2E() error {
@@ -758,17 +492,11 @@ func verifyNapcatE2E() error {
 	if err != nil {
 		return err
 	}
-	if !shaPattern.MatchString(digest(asset.Digest)) {
-		return errors.New("official NapCat asset lacks SHA-256")
-	}
 	archive := filepath.Join("artifacts", asset.Name)
 	defer os.Remove(archive)
 	actual, err := downloadAndHash(asset.URL, archive)
 	if err != nil {
 		return err
-	}
-	if actual != digest(asset.Digest) {
-		return errors.New("NapCat asset SHA-256 mismatch")
 	}
 	if platform == "linux-amd64" || platform == "linux-arm64" {
 		qqAsset, err := linuxQQAssetForE2E(platform)
@@ -777,16 +505,12 @@ func verifyNapcatE2E() error {
 		}
 		qqArchive := filepath.Join("artifacts", qqAsset.Name)
 		defer os.Remove(qqArchive)
-		qqDigest, err := downloadAndHash(qqAsset.URL, qqArchive)
+		_, err = downloadAndHash(qqAsset.URL, qqArchive)
 		if err != nil {
 			return err
 		}
-		if qqDigest != qqAsset.SHA256 {
-			return errors.New("Linux QQ runtime SHA-256 mismatch")
-		}
 		candidate["runtimeAsset"] = qqAsset.Name
-		candidate["runtimeArchiveSha256"] = qqDigest
-		environment = append(environment, "NAPCAT_RUNTIME_ASSET="+qqAsset.Name, "NAPCAT_RUNTIME_ARCHIVE="+qqArchive, "NAPCAT_RUNTIME_ARCHIVE_SHA256="+qqDigest)
+		environment = append(environment, "NAPCAT_RUNTIME_ASSET="+qqAsset.Name, "NAPCAT_RUNTIME_ARCHIVE="+qqArchive)
 	}
 	archiveReader, err := zip.OpenReader(archive)
 	if err != nil {
@@ -811,7 +535,7 @@ func verifyNapcatE2E() error {
 	if err := writeJSON(filepath.Join("artifacts", "napcat-candidate-evidence.json"), candidate); err != nil {
 		return err
 	}
-	environment = append(environment, "NAPCAT_RELEASE_TAG="+releaseInfo.TagName, "NAPCAT_ASSET="+asset.Name, "NAPCAT_ARCHIVE="+archive, "NAPCAT_ARCHIVE_SHA256="+actual)
+	environment = append(environment, "NAPCAT_RELEASE_TAG="+releaseInfo.TagName, "NAPCAT_ASSET="+asset.Name, "NAPCAT_ARCHIVE="+archive)
 	if err := runCommandFromJSON("NAPCAT_E2E_COMMAND_JSON", environment); err != nil {
 		return err
 	}
@@ -819,8 +543,8 @@ func verifyNapcatE2E() error {
 	if err != nil {
 		return err
 	}
-	if asString(report["platform"]) != platform || asString(report["processModel"]) != "foreground" || report["temporaryEvidenceInjected"] != true {
-		return errors.New("NapCat E2E report platform, process model or temporary evidence is invalid")
+	if asString(report["platform"]) != platform || asString(report["processModel"]) != "foreground" {
+		return errors.New("NapCat E2E report platform or process model is invalid")
 	}
 	stages, ok := report["stages"].(map[string]any)
 	if !ok {
@@ -831,26 +555,11 @@ func verifyNapcatE2E() error {
 			return fmt.Errorf("NapCat E2E stage %s did not pass", stage)
 		}
 	}
-	evidence, ok := report["evidence"].(map[string]any)
-	if !ok {
-		return errors.New("NapCat E2E report evidence is missing")
-	}
-	for _, field := range []string{"tag", "asset", "archiveSha256", "runtimeAsset", "runtimeArchiveSha256"} {
-		if _, expected := candidate[field]; !expected {
-			continue
-		}
-		if evidence[field] != candidate[field] {
-			return fmt.Errorf("NapCat E2E evidence %s does not match candidate", field)
-		}
-	}
-	evidence["core"], evidence["platform"], evidence["processModel"], evidence["websocketRequired"], evidence["status"] = "napcat", platform, "foreground", report["websocketRequired"], "passed"
-	if _, ok := evidence["websocketRequired"].(bool); !ok {
+	if _, ok := report["websocketRequired"].(bool); !ok {
 		return errors.New("NapCat E2E report must state websocketRequired")
 	}
-	if err := validateRuntimeRecords("napcat", []map[string]any{evidence}); err != nil {
-		return err
-	}
-	return writeJSON(filepath.Join("artifacts", "napcat-validation.json"), evidence)
+	report["core"], report["tag"], report["asset"], report["archiveSha256"], report["validatedAt"], report["status"] = "napcat", releaseInfo.TagName, asset.Name, actual, time.Now().UTC().Format(time.RFC3339), "passed"
+	return writeJSON(filepath.Join("artifacts", "napcat-validation.json"), report)
 }
 
 func verifyNapcatRuntime() error {

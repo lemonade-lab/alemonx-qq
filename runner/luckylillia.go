@@ -3,8 +3,6 @@ package main
 import (
 	"archive/tar"
 	"archive/zip"
-	"crypto/sha256"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -28,11 +26,6 @@ const (
 	luckyOneBotPort = 7199
 )
 
-// luckyReleaseValidationEvidence is optional service metadata injected by CI.
-// It is used for service capability metadata (for example WebSocket support),
-// never as an end-user installation gate.
-var luckyReleaseValidationEvidence = ""
-
 type luckyState struct {
 	Version        string `json:"version,omitempty"`
 	InstallDir     string `json:"installDir,omitempty"`
@@ -43,45 +36,38 @@ type luckyState struct {
 	InstallMode    string `json:"installMode,omitempty"`
 	ReleaseTag     string `json:"releaseTag,omitempty"`
 	Asset          string `json:"asset,omitempty"`
-	ArchiveSHA256  string `json:"archiveSha256,omitempty"`
-	Fingerprint    string `json:"fingerprint,omitempty"`
-	ValidatedAt    string `json:"validatedAt,omitempty"`
 }
 
-type luckyServiceMetadata struct {
-	Platform          string `json:"platform"`
-	Tag               string `json:"tag"`
-	Asset             string `json:"asset"`
-	ArchiveSHA256     string `json:"archiveSha256"`
-	Fingerprint       string `json:"runtimeFingerprint"`
-	ValidatedAt       string `json:"validatedAt"`
-	ProcessModel      string `json:"processModel"`
-	WebSocketRequired bool   `json:"websocketRequired"`
+// luckyProcess records the CLI leader and the process group owned by the
+// workbench. Linux uses an Xvfb leader so the display server and LLBot are
+// stopped together; other platforms use the CLI process itself as the group.
+type luckyProcess struct {
+	PID            int
+	ProcessGroupID int
 }
 
 type kernelStatus struct {
-	Engine            string `json:"engine"`
-	Installed         bool   `json:"installed"`
-	InstallHealthy    bool   `json:"installHealthy"`
-	Running           bool   `json:"running"`
-	PortReachable     bool   `json:"portReachable"`
-	WebUIReady        bool   `json:"webUiReady"`
-	OneBotReady       bool   `json:"oneBotReady"`
-	LoginPending      bool   `json:"loginPending"`
-	Version           string `json:"version,omitempty"`
-	PID               int    `json:"pid,omitempty"`
-	WebUIURL          string `json:"webUiUrl,omitempty"`
-	OneBotURL         string `json:"oneBotUrl,omitempty"`
-	LogPath           string `json:"logPath,omitempty"`
-	DiagnosticHint    string `json:"diagnosticHint,omitempty"`
-	Error             string `json:"error,omitempty"`
-	Supported         bool   `json:"supported"`
-	Platform          string `json:"platform,omitempty"`
-	InstallMode       string `json:"installMode,omitempty"`
-	Managed           bool   `json:"managed"`
-	WebSocketRequired bool   `json:"websocketRequired"`
-	State             string `json:"state"`
-	UpdatedAt         string `json:"updatedAt"`
+	Engine         string `json:"engine"`
+	Installed      bool   `json:"installed"`
+	InstallHealthy bool   `json:"installHealthy"`
+	Running        bool   `json:"running"`
+	PortReachable  bool   `json:"portReachable"`
+	WebUIReady     bool   `json:"webUiReady"`
+	OneBotReady    bool   `json:"oneBotReady"`
+	LoginPending   bool   `json:"loginPending"`
+	Version        string `json:"version,omitempty"`
+	PID            int    `json:"pid,omitempty"`
+	WebUIURL       string `json:"webUiUrl,omitempty"`
+	OneBotURL      string `json:"oneBotUrl,omitempty"`
+	LogPath        string `json:"logPath,omitempty"`
+	DiagnosticHint string `json:"diagnosticHint,omitempty"`
+	Error          string `json:"error,omitempty"`
+	Supported      bool   `json:"supported"`
+	Platform       string `json:"platform,omitempty"`
+	InstallMode    string `json:"installMode,omitempty"`
+	Managed        bool   `json:"managed"`
+	State          string `json:"state"`
+	UpdatedAt      string `json:"updatedAt"`
 }
 
 // luckyPlatformSpec describes the official CLI contract for each supported
@@ -187,32 +173,6 @@ func saveLuckyState(state luckyState) error {
 
 func luckySupported() bool { return luckyPlatform() != nil }
 
-func luckyServiceMetadataRecord() (luckyServiceMetadata, error) {
-	raw := strings.TrimSpace(luckyReleaseValidationEvidence)
-	if raw == "" {
-		return luckyServiceMetadata{}, errors.New("LuckyLillia 服务元数据不存在")
-	}
-	data, err := base64.RawURLEncoding.DecodeString(raw)
-	if err != nil {
-		return luckyServiceMetadata{}, errors.New("LuckyLillia 服务元数据格式无效")
-	}
-	var records []luckyServiceMetadata
-	if err := json.Unmarshal(data, &records); err != nil {
-		var metadata luckyServiceMetadata
-		if json.Unmarshal(data, &metadata) != nil {
-			return luckyServiceMetadata{}, errors.New("LuckyLillia 服务元数据无效")
-		}
-		records = []luckyServiceMetadata{metadata}
-	}
-	platform := luckyPlatform()
-	for _, metadata := range records {
-		if platform != nil && metadata.Platform == platform.Key {
-			return metadata, nil
-		}
-	}
-	return luckyServiceMetadata{}, errors.New("当前平台没有 LuckyLillia 服务元数据")
-}
-
 func luckyManagedState(state luckyState) bool {
 	platform := luckyPlatform()
 	if platform == nil || !state.Managed || state.InstallMode != "managed" || state.Platform != platform.Key {
@@ -237,19 +197,6 @@ func requireManagedLucky(state luckyState, action string) error {
 		return errors.New("当前 LuckyLillia 不是工作台管理的安装，无法" + action)
 	}
 	return nil
-}
-
-func luckyFingerprint(root string) (string, error) {
-	entry := luckyEntryPoint(root)
-	if entry == "" {
-		return "", errors.New("LuckyLillia 缺少当前平台启动入口")
-	}
-	data, err := os.ReadFile(entry)
-	if err != nil {
-		return "", err
-	}
-	sum := sha256.Sum256(data)
-	return fmt.Sprintf("%x", sum[:]), nil
 }
 
 func reportLuckyProgress(stage string, percent int, message string) {
@@ -323,9 +270,6 @@ func luckyStatus() (string, error) {
 	status := kernelStatus{Engine: "luckylillia", Installed: installed, InstallHealthy: healthy, Running: running, PortReachable: webUI != "", WebUIReady: webUI != "", OneBotReady: onebot != "", LoginPending: running && webUI != "" && onebot == "", Version: state.Version, PID: state.PID, WebUIURL: webUI, OneBotURL: "ws://127.0.0.1:" + strconv.Itoa(oneBotPort), Supported: luckySupported(), Managed: state.Managed, InstallMode: state.InstallMode, State: stateName, UpdatedAt: time.Now().UTC().Format(time.RFC3339)}
 	if platform != nil {
 		status.Platform = platform.Key
-	}
-	if metadata, metadataErr := luckyServiceMetadataRecord(); metadataErr == nil {
-		status.WebSocketRequired = metadata.WebSocketRequired
 	}
 	if path, logErr := luckyLogPath(); logErr == nil {
 		status.LogPath = path
@@ -452,8 +396,7 @@ func luckyInstall(force, confirmed bool) (string, error) {
 	_ = archive.Close()
 	defer os.Remove(archivePath)
 	reportLuckyProgress("download", 20, "下载官方 CLI 包")
-	archiveSHA, err := downloadLuckyAsset(asset, archivePath)
-	if err != nil {
+	if err := downloadLuckyAsset(asset, archivePath); err != nil {
 		restartPrevious()
 		return "", err
 	}
@@ -508,8 +451,7 @@ func luckyInstall(force, confirmed bool) (string, error) {
 			return "", fmt.Errorf("恢复 LuckyLillia 配置失败，已回滚：%w", err)
 		}
 	}
-	fingerprint, _ := luckyFingerprint(target)
-	state := luckyState{Version: strings.TrimPrefix(release.TagName, "v"), InstallDir: target, Managed: true, Platform: platform.Key, InstallMode: "managed", ReleaseTag: release.TagName, Asset: asset.Name, ArchiveSHA256: archiveSHA, Fingerprint: fingerprint}
+	state := luckyState{Version: strings.TrimPrefix(release.TagName, "v"), InstallDir: target, Managed: true, Platform: platform.Key, InstallMode: "managed", ReleaseTag: release.TagName, Asset: asset.Name}
 	if err := saveLuckyState(state); err != nil {
 		_ = os.RemoveAll(target)
 		if hadTarget {
@@ -537,7 +479,7 @@ func luckyInstall(force, confirmed bool) (string, error) {
 	return fmt.Sprintf("✓ LuckyLillia 已安装并启动（版本 %s）。请进入 WebUI 登录。", state.Version), nil
 }
 
-func downloadLuckyAsset(asset releaseAsset, destination string) (string, error) {
+func downloadLuckyAsset(asset releaseAsset, destination string) error {
 	return downloadFileWithProgress(asset.URL, destination, napcatDownloadProgress("下载官方 LuckyLillia CLI 包", 20, 50))
 }
 
@@ -788,18 +730,12 @@ func luckyStart(confirmed bool) (string, error) {
 		return "", err
 	}
 	defer handle.Close()
-	command, err := luckyStartCommand(luckyPlatform(), state.InstallDir, entry)
+	process, err := startLuckyProcess(luckyPlatform(), state.InstallDir, entry, handle)
 	if err != nil {
 		return "", err
 	}
-	command.Stdout, command.Stderr, command.Stdin = handle, handle, nil
-	detachProcess(command)
-	if err := command.Start(); err != nil {
-		return "", err
-	}
-	state.PID = command.Process.Pid
-	state.ProcessGroupID = state.PID
-	_ = command.Process.Release()
+	state.PID = process.PID
+	state.ProcessGroupID = process.ProcessGroupID
 	if err := saveLuckyState(state); err != nil {
 		stopManagedProcess(state.PID)
 		return "", err
@@ -818,18 +754,7 @@ func luckyStartCommand(platform *luckyPlatformSpec, root, entry string) (*exec.C
 		return nil, errors.New("当前平台没有 LuckyLillia CLI 启动契约")
 	}
 	var command *exec.Cmd
-	if platform.Key == "linux-amd64" || platform.Key == "linux-arm64" {
-		// start.sh is interactive. With the workbench's detached process it
-		// mistakes the missing TTY for a request for token-only headless mode,
-		// which cannot show a QR code. Its official headed Shell path is exactly
-		// `xvfb-run -a ./llbot --pmhq`; invoke that path directly instead.
-		binary := filepath.Join(root, platform.CLIBinary)
-		info, err := os.Stat(binary)
-		if err != nil || info.IsDir() {
-			return nil, errors.New("LuckyLillia CLI 包缺少 llbot 启动程序")
-		}
-		command = exec.Command("xvfb-run", "-a", binary, "--pmhq")
-	} else if platform.Entrypoint == "start.sh" {
+	if platform.Entrypoint == "start.sh" {
 		command = exec.Command("sh", platform.Entrypoint, "--headed", "--gui")
 	} else {
 		command = exec.Command(entry)

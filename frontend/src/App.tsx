@@ -44,11 +44,13 @@ function StatusLineRow({ line }: { line: StatusLine }) {
 function ResultPanel({
   state,
   result,
-  steps = []
+  steps = [],
+  onViewLog
 }: {
   state: 'idle' | 'running' | 'done' | 'failed'
   result?: ActionResult
   steps?: TaskStep[]
+  onViewLog?: () => void
 }) {
   const lines = useMemo(() => splitStatusLines(result?.output ?? ''), [result])
 	const current = steps.at(-1)
@@ -68,8 +70,16 @@ function ResultPanel({
         </strong>
       </header>
       {state === 'failed' && result?.error && (
-        <div className="whitespace-pre-wrap rounded-md bg-[var(--theme-danger-soft)] px-2 py-1.5 font-semibold leading-5 text-[var(--theme-danger-text)]">
-          {result.error}
+        <div className="grid gap-2 rounded-md bg-[var(--theme-danger-soft)] px-2 py-2 text-[var(--theme-danger-text)]">
+          <strong>操作失败</strong>
+          <pre className="m-0 max-h-48 overflow-auto whitespace-pre-wrap break-words font-mono text-[11px] font-normal leading-5">
+            {result.error}
+          </pre>
+          {onViewLog && (
+            <div>
+              <button className="secondary-button" onClick={onViewLog}>查看完整日志</button>
+            </div>
+          )}
         </div>
       )}
       {current && (
@@ -502,7 +512,7 @@ export default function App() {
 		  </details>}
 
 
-		  <ResultPanel state={state} result={result ?? (state === 'running' ? { output: actionTitle(activeAction) } : undefined)} steps={operationSteps} />
+		  <ResultPanel state={state} result={result ?? (state === 'running' ? { output: actionTitle(activeAction) } : undefined)} steps={operationSteps} onViewLog={() => void run(engine === 'napcat' ? 'log' : luckyAction('log'))} />
 
 		  {!coreNeedsInstall && !nativeLauncherNapcat && !napcatLoginJourney && webUrl && (
             <section className="grid gap-2 rounded-panel border border-[var(--theme-border-default)] bg-[var(--theme-surface-panel)] p-3 text-xs">
@@ -530,7 +540,7 @@ export default function App() {
 			</div>
 			<ActionButton label="读取当前配置" variant="secondary" running={state === 'running'} onClick={() => void run(engine === 'napcat' ? 'onebot-config' : luckyAction('onebot-config'), engine === 'napcat' && napcatQQ ? { qq: napcatQQ } : {})} />
 		  </section>
-		  <ResultPanel state={state} result={result} steps={operationSteps} />
+		  <ResultPanel state={state} result={result} steps={operationSteps} onViewLog={() => void run(engine === 'napcat' ? 'log' : luckyAction('log'))} />
 
           {engine === 'napcat' ? <><form
             className="grid grid-cols-[repeat(auto-fit,minmax(180px,1fr))] gap-3 rounded-panel border border-[var(--theme-border-default)] bg-[var(--theme-surface-panel)] p-3"

@@ -4,8 +4,6 @@ package main
 
 import (
 	"archive/tar"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,7 +11,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"runtime"
 	"strings"
 
@@ -26,8 +23,6 @@ import (
 // second tag, or have an old runner consume a newer incompatible payload.
 const linuxCompatibilityRuntimeReleaseBaseURL = "https://api.github.com/repos/lemonade-lab/alemonx-qq/releases/tags/"
 const linuxCompatibilityRuntimeLatestURL = "https://api.github.com/repos/lemonade-lab/alemonx-qq/releases/latest"
-
-var managedRuntimeIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,95}$`)
 
 type linuxCompatibilityAsset struct {
 	Platform string
@@ -43,10 +38,6 @@ type managedRuntimeManifest struct {
 }
 
 type managedLinuxRuntime struct {
-	ID          string
-	Asset       string
-	SHA256      string
-	Fingerprint string
 	Root        string
 	Xvfb        string
 	Loader      string
@@ -107,13 +98,12 @@ func linuxSystemRuntimeUsable() bool {
 
 func linuxEnvironmentForState(state State) (linuxEnvironment, error) {
 	if state.EnvironmentMode == "managed-runtime" {
-		runtimeValue, err := loadManagedLinuxRuntime(state.RuntimeID, state.RuntimeAsset, state.RuntimeSHA256)
+		runtimeValue, err := loadManagedLinuxRuntime()
 		if err == nil {
 			return linuxEnvironment{Mode: "managed-runtime", Runtime: &runtimeValue, Reason: state.FallbackReason, Diagnostic: state.EnvironmentDiagnostic}, nil
 		}
 		// Cached native files can be removed by a package cleanup or a user. This
-		// is a recoverable condition: refresh the workbench-owned runtime instead
-		// of turning an old fingerprint into a user-facing installation block.
+		// is recoverable: rebuild the workbench-owned runtime automatically.
 		runtimeValue, refreshErr := ensureManagedLinuxRuntime()
 		if refreshErr != nil {
 			return linuxEnvironment{}, fmt.Errorf("兼容运行环境无法自动恢复：%w", refreshErr)
@@ -178,12 +168,15 @@ func installManagedLinuxRuntime(contract linuxCompatibilityAsset, asset releaseA
 	if err := os.MkdirAll(base, 0o700); err != nil {
 		return managedLinuxRuntime{}, err
 	}
-	if cached, err := findCachedManagedLinuxRuntime(base, asset.Name, ""); err == nil {
+	if cached, err := loadManagedLinuxRuntime(); err == nil {
 		reportNapcatProgress("runtime", 15, "复用已准备的兼容运行环境")
 		return cached, nil
 	}
-	// The ID is also encoded in the archive descriptor. Until it is verified,
-	// use an isolated staging directory; no unverified path reaches the cache.
+	// Rebuild a single platform-owned runtime directory whenever its required
+	// executable structure is absent. Cache identity is platform + actual
+	// runnable files rather than release metadata.
+	runtimeRoot := filepath.Join(base, contract.Platform)
+	_ = os.RemoveAll(runtimeRoot)
 	stage, err := os.MkdirTemp(base, ".download-*")
 	if err != nil {
 		return managedLinuxRuntime{}, err
@@ -191,8 +184,7 @@ func installManagedLinuxRuntime(contract linuxCompatibilityAsset, asset releaseA
 	defer os.RemoveAll(stage)
 	archive := filepath.Join(stage, "package.tar.zst")
 	reportNapcatProgress("runtime", 15, "正在准备兼容运行环境")
-	actual, err := downloadFileWithProgress(asset.URL, archive, napcatDownloadProgress("下载兼容运行环境", 15, 25))
-	if err != nil {
+	if err := downloadFileWithProgress(asset.URL, archive, napcatDownloadProgress("下载兼容运行环境", 15, 25)); err != nil {
 		return managedLinuxRuntime{}, err
 	}
 	extracted := filepath.Join(stage, "extracted")
@@ -200,76 +192,33 @@ func installManagedLinuxRuntime(contract linuxCompatibilityAsset, asset releaseA
 	if err := extractCompatibilityRuntime(archive, extracted); err != nil {
 		return managedLinuxRuntime{}, err
 	}
-	manifest, runtimeValue, err := readManagedLinuxRuntime(extracted, contract, asset.Name, actual)
+	_, runtimeValue, err := readManagedLinuxRuntime(extracted, contract)
 	if err != nil {
 		return managedLinuxRuntime{}, err
 	}
-	cacheRoot := filepath.Join(base, manifest.ID, actual)
-	if cached, err := loadManagedLinuxRuntime(manifest.ID, asset.Name, actual); err == nil {
-		return cached, nil
-	}
-	if err := os.MkdirAll(filepath.Dir(cacheRoot), 0o700); err != nil {
-		return managedLinuxRuntime{}, err
-	}
-	if err := os.Rename(stage, cacheRoot); err != nil {
-		if cached, cacheErr := loadManagedLinuxRuntime(manifest.ID, asset.Name, actual); cacheErr == nil {
+	if err := os.Rename(stage, runtimeRoot); err != nil {
+		if cached, cacheErr := loadManagedLinuxRuntime(); cacheErr == nil {
 			return cached, nil
 		}
 		return managedLinuxRuntime{}, err
 	}
 	// The stage moved into the cache; do not remove it via the deferred cleanup.
 	stage = ""
-	runtimeValue.Root = filepath.Join(cacheRoot, "extracted")
+	runtimeValue.Root = filepath.Join(runtimeRoot, "extracted")
 	return runtimeValue, nil
 }
 
-func findCachedManagedLinuxRuntime(base, asset, digest string) (managedLinuxRuntime, error) {
-	entries, err := os.ReadDir(base)
-	if err != nil {
-		return managedLinuxRuntime{}, err
-	}
-	for _, entry := range entries {
-		if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
-			continue
-		}
-		if digest != "" {
-			value, err := loadManagedLinuxRuntime(entry.Name(), asset, digest)
-			if err == nil && value.ID != "" {
-				return value, nil
-			}
-			continue
-		}
-		versions, versionErr := os.ReadDir(filepath.Join(base, entry.Name()))
-		if versionErr != nil {
-			continue
-		}
-		for _, version := range versions {
-			if !version.IsDir() {
-				continue
-			}
-			value, loadErr := loadManagedLinuxRuntime(entry.Name(), asset, version.Name())
-			if loadErr == nil && value.ID != "" {
-				return value, nil
-			}
-		}
-	}
-	return managedLinuxRuntime{}, errors.New("未命中兼容运行环境缓存")
-}
-
-func loadManagedLinuxRuntime(id, asset, digest string) (managedLinuxRuntime, error) {
-	if strings.TrimSpace(id) == "" || strings.TrimSpace(digest) == "" || strings.TrimSpace(asset) == "" {
-		return managedLinuxRuntime{}, errors.New("兼容运行环境身份不完整")
-	}
+func loadManagedLinuxRuntime() (managedLinuxRuntime, error) {
 	base, err := managedRuntimeBaseDir()
 	if err != nil {
 		return managedLinuxRuntime{}, err
 	}
-	root := filepath.Join(base, id, digest, "extracted")
 	contract, err := linuxCompatibilityAssetFor(runtime.GOARCH)
 	if err != nil {
 		return managedLinuxRuntime{}, err
 	}
-	_, value, err := readManagedLinuxRuntime(root, contract, asset, digest)
+	root := filepath.Join(base, contract.Platform, "extracted")
+	_, value, err := readManagedLinuxRuntime(root, contract)
 	return value, err
 }
 
@@ -330,7 +279,7 @@ func extractCompatibilityRuntime(archive, destination string) error {
 	}
 }
 
-func readManagedLinuxRuntime(root string, contract linuxCompatibilityAsset, asset, digest string) (managedRuntimeManifest, managedLinuxRuntime, error) {
+func readManagedLinuxRuntime(root string, contract linuxCompatibilityAsset) (managedRuntimeManifest, managedLinuxRuntime, error) {
 	data, err := os.ReadFile(filepath.Join(root, "alx-runtime.json"))
 	if err != nil {
 		return managedRuntimeManifest{}, managedLinuxRuntime{}, errors.New("兼容运行环境缺少 alx-runtime.json")
@@ -339,7 +288,7 @@ func readManagedLinuxRuntime(root string, contract linuxCompatibilityAsset, asse
 	if err := json.Unmarshal(data, &manifest); err != nil {
 		return managedRuntimeManifest{}, managedLinuxRuntime{}, fmt.Errorf("兼容运行环境描述无效：%w", err)
 	}
-	if !managedRuntimeIDPattern.MatchString(manifest.ID) || manifest.Platform != contract.Platform || manifest.Xvfb == "" || manifest.Loader == "" || manifest.LibraryPath == "" {
+	if manifest.Platform != contract.Platform || manifest.Xvfb == "" || manifest.Loader == "" || manifest.LibraryPath == "" {
 		return managedRuntimeManifest{}, managedLinuxRuntime{}, errors.New("兼容运行环境描述不完整或与当前平台不匹配")
 	}
 	xvfb, err := managedRuntimePath(root, manifest.Xvfb)
@@ -363,51 +312,7 @@ func readManagedLinuxRuntime(root string, contract linuxCompatibilityAsset, asse
 	if info, err := os.Stat(lib); err != nil || !info.IsDir() {
 		return managedRuntimeManifest{}, managedLinuxRuntime{}, errors.New("兼容运行环境缺少动态库目录")
 	}
-	fingerprint, err := managedRuntimeFingerprint(root)
-	if err != nil {
-		return managedRuntimeManifest{}, managedLinuxRuntime{}, err
-	}
-	return manifest, managedLinuxRuntime{ID: manifest.ID, Asset: asset, SHA256: digest, Fingerprint: fingerprint, Root: root, Xvfb: xvfb, Loader: loader, LibraryPath: lib}, nil
-}
-
-// managedRuntimeFingerprint includes every regular file with a stable relative
-// path and byte stream. An apparently valid Xvfb/loader pair is insufficient:
-// a missing or replaced library must invalidate the cache and trigger a clean
-// download rather than failing later during a user's login flow.
-func managedRuntimeFingerprint(root string) (string, error) {
-	hash := sha256.New()
-	count := 0
-	err := filepath.Walk(root, func(path string, info os.FileInfo, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if info.IsDir() {
-			return nil
-		}
-		if !info.Mode().IsRegular() {
-			return errors.New("兼容运行环境包含非普通文件")
-		}
-		relative, err := filepath.Rel(root, path)
-		if err != nil {
-			return err
-		}
-		contents, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		_, _ = hash.Write([]byte(filepath.ToSlash(relative)))
-		_, _ = hash.Write([]byte{0})
-		_, _ = hash.Write(contents)
-		count++
-		return nil
-	})
-	if err != nil {
-		return "", err
-	}
-	if count < 4 { // descriptor, Xvfb, loader and at least one library
-		return "", errors.New("兼容运行环境内容不完整")
-	}
-	return hex.EncodeToString(hash.Sum(nil)), nil
+	return manifest, managedLinuxRuntime{Root: root, Xvfb: xvfb, Loader: loader, LibraryPath: lib}, nil
 }
 
 func managedRuntimePath(root, relative string) (string, error) {
@@ -425,12 +330,4 @@ func managedRuntimeCommand(value managedLinuxRuntime, program string, args ...st
 	arguments := []string{"--library-path", value.LibraryPath, program}
 	arguments = append(arguments, args...)
 	return exec.Command(value.Loader, arguments...)
-}
-
-func linuxRuntimeStateFingerprint(installationFingerprint, runtimeFingerprint string) string {
-	if runtimeFingerprint == "" {
-		return installationFingerprint
-	}
-	sum := sha256.Sum256([]byte(installationFingerprint + "\x00" + runtimeFingerprint))
-	return hex.EncodeToString(sum[:])
 }

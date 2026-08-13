@@ -3,8 +3,6 @@ package main
 import (
 	"archive/zip"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -36,9 +34,8 @@ const (
 )
 
 type releaseAsset struct {
-	Name   string `json:"name"`
-	URL    string `json:"browser_download_url"`
-	Digest string `json:"digest,omitempty"`
+	Name string `json:"name"`
+	URL  string `json:"browser_download_url"`
 }
 
 type githubRelease struct {
@@ -47,22 +44,14 @@ type githubRelease struct {
 }
 
 type napcatInstallation struct {
-	Version                string
-	InstallDir             string
-	ReleaseTag             string
-	Asset                  string
-	ArchiveSHA256          string
-	QQRuntimeAsset         string
-	QQRuntimeArchiveSHA256 string
-	RuntimeID              string
-	RuntimeAsset           string
-	RuntimeSHA256          string
-	RuntimeFingerprint     string
-	EnvironmentMode        string
-	FallbackReason         string
-	EnvironmentDiagnostic  string
-	Fingerprint            string
-	PreviousDir            string
+	Version               string
+	InstallDir            string
+	ReleaseTag            string
+	Asset                 string
+	EnvironmentMode       string
+	FallbackReason        string
+	EnvironmentDiagnostic string
+	PreviousDir           string
 }
 
 func fetchLatest() (githubRelease, error) {
@@ -100,30 +89,18 @@ func assetURL(release githubRelease, name string) (string, error) {
 	return asset.URL, err
 }
 
-func normalizedSHA(value string) string {
-	return strings.TrimPrefix(strings.ToLower(strings.TrimSpace(value)), "sha256:")
-}
-
-func validSHA(value string) bool {
-	if len(value) != 64 {
-		return false
-	}
-	_, err := hex.DecodeString(value)
-	return err == nil
-}
-
 type downloadProgress func(downloaded, total int64)
 
 // downloadFileWithProgress downloads a fixed official asset. A transfer may be
 // large as long as it keeps making progress; only an incomplete response,
 // timeout, or I/O error is retried and eventually reported to the user.
-func downloadFileWithProgress(url, dest string, progress downloadProgress) (string, error) {
+func downloadFileWithProgress(url, dest string, progress downloadProgress) error {
 	var lastErr error
 	for attempt := 0; attempt < 2; attempt++ {
 		_ = os.Remove(dest)
-		digest, err := downloadFileOnce(url, dest, progress)
+		err := downloadFileOnce(url, dest, progress)
 		if err == nil {
-			return digest, nil
+			return nil
 		}
 		lastErr = err
 		_ = os.Remove(dest)
@@ -131,63 +108,65 @@ func downloadFileWithProgress(url, dest string, progress downloadProgress) (stri
 	if lastErr == nil {
 		lastErr = errors.New("download did not start")
 	}
-	return "", fmt.Errorf("下载未完成，请检查网络后重试或查看日志")
+	// Keep the final transport/HTTP/I/O cause. The UI can keep its top-level
+	// wording friendly, but the operation detail and core log must tell an
+	// operator what actually failed after the automatic retry.
+	return fmt.Errorf("下载重试后仍未完成：%w", lastErr)
 }
 
-func downloadFileOnce(url, dest string, progress downloadProgress) (string, error) {
+func downloadFileOnce(url, dest string, progress downloadProgress) error {
 	ctx, cancel := context.WithTimeout(context.Background(), downloadTimeout)
 	defer cancel()
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return "", fmt.Errorf("创建下载请求失败：%w", err)
+		return fmt.Errorf("创建下载请求失败：%w", err)
 	}
 	client := officialReleaseHTTPClient(0)
 	response, err := client.Do(request)
 	if err != nil {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return "", fmt.Errorf("下载超过 %s；请检查网络或代理后重试", downloadTimeout.Round(time.Minute))
+			return fmt.Errorf("下载超过 %s；请检查网络或代理后重试", downloadTimeout.Round(time.Minute))
 		}
-		return "", fmt.Errorf("下载失败：%w", err)
+		return fmt.Errorf("下载失败：%w", err)
 	}
 	idleBody := newIdleReadCloser(response.Body, downloadIdleTimeout)
 	response.Body = idleBody
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("下载失败（%s）", response.Status)
+		return fmt.Errorf("下载失败（%s）", response.Status)
 	}
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
-		return "", err
+		return err
 	}
 	handle, err := os.OpenFile(dest, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 	if err != nil {
-		return "", err
+		return err
 	}
 	defer handle.Close()
-	hash := sha256.New()
-	writer := io.MultiWriter(handle, hash)
+	writer := io.Writer(handle)
 	if progress != nil {
-		writer = io.MultiWriter(handle, hash, &downloadProgressWriter{total: response.ContentLength, report: progress})
+		writer = io.MultiWriter(handle, &downloadProgressWriter{total: response.ContentLength, report: progress})
 	}
 	written, err := io.Copy(writer, response.Body)
 	if err != nil {
 		if response.ContentLength >= 0 && written != response.ContentLength {
-			return "", fmt.Errorf("下载内容不完整（已接收 %d / %d 字节）；请检查网络或代理后重试", written, response.ContentLength)
+			return fmt.Errorf("下载内容不完整（已接收 %d / %d 字节）；请检查网络或代理后重试", written, response.ContentLength)
 		}
 		if idleBody.timedOut.Load() {
-			return "", fmt.Errorf("下载超过 %s 没有收到数据；请检查网络或代理后重试", downloadIdleTimeout.Round(time.Second))
+			return fmt.Errorf("下载超过 %s 没有收到数据；请检查网络或代理后重试", downloadIdleTimeout.Round(time.Second))
 		}
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return "", fmt.Errorf("下载超过 %s；请检查网络或代理后重试", downloadTimeout.Round(time.Minute))
+			return fmt.Errorf("下载超过 %s；请检查网络或代理后重试", downloadTimeout.Round(time.Minute))
 		}
-		return "", err
+		return err
 	}
 	if response.ContentLength >= 0 && written != response.ContentLength {
-		return "", fmt.Errorf("下载内容不完整（已接收 %d / %d 字节）；请检查网络或代理后重试", written, response.ContentLength)
+		return fmt.Errorf("下载内容不完整（已接收 %d / %d 字节）；请检查网络或代理后重试", written, response.ContentLength)
 	}
 	if err := handle.Sync(); err != nil {
-		return "", err
+		return err
 	}
-	return hex.EncodeToString(hash.Sum(nil)), nil
+	return nil
 }
 
 // officialReleaseHTTPClient sends official NapCat, LuckyLillia and QQ runtime
@@ -303,8 +282,7 @@ func humanBytes(size int64) string {
 }
 
 func downloadFile(url, dest string) error {
-	_, err := downloadFileWithProgress(url, dest, nil)
-	return err
+	return downloadFileWithProgress(url, dest, nil)
 }
 
 func unzipArchive(srcZip, destDir string) error {
@@ -422,8 +400,7 @@ func installWindowsNapCat() (napcatInstallation, error) {
 	}
 	archive := filepath.Join(stateRoot, "napcat-windows.zip")
 	reportNapcatProgress("download", 25, "下载官方 NapCat Windows Release 包")
-	digest, err := downloadFileWithProgress(asset.URL, archive, napcatDownloadProgress("下载官方 NapCat Windows Release 包", 25, 50))
-	if err != nil {
+	if err := downloadFileWithProgress(asset.URL, archive, napcatDownloadProgress("下载官方 NapCat Windows Release 包", 25, 50)); err != nil {
 		return napcatInstallation{}, err
 	}
 	defer os.Remove(archive)
@@ -439,10 +416,6 @@ func installWindowsNapCat() (napcatInstallation, error) {
 	extracted := napcatExtractRoot(stage)
 	if extracted == "" {
 		return napcatInstallation{}, errors.New("NapCat Release 缺少受管原生启动器 launcher.exe")
-	}
-	fingerprint, err := napcatFingerprint(extracted)
-	if err != nil {
-		return napcatInstallation{}, err
 	}
 	backup := root + ".backup"
 	if _, err := os.Stat(backup); err == nil {
@@ -470,7 +443,7 @@ func installWindowsNapCat() (napcatInstallation, error) {
 			return rollback(err)
 		}
 	}
-	installation := napcatInstallation{Version: strings.TrimPrefix(release.TagName, "v"), InstallDir: root, ReleaseTag: release.TagName, Asset: asset.Name, ArchiveSHA256: digest, Fingerprint: fingerprint}
+	installation := napcatInstallation{Version: strings.TrimPrefix(release.TagName, "v"), InstallDir: root, ReleaseTag: release.TagName, Asset: asset.Name}
 	if hadPrevious {
 		installation.PreviousDir = backup
 	}
@@ -505,14 +478,12 @@ func installLinuxNapCat() (napcatInstallation, error) {
 	shellArchive := filepath.Join(stateRoot, "napcat-shell.zip")
 	qqArchive := filepath.Join(stateRoot, qqAsset.Name)
 	reportNapcatProgress("download", 20, "下载官方 NapCat Linux Release 包")
-	digest, err := downloadFileWithProgress(shellAsset.URL, shellArchive, napcatDownloadProgress("下载官方 NapCat Linux Release 包", 20, 35))
-	if err != nil {
+	if err := downloadFileWithProgress(shellAsset.URL, shellArchive, napcatDownloadProgress("下载官方 NapCat Linux Release 包", 20, 35)); err != nil {
 		return napcatInstallation{}, err
 	}
 	defer os.Remove(shellArchive)
 	reportNapcatProgress("download", 35, "下载官方 Linux QQ 运行时")
-	qqDigest, err := downloadFileWithProgress(qqAsset.URL, qqArchive, napcatDownloadProgress("下载官方 Linux QQ 运行时", 35, 55))
-	if err != nil {
+	if err := downloadFileWithProgress(qqAsset.URL, qqArchive, napcatDownloadProgress("下载官方 Linux QQ 运行时", 35, 55)); err != nil {
 		return napcatInstallation{}, err
 	}
 	defer os.Remove(qqArchive)
@@ -561,11 +532,11 @@ func installLinuxNapCat() (napcatInstallation, error) {
 	if _, err := napcatShellEntrypoint(stage); err != nil {
 		return rollback(err)
 	}
-	if err := patchLinuxQQEntrypoint(stage, root); err != nil {
-		return rollback(err)
-	}
-	fingerprint, err := napcatFingerprint(stage)
-	if err != nil {
+	// The Shell module is still in stage at this point. Pass that actual
+	// location to the generated QQ loader; after the atomic rename it becomes
+	// root. Passing root here used to validate an empty/pre-existing directory
+	// and incorrectly reported a missing module for valid official archives.
+	if err := patchLinuxQQEntrypoint(stage, stage); err != nil {
 		return rollback(err)
 	}
 	if err := os.Rename(stage, root); err != nil {
@@ -577,24 +548,13 @@ func installLinuxNapCat() (napcatInstallation, error) {
 		}
 	}
 	installation := napcatInstallation{
-		Version:                strings.TrimPrefix(release.TagName, "v"),
-		InstallDir:             root,
-		ReleaseTag:             release.TagName,
-		Asset:                  shellAsset.Name + "+" + qqAsset.Name,
-		ArchiveSHA256:          digest,
-		QQRuntimeAsset:         qqAsset.Name,
-		QQRuntimeArchiveSHA256: qqDigest,
-		EnvironmentMode:        environment.Mode,
-		FallbackReason:         environment.Reason,
-		EnvironmentDiagnostic:  environment.Diagnostic,
-		Fingerprint:            fingerprint,
-	}
-	if environment.Runtime != nil {
-		installation.RuntimeID = environment.Runtime.ID
-		installation.RuntimeAsset = environment.Runtime.Asset
-		installation.RuntimeSHA256 = environment.Runtime.SHA256
-		installation.RuntimeFingerprint = environment.Runtime.Fingerprint
-		installation.Fingerprint = linuxRuntimeStateFingerprint(installation.Fingerprint, installation.RuntimeFingerprint)
+		Version:               strings.TrimPrefix(release.TagName, "v"),
+		InstallDir:            root,
+		ReleaseTag:            release.TagName,
+		Asset:                 shellAsset.Name + "+" + qqAsset.Name,
+		EnvironmentMode:       environment.Mode,
+		FallbackReason:        environment.Reason,
+		EnvironmentDiagnostic: environment.Diagnostic,
 	}
 	if hadPrevious {
 		installation.PreviousDir = backup

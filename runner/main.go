@@ -39,6 +39,9 @@ func main() {
 		return
 	}
 	output, err := run(input.Action, input.Params, input.Confirm)
+	if err != nil {
+		recordActionFailure(input.Action, err)
+	}
 	write(response{Output: output, Error: errorText(err)})
 }
 
@@ -173,10 +176,6 @@ func napcatAdopt(params map[string]string, confirmed bool) (string, error) {
 			return "", errors.New("未检测到可关联的 QQ 注入式 NapCat；macOS 仅允许关联 QQ 容器中的现有实例")
 		}
 	}
-	fingerprint, err := napcatFingerprint(dir)
-	if err != nil {
-		return "", err
-	}
 	platform := napcatPlatform()
 	label := "当前平台"
 	platformKey := "external"
@@ -184,7 +183,7 @@ func napcatAdopt(params map[string]string, confirmed bool) (string, error) {
 		label = platform.Label
 		platformKey = platform.Key
 	}
-	state = State{InstallDir: dir, InstallMode: "external", Managed: false, Platform: platformKey, Fingerprint: fingerprint}
+	state = State{InstallDir: dir, InstallMode: "external", Managed: false, Platform: platformKey}
 	if runtime.GOOS == "darwin" {
 		state.Version = macNapcatVersion()
 	}
@@ -227,7 +226,7 @@ func installAction(params map[string]string, confirmed bool) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	state = State{Version: installation.Version, InstallDir: installation.InstallDir, Managed: true, Platform: napcatPlatform().Key, InstallMode: "managed", ReleaseTag: installation.ReleaseTag, Asset: installation.Asset, ArchiveSHA256: installation.ArchiveSHA256, QQRuntimeAsset: installation.QQRuntimeAsset, QQRuntimeArchiveSHA256: installation.QQRuntimeArchiveSHA256, RuntimeID: installation.RuntimeID, RuntimeAsset: installation.RuntimeAsset, RuntimeSHA256: installation.RuntimeSHA256, RuntimeFingerprint: installation.RuntimeFingerprint, EnvironmentMode: installation.EnvironmentMode, FallbackReason: installation.FallbackReason, EnvironmentDiagnostic: installation.EnvironmentDiagnostic, Fingerprint: installation.Fingerprint}
+	state = State{Version: installation.Version, InstallDir: installation.InstallDir, Managed: true, Platform: napcatPlatform().Key, InstallMode: "managed", ReleaseTag: installation.ReleaseTag, Asset: installation.Asset, EnvironmentMode: installation.EnvironmentMode, FallbackReason: installation.FallbackReason, EnvironmentDiagnostic: installation.EnvironmentDiagnostic}
 	if err := saveState(state); err != nil {
 		_ = rollbackNapcatInstallation(installation)
 		_ = saveState(previousState)
@@ -416,7 +415,7 @@ func updateNapcat(confirmed bool) (string, error) {
 		}
 		return "", installErr
 	}
-	updated := State{Version: installation.Version, InstallDir: installation.InstallDir, Managed: true, Platform: napcatPlatform().Key, InstallMode: "managed", ReleaseTag: installation.ReleaseTag, Asset: installation.Asset, ArchiveSHA256: installation.ArchiveSHA256, QQRuntimeAsset: installation.QQRuntimeAsset, QQRuntimeArchiveSHA256: installation.QQRuntimeArchiveSHA256, RuntimeID: installation.RuntimeID, RuntimeAsset: installation.RuntimeAsset, RuntimeSHA256: installation.RuntimeSHA256, RuntimeFingerprint: installation.RuntimeFingerprint, EnvironmentMode: installation.EnvironmentMode, FallbackReason: installation.FallbackReason, EnvironmentDiagnostic: installation.EnvironmentDiagnostic, Fingerprint: installation.Fingerprint, WatchdogPID: state.WatchdogPID}
+	updated := State{Version: installation.Version, InstallDir: installation.InstallDir, Managed: true, Platform: napcatPlatform().Key, InstallMode: "managed", ReleaseTag: installation.ReleaseTag, Asset: installation.Asset, EnvironmentMode: installation.EnvironmentMode, FallbackReason: installation.FallbackReason, EnvironmentDiagnostic: installation.EnvironmentDiagnostic, WatchdogPID: state.WatchdogPID}
 	if wasRunning {
 		reportNapcatProgress("restart", 90, "恢复更新后的 NapCat 运行状态")
 		process, startErr := startNapCat(updated)

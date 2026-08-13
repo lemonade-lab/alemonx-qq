@@ -72,8 +72,7 @@ func downloadWindowsNapcatInstaller() (string, error) {
 		temporary := destination + ".download"
 		_ = os.Remove(temporary)
 		reportNapcatProgress("download", 20, "下载官方 Windows NapCat 安装器")
-		_, downloadErr := downloadFileWithProgress(asset.URL, temporary, napcatDownloadProgress("下载官方 Windows NapCat 安装器", 20, 80))
-		if downloadErr != nil {
+		if downloadErr := downloadFileWithProgress(asset.URL, temporary, napcatDownloadProgress("下载官方 Windows NapCat 安装器", 20, 80)); downloadErr != nil {
 			_ = os.Remove(temporary)
 			return "", downloadErr
 		}

@@ -57,55 +57,6 @@ func TestCompatibilityRuntimeArchiveRejectsEscapingPath(t *testing.T) {
 	}
 }
 
-func TestManagedRuntimeChangesInstallationFingerprint(t *testing.T) {
-	base := "5f4dcc3b5aa765d61d8327deb882cf99"
-	first := linuxRuntimeStateFingerprint(base, "runtime-a")
-	second := linuxRuntimeStateFingerprint(base, "runtime-b")
-	if first == base || first == second {
-		t.Fatalf("managed runtime must participate in state fingerprint: %q %q", first, second)
-	}
-}
-
-func TestManagedRuntimeFingerprintIncludesLibraries(t *testing.T) {
-	root := t.TempDir()
-	for name, contents := range map[string]string{
-		"alx-runtime.json":  "{}",
-		"bin/Xvfb":          "xvfb",
-		"lib/loader":        "loader",
-		"lib/libexample.so": "first",
-	} {
-		path := filepath.Join(root, name)
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(path, []byte(contents), 0o700); err != nil {
-			t.Fatal(err)
-		}
-	}
-	first, err := managedRuntimeFingerprint(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "lib", "libexample.so"), []byte("changed"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	second, err := managedRuntimeFingerprint(root)
-	if err != nil || first == second {
-		t.Fatalf("library replacement must change runtime fingerprint: %q %q, err=%v", first, second, err)
-	}
-}
-
-func TestManagedRuntimeIDCannotEscapeCacheRoot(t *testing.T) {
-	for _, value := range []string{"../escape", "runtime/id", "/absolute", ""} {
-		if managedRuntimeIDPattern.MatchString(value) {
-			t.Fatalf("unsafe runtime ID accepted: %q", value)
-		}
-	}
-	if !managedRuntimeIDPattern.MatchString("linux-amd64-glibc-v1") {
-		t.Fatal("valid runtime ID rejected")
-	}
-}
-
 func TestManagedRuntimeReleaseURLFallsBackToLatestWithoutPluginTag(t *testing.T) {
 	if got := linuxCompatibilityReleaseURL(""); got != linuxCompatibilityRuntimeLatestURL {
 		t.Fatalf("missing tag URL = %q, want latest %q", got, linuxCompatibilityRuntimeLatestURL)

@@ -40,7 +40,7 @@ func TestStateRoundTrip(t *testing.T) {
 		t.Fatalf("expected empty state, got %+v", state)
 	}
 
-	saved := State{Version: "4.18.18", InstallDir: dir + "/napcat", PID: 1234, QQRuntimeAsset: "QQ_3.2.31_260710_amd64_01.deb", QQRuntimeArchiveSHA256: "02f677feb1ce01ed293a3c7761e5dd85bd79936f57dcaa4cdb53178ae30e3d6d"}
+	saved := State{Version: "4.18.18", InstallDir: dir + "/napcat", PID: 1234, EnvironmentMode: "managed-runtime"}
 	if err := saveState(saved); err != nil {
 		t.Fatalf("save failed: %v", err)
 	}
@@ -48,12 +48,12 @@ func TestStateRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reload failed: %v", err)
 	}
-	if reloaded.Version != saved.Version || reloaded.InstallDir != saved.InstallDir || reloaded.PID != saved.PID || reloaded.QQRuntimeAsset != saved.QQRuntimeAsset || reloaded.QQRuntimeArchiveSHA256 != saved.QQRuntimeArchiveSHA256 {
+	if reloaded.Version != saved.Version || reloaded.InstallDir != saved.InstallDir || reloaded.PID != saved.PID || reloaded.EnvironmentMode != saved.EnvironmentMode {
 		t.Fatalf("round-trip mismatch: got %+v want %+v", reloaded, saved)
 	}
 }
 
-func TestLoadStateMigratesLegacyQQRuntimeFields(t *testing.T) {
+func TestLoadStateIgnoresLegacyHashFields(t *testing.T) {
 	original := userConfigDir
 	dir := t.TempDir()
 	userConfigDir = func() (string, error) { return dir, nil }
@@ -73,7 +73,7 @@ func TestLoadStateMigratesLegacyQQRuntimeFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if state.QQRuntimeAsset != "QQ.deb" || state.QQRuntimeArchiveSHA256 == "" || state.RuntimeAsset != "" || state.EnvironmentMode != "system" {
+	if state.InstallDir != "/tmp/Napcat" || state.EnvironmentMode != "" {
 		t.Fatalf("legacy runtime migration = %+v", state)
 	}
 }

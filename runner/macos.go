@@ -114,8 +114,7 @@ func downloadMacNapcatInstaller() (string, error) {
 	temporary := destination + ".download"
 	_ = os.Remove(temporary)
 	reportNapcatProgress("download", 20, "下载官方 macOS NapCat 安装器")
-	_, err = downloadFileWithProgress(asset.URL, temporary, napcatDownloadProgress("下载官方 macOS NapCat 安装器", 20, 85))
-	if err != nil {
+	if err = downloadFileWithProgress(asset.URL, temporary, napcatDownloadProgress("下载官方 macOS NapCat 安装器", 20, 85)); err != nil {
 		_ = os.Remove(temporary)
 		return "", err
 	}

@@ -30,12 +30,7 @@ func makeManagedNapcatForConfig(t *testing.T, napcat string) {
 	if platform == nil || !platform.AutoInstall || runtime.GOOS != "windows" {
 		t.Skip("managed NapCat configuration is unavailable on this platform")
 	}
-	fingerprint, err := napcatFingerprint(napcat)
-	if err != nil {
-		t.Fatal(err)
-	}
-	state := State{InstallDir: napcat, Managed: true, Platform: platform.Key, InstallMode: "managed", Fingerprint: fingerprint}
-	state.ReleaseTag, state.Asset, state.ArchiveSHA256 = "v1.0.0", windowsAsset, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	state := State{InstallDir: napcat, Managed: true, Platform: platform.Key, InstallMode: "managed", ReleaseTag: "v1.0.0", Asset: windowsAsset}
 	if err := saveState(state); err != nil {
 		t.Fatal(err)
 	}
