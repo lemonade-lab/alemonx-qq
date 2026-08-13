@@ -47,29 +47,31 @@ type luckyProcess struct {
 }
 
 type kernelStatus struct {
-	Engine         string         `json:"engine"`
-	Installed      bool           `json:"installed"`
-	InstallHealthy bool           `json:"installHealthy"`
-	Running        bool           `json:"running"`
-	PortReachable  bool           `json:"portReachable"`
-	WebUIReady     bool           `json:"webUiReady"`
-	OneBotReady    bool           `json:"oneBotReady"`
-	LoginPending   bool           `json:"loginPending"`
-	Version        string         `json:"version,omitempty"`
-	PID            int            `json:"pid,omitempty"`
-	WebUIURL       string         `json:"webUiUrl,omitempty"`
-	OneBotURL      string         `json:"oneBotUrl,omitempty"`
-	LogPath        string         `json:"logPath,omitempty"`
-	DiagnosticHint string         `json:"diagnosticHint,omitempty"`
-	Error          string         `json:"error,omitempty"`
-	Supported      bool           `json:"supported"`
-	Platform       string         `json:"platform,omitempty"`
-	InstallMode    string         `json:"installMode,omitempty"`
-	Managed        bool           `json:"managed"`
-	AuthTokenReady bool           `json:"authTokenReady"`
-	State          string         `json:"state"`
-	UpdatedAt      string         `json:"updatedAt"`
-	Journey        runtimeJourney `json:"journey"`
+	Engine          string         `json:"engine"`
+	Installed       bool           `json:"installed"`
+	InstallHealthy  bool           `json:"installHealthy"`
+	Running         bool           `json:"running"`
+	PortReachable   bool           `json:"portReachable"`
+	WebUIReady      bool           `json:"webUiReady"`
+	OneBotReady     bool           `json:"oneBotReady"`
+	LoginPending    bool           `json:"loginPending"`
+	QRCodeAvailable bool           `json:"qrCodeAvailable"`
+	QRCodeUpdatedAt string         `json:"qrCodeUpdatedAt,omitempty"`
+	Version         string         `json:"version,omitempty"`
+	PID             int            `json:"pid,omitempty"`
+	WebUIURL        string         `json:"webUiUrl,omitempty"`
+	OneBotURL       string         `json:"oneBotUrl,omitempty"`
+	LogPath         string         `json:"logPath,omitempty"`
+	DiagnosticHint  string         `json:"diagnosticHint,omitempty"`
+	Error           string         `json:"error,omitempty"`
+	Supported       bool           `json:"supported"`
+	Platform        string         `json:"platform,omitempty"`
+	InstallMode     string         `json:"installMode,omitempty"`
+	Managed         bool           `json:"managed"`
+	AuthTokenReady  bool           `json:"authTokenReady"`
+	State           string         `json:"state"`
+	UpdatedAt       string         `json:"updatedAt"`
+	Journey         runtimeJourney `json:"journey"`
 }
 
 // luckyPlatformSpec describes the official CLI contract for each supported
@@ -256,6 +258,7 @@ func luckyStatus() (string, error) {
 		stateName = "unsupported"
 	}
 	status := kernelStatus{Engine: "luckylillia", Installed: installed, InstallHealthy: healthy, Running: running, PortReachable: webUI != "", WebUIReady: webUI != "", OneBotReady: onebot != "", LoginPending: running && webUI != "" && onebot == "", Version: state.Version, PID: state.PID, WebUIURL: webUI, OneBotURL: "ws://127.0.0.1:" + strconv.Itoa(oneBotPort), Supported: luckySupported(), Managed: state.Managed, AuthTokenReady: authTokenReady, InstallMode: state.InstallMode, State: stateName, UpdatedAt: time.Now().UTC().Format(time.RFC3339)}
+	status.QRCodeAvailable, status.QRCodeUpdatedAt = luckyQRCodeStatus(state)
 	if platform != nil {
 		status.Platform = platform.Key
 	}
@@ -309,7 +312,7 @@ func luckyJourney(status kernelStatus) runtimeJourney {
 	case !status.WebUIReady:
 		return runtimeJourney{Phase: "starting", Title: "正在启动 LuckyLillia", Detail: firstStatusDetail(status.DiagnosticHint, "进程已启动，正在等待管理页面就绪。"), NextAction: "view-log"}
 	case status.LoginPending:
-		return runtimeJourney{Phase: "scan-qq", Title: "请在管理页面登录 QQ", Detail: "完成登录后 OneBot 服务会自动继续初始化。", NextAction: "open-webui"}
+		return runtimeJourney{Phase: "scan-qq", Title: "请用手机 QQ 扫码", Detail: "二维码已就绪；扫码完成后 OneBot 服务会自动继续初始化。", NextAction: "scan-qq"}
 	case !status.OneBotReady:
 		return runtimeJourney{Phase: "connecting", Title: "正在等待 OneBot", Detail: "管理页面已就绪，正在等待已配置的 OneBot 服务监听端口。", NextAction: "view-log"}
 	default:
@@ -508,7 +511,7 @@ func luckyInstall(force, confirmed bool) (string, error) {
 		_ = os.RemoveAll(backup)
 	}
 	reportLuckyProgress("complete", 100, "LuckyLillia CLI 安装完成")
-	return fmt.Sprintf("✓ LuckyLillia 已安装并启动（版本 %s）。请进入 WebUI 登录。", state.Version), nil
+	return fmt.Sprintf("✓ LuckyLillia 已安装并启动（版本 %s）。登录二维码会自动显示。", state.Version), nil
 }
 
 func downloadLuckyAsset(asset releaseAsset, destination string) error {
@@ -811,7 +814,7 @@ func luckyStart(confirmed bool) (string, error) {
 	if err := os.MkdirAll(filepath.Dir(logFile), 0o755); err != nil {
 		return "", err
 	}
-	handle, err := os.OpenFile(logFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	handle, err := openAppendLog(logFile)
 	if err != nil {
 		return "", err
 	}
@@ -833,7 +836,7 @@ func luckyStart(confirmed bool) (string, error) {
 		_ = saveLuckyState(state)
 		return "", fmt.Errorf("LuckyLillia 启动后管理页面（端口 %d）未能就绪：%w", webPort, err)
 	}
-	return fmt.Sprintf("✓ LuckyLillia 已启动（PID %d）。请进入 WebUI 扫码登录。", state.PID), nil
+	return fmt.Sprintf("✓ LuckyLillia 已启动（PID %d）。登录二维码会自动显示。", state.PID), nil
 }
 
 func luckyStartCommand(platform *luckyPlatformSpec, root, entry string) (*exec.Cmd, error) {

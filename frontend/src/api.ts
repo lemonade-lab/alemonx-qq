@@ -150,6 +150,10 @@ export function napcatQRCodeURL(updatedAt?: string): string {
 	return `/api/v1/setup/plugins/${PLUGIN_ID}/media/napcat-qrcode?updatedAt=${encodeURIComponent(updatedAt || '')}`
 }
 
+export function luckyQRCodeURL(updatedAt?: string): string {
+	return `/api/v1/setup/plugins/${PLUGIN_ID}/media/luckylillia-qrcode?updatedAt=${encodeURIComponent(updatedAt || '')}`
+}
+
 export async function fetchLocalServices(): Promise<LocalService[]> {
 	const payload = await json<{ items: LocalService[] }>(await fetch(`/api/v1/services?plugin=${PLUGIN_ID}`))
 	return payload.items
@@ -206,7 +210,6 @@ export async function fetchHostRobotContext(): Promise<RobotProject | null> {
 }
 
 export async function syncRobotOneBot(root: string, url: string, token: string): Promise<void> {
-	if (!token.trim()) throw new Error('必须显式输入非空 OneBot Token，空 Token 不会覆盖机器人配置。')
 	await json(await fetch('/api/v1/robot/onebot-sync', {
 		method: 'POST', headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({ root, url, token })

@@ -147,6 +147,8 @@ func runNapcatAction(action string, params map[string]string, confirmed bool) (s
 		return restartAction(confirmed)
 	case "log":
 		return logAction(params)
+	case "napcat-log-clear":
+		return clearNapcatLogs()
 	case "napcat-log-status":
 		return logStatusAction(false)
 	case "napcat-operation-status":
@@ -169,6 +171,8 @@ func runNapcatAction(action string, params map[string]string, confirmed bool) (s
 		return watchdogOffAction(confirmed)
 	case "luckylillia-status":
 		return luckyStatus()
+	case "luckylillia-qrcode":
+		return luckylilliaQRCodeAction()
 	case "luckylillia-install":
 		return luckyInstall(false, confirmed)
 	case "luckylillia-adopt":
@@ -191,6 +195,8 @@ func runNapcatAction(action string, params map[string]string, confirmed bool) (s
 		return luckyInstall(true, confirmed)
 	case "luckylillia-log":
 		return luckyLog(params)
+	case "luckylillia-log-clear":
+		return clearLuckyLogs()
 	case "luckylillia-log-status":
 		return logStatusAction(true)
 	case "luckylillia-onebot-config":

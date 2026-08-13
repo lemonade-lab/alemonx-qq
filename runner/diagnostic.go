@@ -48,7 +48,7 @@ func appendActionDiagnostic(action, text string) {
 	if mkdirErr := os.MkdirAll(filepath.Dir(path), 0o755); mkdirErr != nil {
 		return
 	}
-	handle, openErr := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	handle, openErr := openAppendLog(path)
 	if openErr != nil {
 		return
 	}

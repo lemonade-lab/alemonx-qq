@@ -37,7 +37,7 @@ func startWatchdog() (int, error) {
 	if err := os.MkdirAll(dirOf(logFile), 0755); err != nil {
 		return 0, err
 	}
-	handle, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
+	handle, err := openAppendLog(logFile)
 	if err != nil {
 		return 0, err
 	}

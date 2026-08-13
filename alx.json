@@ -77,6 +77,11 @@
       "id": "napcat-qrcode",
       "action": "napcat-qrcode",
       "contentType": "image/png"
+    },
+    {
+      "id": "luckylillia-qrcode",
+      "action": "luckylillia-qrcode",
+      "contentType": "image/png"
     }
   ],
   "privilegedOperations": [

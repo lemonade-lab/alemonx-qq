@@ -37,7 +37,7 @@ func startNapCat(state State) (napcatProcess, error) {
 	if err := os.MkdirAll(filepath.Dir(logFile), 0o755); err != nil {
 		return napcatProcess{}, err
 	}
-	logHandle, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	logHandle, err := openAppendLog(logFile)
 	if err != nil {
 		return napcatProcess{}, err
 	}
