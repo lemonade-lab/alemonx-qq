@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { fetchHostRobotContext, fetchLocalServices, fetchRobotProjects, fetchStatus, napcatQRCodeURL, runActionAndPoll, syncRobotOneBot, type ActionResult, type LocalService, type RobotProject, type StatusPayload, type Task, type TaskStep } from './api'
+import { fetchHostRobotContext, fetchLocalServices, fetchPluginLog, fetchRobotProjects, fetchStatus, napcatQRCodeURL, runActionAndPoll, syncRobotOneBot, type ActionResult, type LocalService, type RobotProject, type StatusPayload, type Task, type TaskStep } from './api'
 import { splitStatusLines, type StatusLine } from './status'
 import { loadSession, saveSession, type QQEngine, type QQView } from './session'
 
@@ -190,6 +190,20 @@ function ConfirmModal({
   )
 }
 
+function LogModal({ text, onClose }: { text: string; onClose: () => void }) {
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-[var(--theme-surface-overlay)] p-4">
+      <div className="grid max-h-[min(680px,calc(100vh-32px))] w-[min(760px,100%)] gap-3 rounded-panel border border-[var(--theme-border-default)] bg-[var(--theme-surface-panel)] p-4 shadow-[var(--theme-shadow-pop)]">
+        <div className="flex items-center justify-between gap-3">
+          <strong className="text-sm text-[var(--theme-text-strong)]">实时安装日志</strong>
+          <button className="secondary-button" onClick={onClose}>关闭</button>
+        </div>
+        <pre className="m-0 max-h-[560px] overflow-auto whitespace-pre-wrap break-words rounded-md bg-[var(--theme-surface-input)] p-3 font-mono text-[11px] leading-5 text-[var(--theme-text-secondary)]">{text}</pre>
+      </div>
+    </div>
+  )
+}
+
 function ActionButton({
   label,
   variant = 'primary',
@@ -238,11 +252,12 @@ export default function App() {
   const [state, setState] = useState<'idle' | 'running' | 'done' | 'failed'>(
     'idle'
   )
-  const [pendingConfirm, setPendingConfirm] = useState<{
+	const [pendingConfirm, setPendingConfirm] = useState<{
     title: string
     description: string
     action: () => Promise<void>
-  } | null>(null)
+	} | null>(null)
+	const [logText, setLogText] = useState<string | null>(null)
 	const [statusByEngine, setStatusByEngine] = useState<Partial<Record<Engine, StatusPayload>>>({})
 	const [statusLoading, setStatusLoading] = useState<Partial<Record<Engine, boolean>>>({})
 	const liveStatus = statusByEngine[engine] ?? null
@@ -304,6 +319,15 @@ export default function App() {
 		setActiveAction(null)
 		actionInFlight.current = false
 	  }
+	}
+
+	const openLiveLog = async () => {
+		setLogText('正在读取日志…')
+		try {
+			setLogText(await fetchPluginLog(engine))
+		} catch (reason) {
+			setLogText(reason instanceof Error ? reason.message : String(reason))
+		}
 	}
 
 	const requestNapcatInstall = async () => {
@@ -527,7 +551,8 @@ export default function App() {
 		  </details>}
 
 
-		  <ResultPanel state={state} result={result ?? (state === 'running' ? { output: actionTitle(activeAction) } : undefined)} steps={operationSteps} onViewLog={() => void run(engine === 'napcat' ? 'log' : luckyAction('log'))} />
+		  <ResultPanel state={state} result={result ?? (state === 'running' ? { output: actionTitle(activeAction) } : undefined)} steps={operationSteps} onViewLog={() => void openLiveLog()} />
+		  {state === 'running' && <div><button className="secondary-button" onClick={() => void openLiveLog()}>查看实时日志</button></div>}
 
 		  {!coreNeedsInstall && !nativeLauncherNapcat && !napcatLoginJourney && webUrl && (
             <section className="grid gap-2 rounded-panel border border-[var(--theme-border-default)] bg-[var(--theme-surface-panel)] p-3 text-xs">
@@ -555,7 +580,7 @@ export default function App() {
 			</div>
 			<ActionButton label="读取当前配置" variant="secondary" running={state === 'running'} onClick={() => void run(engine === 'napcat' ? 'onebot-config' : luckyAction('onebot-config'), engine === 'napcat' && napcatQQ ? { qq: napcatQQ } : {})} />
 		  </section>
-		  <ResultPanel state={state} result={result} steps={operationSteps} onViewLog={() => void run(engine === 'napcat' ? 'log' : luckyAction('log'))} />
+		  <ResultPanel state={state} result={result} steps={operationSteps} onViewLog={() => void openLiveLog()} />
 
           {engine === 'napcat' ? <><form
             className="grid grid-cols-[repeat(auto-fit,minmax(180px,1fr))] gap-3 rounded-panel border border-[var(--theme-border-default)] bg-[var(--theme-surface-panel)] p-3"
@@ -684,6 +709,7 @@ export default function App() {
           onCancel={() => setPendingConfirm(null)}
         />
       )}
+      {logText !== null && <LogModal text={logText} onClose={() => setLogText(null)} />}
     </div>
   )
 }

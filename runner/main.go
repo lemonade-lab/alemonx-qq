@@ -100,6 +100,8 @@ func run(action string, params map[string]string, confirmed bool) (string, error
 		return restartAction(confirmed)
 	case "log":
 		return logAction(params)
+	case "napcat-log-status":
+		return logStatusAction(false)
 	case "onebot-config":
 		return onebotConfigAction(params)
 	case "onebot-http-set":
@@ -138,6 +140,8 @@ func run(action string, params map[string]string, confirmed bool) (string, error
 		return luckyInstall(true, confirmed)
 	case "luckylillia-log":
 		return luckyLog(params)
+	case "luckylillia-log-status":
+		return logStatusAction(true)
 	case "luckylillia-onebot-config":
 		return luckyOneBotConfig()
 	case "luckylillia-onebot-set":
@@ -148,6 +152,26 @@ func run(action string, params map[string]string, confirmed bool) (string, error
 }
 
 func statusAction() (string, error) { return statusJSON() }
+
+func logStatusAction(lucky bool) (string, error) {
+	var (
+		output string
+		err    error
+	)
+	if lucky {
+		output, err = luckyLog(nil)
+	} else {
+		output, err = logAction(nil)
+	}
+	if err != nil {
+		return "", err
+	}
+	payload, err := json.Marshal(map[string]string{"output": output})
+	if err != nil {
+		return "", err
+	}
+	return string(payload), nil
+}
 
 func napcatAdopt(params map[string]string, confirmed bool) (string, error) {
 	if err := requireNapcatConfirmation(confirmed, "关联外部 NapCat"); err != nil {

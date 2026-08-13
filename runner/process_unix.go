@@ -3,6 +3,7 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"syscall"
@@ -36,7 +37,18 @@ func stopManagedProcess(pid int) {
 	}
 	_ = syscall.Kill(-pid, syscall.SIGINT)
 	time.Sleep(500 * time.Millisecond)
-	if aliveProbe(pid) {
+	if processGroupAlive(pid) {
 		_ = syscall.Kill(-pid, syscall.SIGKILL)
 	}
+}
+
+// processGroupAlive probes the entire managed group. Its leader (Xvfb for
+// NapCat) can exit before a spawned QQ child, so checking only the leader can
+// otherwise leave an orphaned QQ process behind.
+func processGroupAlive(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	err := syscall.Kill(-pid, syscall.Signal(0))
+	return err == nil || errors.Is(err, syscall.EPERM)
 }

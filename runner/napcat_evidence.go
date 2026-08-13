@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 func napcatStateVerified(state State) bool {
@@ -39,6 +40,7 @@ func requireNapcatConfirmation(confirmed bool, action string) error {
 }
 
 func reportNapcatProgress(stage string, percent int, message string) {
+	appendActionDiagnostic("install", fmt.Sprintf("[%s] %d%% %s", time.Now().UTC().Format(time.RFC3339), percent, message))
 	if strings.TrimSpace(os.Getenv("ALX_PLUGIN_PROGRESS_MODE")) != "structured" {
 		fmt.Fprintf(os.Stderr, "\r\033[2K[%3d%%] %s", percent, message)
 		return

@@ -223,7 +223,7 @@ func TestPatchLinuxQQEntrypointCreatesManagedLoader(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(runtimeRoot, "napcat.mjs"), []byte("fixture"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := patchLinuxQQEntrypoint(root, runtimeRoot); err != nil {
+	if err := patchLinuxQQEntrypoint(root, runtimeRoot, runtimeRoot); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(packagePath + ".alx-original"); err != nil {
@@ -283,12 +283,41 @@ func TestPatchLinuxQQEntrypointUsesExtractedShellLocation(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(shellRoot, "napcat.mjs"), []byte("fixture"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := patchLinuxQQEntrypoint(root, shellRoot); err != nil {
+	if err := patchLinuxQQEntrypoint(root, shellRoot, shellRoot); err != nil {
 		t.Fatal(err)
 	}
 	loader, err := os.ReadFile(filepath.Join(filepath.Dir(packagePath), "loadNapCat.js"))
 	if err != nil || !bytes.Contains(loader, []byte(shellRoot)) || !bytes.Contains(loader, []byte("napcat.mjs")) {
 		t.Fatalf("loader = %q, err=%v", loader, err)
+	}
+}
+
+func TestPatchLinuxQQEntrypointUsesFinalPathAfterStageRename(t *testing.T) {
+	parent := t.TempDir()
+	stage := filepath.Join(parent, "napcat-stage")
+	finalRoot := filepath.Join(parent, "Napcat")
+	packagePath := filepath.Join(stage, "opt", "QQ", "resources", "app", "package.json")
+	if err := os.MkdirAll(filepath.Dir(packagePath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(packagePath, []byte(`{"main": "./application.asar/app_launcher/index.js"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stage, "napcat.mjs"), []byte("fixture"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := patchLinuxQQEntrypoint(stage, stage, finalRoot); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(stage, finalRoot); err != nil {
+		t.Fatal(err)
+	}
+	loader, err := os.ReadFile(filepath.Join(finalRoot, "opt", "QQ", "resources", "app", "loadNapCat.js"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(loader, []byte(stage)) || !bytes.Contains(loader, []byte(finalRoot)) {
+		t.Fatalf("loader must use final path after rename: %q", loader)
 	}
 }
 

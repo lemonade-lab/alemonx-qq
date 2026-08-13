@@ -26,11 +26,23 @@
       "root": "web",
       "build": {
         "program": "yarn",
-        "args": ["--cwd", "frontend", "build"]
+        "args": [
+          "--cwd",
+          "frontend",
+          "build"
+        ]
       },
       "dev": {
         "program": "yarn",
-        "args": ["--cwd", "frontend", "dev", "--host", "127.0.0.1", "--port", "${ALX_PLUGIN_DEV_PORT}"]
+        "args": [
+          "--cwd",
+          "frontend",
+          "dev",
+          "--host",
+          "127.0.0.1",
+          "--port",
+          "${ALX_PLUGIN_DEV_PORT}"
+        ]
       },
       "healthPath": "/",
       "hmr": true
@@ -54,7 +66,9 @@
   "statusActions": [
     "status",
     "napcat-status",
-    "luckylillia-status"
+    "luckylillia-status",
+    "napcat-log-status",
+    "luckylillia-log-status"
   ],
   "media": [
     {
@@ -66,19 +80,44 @@
   "privilegedOperations": [
     {
       "action": "napcat-install-dependencies",
-	  "runnerAction": "napcat-install-dependencies",
+      "runnerAction": "napcat-install-dependencies",
       "title": "准备 QQ 登录运行环境",
       "description": "QQ 插件将安装本机图形登录所需的系统组件；密码只用于本次系统授权。",
       "authorization": "password",
-      "platforms": ["linux"],
+      "platforms": [
+        "linux"
+      ],
       "commands": [
         {
           "program": "apt-get",
-          "args": ["install", "-y", "xvfb", "libnss3", "libgbm1", "libglib2.0-0", "libatk1.0-0", "libatspi2.0-0", "libgtk-3-0", "libasound2"]
+          "args": [
+            "install",
+            "-y",
+            "xvfb",
+            "libnss3",
+            "libgbm1",
+            "libglib2.0-0",
+            "libatk1.0-0",
+            "libatspi2.0-0",
+            "libgtk-3-0",
+            "libasound2"
+          ]
         },
         {
           "program": "dnf",
-          "args": ["install", "--allowerasing", "-y", "xorg-x11-server-Xvfb", "nss", "mesa-libgbm", "glib2", "atk", "at-spi2-atk", "gtk3", "alsa-lib"]
+          "args": [
+            "install",
+            "--allowerasing",
+            "-y",
+            "xorg-x11-server-Xvfb",
+            "nss",
+            "mesa-libgbm",
+            "glib2",
+            "atk",
+            "at-spi2-atk",
+            "gtk3",
+            "alsa-lib"
+          ]
         }
       ]
     }

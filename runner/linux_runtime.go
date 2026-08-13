@@ -418,7 +418,12 @@ func extractRPMQQ(archivePath, destination string) error {
 	return extractNewcCPIO(payload, destination)
 }
 
-func patchLinuxQQEntrypoint(root, shellRoot string) error {
+// patchLinuxQQEntrypoint validates Shell files in shellRoot and writes a QQ
+// loader under root. installRoot is deliberately distinct: Linux installation
+// prepares root in a temporary staging directory, then atomically renames it
+// to installRoot. Embedding the staging path here would leave QQ unable to
+// find NapCat after the rename.
+func patchLinuxQQEntrypoint(root, shellRoot, installRoot string) error {
 	packagePath := filepath.Join(root, "opt", "QQ", "resources", "app", "package.json")
 	data, err := os.ReadFile(packagePath)
 	if err != nil {
@@ -450,7 +455,10 @@ func patchLinuxQQEntrypoint(root, shellRoot string) error {
 	if err != nil || relativeEntry == "." || filepath.IsAbs(relativeEntry) || strings.HasPrefix(relativeEntry, ".."+string(filepath.Separator)) {
 		return errors.New("NapCat Shell 启动模块路径无效")
 	}
-	content := "const path = require('path');\nconst home = process.env.NAPCAT_HOME || " + strconv.Quote(shellRoot) + ";\n(async () => { await import('file://' + path.join(home, " + strconv.Quote(filepath.ToSlash(relativeEntry)) + ")); })();\n"
+	if !filepath.IsAbs(installRoot) {
+		return errors.New("NapCat 最终安装目录必须是绝对路径")
+	}
+	content := "const path = require('path');\nconst home = process.env.NAPCAT_HOME || " + strconv.Quote(installRoot) + ";\n(async () => { await import('file://' + path.join(home, " + strconv.Quote(filepath.ToSlash(relativeEntry)) + ")); })();\n"
 	return os.WriteFile(entrypoint, []byte(content), 0o600)
 }
 

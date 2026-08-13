@@ -64,7 +64,9 @@ func startNapCat(state State) (napcatProcess, error) {
 		qqCommand = exec.Command(qq, "--no-sandbox")
 	}
 	qqCommand.Dir = filepath.Dir(qq)
-	qqCommand.Env = append(os.Environ(), "DISPLAY="+display)
+	// NAPCAT_HOME also repairs installations created by older runners that
+	// embedded their now-removed staging directory in loadNapCat.js.
+	qqCommand.Env = append(os.Environ(), "DISPLAY="+display, "NAPCAT_HOME="+state.InstallDir)
 	qqCommand.Stdout, qqCommand.Stderr, qqCommand.Stdin = logHandle, logHandle, nil
 	joinProcessGroup(qqCommand, groupID)
 	if err := qqCommand.Start(); err != nil {

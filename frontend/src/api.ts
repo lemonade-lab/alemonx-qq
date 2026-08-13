@@ -169,6 +169,14 @@ export async function fetchStatus(engine: 'napcat' | 'luckylillia' = 'napcat'): 
 	return json<StatusPayload>(await fetch(`/api/v1/setup/plugins/${PLUGIN_ID}/status?action=${encodeURIComponent(action)}`))
 }
 
+// Logs use the same read-only runner route as status. This stays available
+// while an installation task owns the normal actions route.
+export async function fetchPluginLog(engine: 'napcat' | 'luckylillia'): Promise<string> {
+	const action = engine === 'napcat' ? 'napcat-log-status' : 'luckylillia-log-status'
+	const payload = await json<{ output?: string }>(await fetch(`/api/v1/setup/plugins/${PLUGIN_ID}/status?action=${encodeURIComponent(action)}`))
+	return payload.output || '（日志为空）'
+}
+
 export async function fetchRobotProjects(refresh = false): Promise<RobotProject[]> {
 	const payload = await json<{ items: RobotProject[] }>(await fetch(`/api/v1/robot/projects${refresh ? '?refresh=true' : ''}`))
 	return payload.items

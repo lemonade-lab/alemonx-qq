@@ -16,6 +16,13 @@ func recordActionFailure(action string, err error) {
 	if err == nil || action == "status" || action == "napcat-status" || action == "luckylillia-status" {
 		return
 	}
+	appendActionDiagnostic(action, fmt.Sprintf("[%s] action=%s failed\n%s\n", time.Now().UTC().Format(time.RFC3339), action, strings.TrimSpace(err.Error())))
+}
+
+// appendActionDiagnostic keeps lifecycle activity available while a long task
+// is still running. It deliberately records only runner-owned stage text,
+// never request parameters such as OneBot tokens.
+func appendActionDiagnostic(action, text string) {
 	path, pathErr := actionDiagnosticLogPath(action)
 	if pathErr != nil || path == "" {
 		return
@@ -28,7 +35,7 @@ func recordActionFailure(action string, err error) {
 		return
 	}
 	defer handle.Close()
-	_, _ = fmt.Fprintf(handle, "[%s] action=%s failed\n%s\n\n", time.Now().UTC().Format(time.RFC3339), action, strings.TrimSpace(err.Error()))
+	_, _ = fmt.Fprintln(handle, strings.TrimRight(text, "\n"))
 }
 
 func actionDiagnosticLogPath(action string) (string, error) {

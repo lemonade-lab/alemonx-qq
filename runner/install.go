@@ -580,7 +580,10 @@ func installLinuxNapCat() (napcatInstallation, error) {
 	// location to the generated QQ loader; after the atomic rename it becomes
 	// root. Passing root here used to validate an empty/pre-existing directory
 	// and incorrectly reported a missing module for valid official archives.
-	if err := patchLinuxQQEntrypoint(stage, stage); err != nil {
+	// The loader is generated while files are in a temporary directory, but it
+	// runs only after that directory is atomically renamed to root. Validate the
+	// Shell from stage while embedding the final, stable installation directory.
+	if err := patchLinuxQQEntrypoint(stage, stage, root); err != nil {
 		return rollback(err)
 	}
 	if err := os.Rename(stage, root); err != nil {
