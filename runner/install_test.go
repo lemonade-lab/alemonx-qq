@@ -207,6 +207,24 @@ func TestExtractDebQQExtractsDataTarZstd(t *testing.T) {
 	}
 }
 
+func TestExtractDebQQAcceptsArMemberNameWithTrailingSlash(t *testing.T) {
+	var compressed bytes.Buffer
+	writer := gzip.NewWriter(&compressed)
+	if _, err := writer.Write(linuxQQTarFixture(t)); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	destination := t.TempDir()
+	if err := extractDebQQ(writeDebFixture(t, "data.tar.gz/", compressed.Bytes()), destination); err != nil {
+		t.Fatalf("real ar member name must be accepted: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(destination, "opt", "QQ", "resources", "app", "package.json")); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestPatchLinuxQQEntrypointCreatesManagedLoader(t *testing.T) {
 	root := t.TempDir()
 	packagePath := filepath.Join(root, "opt", "QQ", "resources", "app", "package.json")

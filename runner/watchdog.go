@@ -113,11 +113,20 @@ func watchdogMain() int {
 	self := os.Getpid()
 	for {
 		time.Sleep(watchdogInterval)
+		// Lifecycle actions hold this lock across directory replacement and
+		// state commits. Never restart an old process while an update is in its
+		// stopped/download phase.
+		unlock, lockErr := acquireNapcatLifecycleLock()
+		if lockErr != nil {
+			continue
+		}
 		state, err := loadState()
 		if err != nil {
+			unlock()
 			continue
 		}
 		if state.WatchdogPID != self {
+			unlock()
 			return 0
 		}
 		if needsRestart(state) {
@@ -126,6 +135,7 @@ func watchdogMain() int {
 				_ = saveState(state)
 			}
 		}
+		unlock()
 	}
 }
 

@@ -572,6 +572,16 @@ func installLinuxNapCat() (napcatInstallation, error) {
 	if err != nil {
 		return rollback(err)
 	}
+	// The initial environment check can only inspect Xvfb because QQ has not
+	// been unpacked yet. Inspect the actual QQ binary now and switch to the
+	// self-contained loader before committing an install with missing libraries.
+	if environment.Mode == "system" && !linuxQQDependenciesUsable(filepath.Join(stage, "opt", "QQ", "qq")) {
+		reportNapcatProgress("runtime", 68, "检测到 QQ 动态库缺失，切换兼容运行环境")
+		environment, err = prepareLinuxEnvironment(true)
+		if err != nil {
+			return rollback(err)
+		}
+	}
 	reportNapcatProgress("verify", 68, "正在写入 NapCat 启动入口")
 	if _, err := napcatShellEntrypoint(stage); err != nil {
 		return rollback(err)

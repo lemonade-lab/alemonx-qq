@@ -52,3 +52,7 @@ func processGroupAlive(pid int) bool {
 	err := syscall.Kill(-pid, syscall.Signal(0))
 	return err == nil || errors.Is(err, syscall.EPERM)
 }
+
+func managedNapcatGroupAlive(state State) bool {
+	return processGroupAlive(napcatProcessGroup(state))
+}

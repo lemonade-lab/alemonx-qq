@@ -16,6 +16,12 @@ import (
 // startNapCat manages the X display server and QQ directly, without a shell
 // wrapper or any package-provided script.
 func startNapCat(state State) (napcatProcess, error) {
+	// A bare TCP probe is the available cross-platform readiness signal. Refuse
+	// to start when 6099 is already occupied so a different local service cannot
+	// make installation or an update look successful.
+	if webUIBridge() != "" {
+		return napcatProcess{}, fmt.Errorf("NapCat 管理面板端口 %d 已被其他进程占用", webUIPort)
+	}
 	qq, err := linuxQQBinary(state)
 	if err != nil {
 		return napcatProcess{}, err

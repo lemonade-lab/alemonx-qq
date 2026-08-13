@@ -54,6 +54,24 @@ func errorText(err error) string {
 }
 
 func run(action string, params map[string]string, confirmed bool) (string, error) {
+	if napcatLifecycleAction(action) {
+		return withNapcatLifecycleLock(func() (string, error) {
+			return runNapcatAction(action, params, confirmed)
+		})
+	}
+	return runNapcatAction(action, params, confirmed)
+}
+
+func napcatLifecycleAction(action string) bool {
+	switch action {
+	case "install", "uninstall", "start", "stop", "restart", "update", "watchdog-on", "watchdog-off":
+		return true
+	default:
+		return false
+	}
+}
+
+func runNapcatAction(action string, params map[string]string, confirmed bool) (string, error) {
 	switch action {
 	case "status", "napcat-status":
 		return statusAction()
@@ -297,9 +315,9 @@ func uninstallAction(confirmed bool) (string, error) {
 	if err := requireManagedNapcat(state, "卸载"); err != nil {
 		return "", err
 	}
-	if isRunning(state) {
+	if managedNapcatGroupAlive(state) {
 		stopProcess(napcatProcessGroup(state))
-		if isRunning(state) {
+		if managedNapcatGroupAlive(state) {
 			return "", errors.New("NapCat 进程组未能停止，已拒绝删除安装目录")
 		}
 	}
@@ -337,6 +355,12 @@ func startAction(confirmed bool) (string, error) {
 	if isRunning(state) {
 		return "? NapCat 已经在运行中。", nil
 	}
+	if managedNapcatGroupAlive(state) {
+		stopProcess(napcatProcessGroup(state))
+		if managedNapcatGroupAlive(state) {
+			return "", errors.New("上一次 NapCat 进程组未能停止，已取消启动")
+		}
+	}
 	reportNapcatProgress("start", 85, "启动 NapCat 受管进程组")
 	process, err := startNapCat(state)
 	if err != nil {
@@ -367,7 +391,7 @@ func stopAction(confirmed bool) (string, error) {
 	if err := requireManagedNapcat(state, "停止"); err != nil {
 		return "", err
 	}
-	if !isRunning(state) {
+	if !managedNapcatGroupAlive(state) {
 		return "? NapCat 当前没有在运行。", nil
 	}
 	stopProcess(napcatProcessGroup(state))
@@ -392,9 +416,9 @@ func restartAction(confirmed bool) (string, error) {
 	if err := requireManagedNapcat(state, "重启"); err != nil {
 		return "", err
 	}
-	if isRunning(state) {
+	if managedNapcatGroupAlive(state) {
 		stopProcess(napcatProcessGroup(state))
-		if isRunning(state) {
+		if managedNapcatGroupAlive(state) {
 			return "", errors.New("NapCat 进程组未能停止，已取消重启")
 		}
 	}
@@ -423,10 +447,23 @@ func updateNapcat(confirmed bool) (string, error) {
 		return "", err
 	}
 	wasRunning := isRunning(state)
-	if wasRunning {
+	if managedNapcatGroupAlive(state) {
 		stopProcess(napcatProcessGroup(state))
-		if isRunning(state) {
+		if managedNapcatGroupAlive(state) {
 			return "", errors.New("旧 NapCat 进程组未能停止，未开始更新")
+		}
+		// Persist the stopped state before a lengthy download. This makes a
+		// watchdog observation unambiguously intentional even if it starts after
+		// the lifecycle lock is released unexpectedly.
+		state.PID, state.ProcessGroupID = 0, 0
+		if err := saveState(state); err != nil {
+			if wasRunning {
+				if process, startErr := startNapCat(state); startErr == nil {
+					state.PID, state.ProcessGroupID = process.PID, process.ProcessGroupID
+					_ = saveState(state)
+				}
+			}
+			return "", fmt.Errorf("无法记录 NapCat 已停止状态，未开始更新：%w", err)
 		}
 	}
 	installation, installErr := installNapCat()
@@ -454,6 +491,17 @@ func updateNapcat(confirmed bool) (string, error) {
 			return "", fmt.Errorf("更新后的 NapCat 无法启动，已恢复旧版本：%w", startErr)
 		}
 		updated.PID, updated.ProcessGroupID = process.PID, process.ProcessGroupID
+		if !waitNapcatWebUI(webUIStartupTimeout) {
+			stopProcess(process.ProcessGroupID)
+			if rollbackErr := rollbackNapcatInstallation(installation); rollbackErr != nil {
+				return "", fmt.Errorf("更新后的 NapCat 未能启动管理页面，且回滚失败：%w", rollbackErr)
+			}
+			if process, oldStartErr := startNapCat(state); oldStartErr == nil {
+				state.PID, state.ProcessGroupID = process.PID, process.ProcessGroupID
+				_ = saveState(state)
+			}
+			return "", errors.New("更新后的 NapCat 未能启动管理页面，已恢复旧版本")
+		}
 	}
 	if err := saveState(updated); err != nil {
 		if wasRunning {

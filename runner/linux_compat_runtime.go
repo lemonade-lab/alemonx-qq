@@ -4,6 +4,7 @@ package main
 
 import (
 	"archive/tar"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -44,6 +45,21 @@ type managedLinuxRuntime struct {
 	LibraryPath string
 }
 
+type runtimeSBOM struct {
+	Format        string            `json:"format"`
+	Platform      string            `json:"platform"`
+	RuntimeID     string            `json:"runtimeID"`
+	Archive       string            `json:"archive"`
+	ArchiveSHA256 string            `json:"archiveSha256"`
+	Files         []runtimeSBOMFile `json:"files"`
+}
+
+type runtimeSBOMFile struct {
+	Path   string `json:"path"`
+	SHA256 string `json:"sha256"`
+	Size   int64  `json:"size"`
+}
+
 type linuxEnvironment struct {
 	Mode       string
 	Runtime    *managedLinuxRuntime
@@ -80,7 +96,8 @@ func prepareLinuxEnvironment(forceManaged bool) (linuxEnvironment, error) {
 }
 
 func linuxSystemRuntimeUsable() bool {
-	if _, err := exec.LookPath("Xvfb"); err != nil {
+	xvfb, err := exec.LookPath("Xvfb")
+	if err != nil {
 		return false
 	}
 	if _, err := exec.LookPath("apt-get"); err != nil {
@@ -93,8 +110,21 @@ func linuxSystemRuntimeUsable() bool {
 	if matches, _ := filepath.Glob("/lib/ld-musl-*.so.1"); len(matches) > 0 {
 		return false
 	}
-	return true
+	return linuxProgramDependenciesUsable(xvfb)
 }
+
+// linuxProgramDependenciesUsable identifies the ordinary missing-library
+// failure before QQ is launched. ldd is a local inspection tool here; its
+// output is never executed as shell input.
+func linuxProgramDependenciesUsable(program string) bool {
+	output, err := exec.Command("ldd", program).CombinedOutput()
+	if err != nil {
+		return false
+	}
+	return !strings.Contains(string(output), "not found")
+}
+
+func linuxQQDependenciesUsable(program string) bool { return linuxProgramDependenciesUsable(program) }
 
 func linuxEnvironmentForState(state State) (linuxEnvironment, error) {
 	if state.EnvironmentMode == "managed-runtime" {
@@ -110,7 +140,7 @@ func linuxEnvironmentForState(state State) (linuxEnvironment, error) {
 		}
 		return linuxEnvironment{Mode: "managed-runtime", Runtime: &runtimeValue, Reason: "已自动恢复兼容运行环境", Diagnostic: "已使用受管兼容运行环境"}, nil
 	}
-	if linuxSystemRuntimeUsable() {
+	if linuxSystemRuntimeUsable() && linuxProgramDependenciesUsable(filepath.Join(state.InstallDir, "opt", "QQ", "qq")) {
 		return linuxEnvironment{Mode: "system", Diagnostic: "已使用系统图形运行环境"}, nil
 	}
 	// A system package may have been removed after install. Re-create the
@@ -119,7 +149,7 @@ func linuxEnvironmentForState(state State) (linuxEnvironment, error) {
 	if err != nil {
 		return linuxEnvironment{}, fmt.Errorf("系统图形运行环境不可用，且兼容运行环境无法准备：%w", err)
 	}
-	return linuxEnvironment{Mode: "managed-runtime", Runtime: &runtimeValue, Reason: "系统图形运行环境已不可用", Diagnostic: "已自动切换受管兼容运行环境"}, nil
+	return linuxEnvironment{Mode: "managed-runtime", Runtime: &runtimeValue, Reason: "系统图形运行环境或 QQ 动态库已不可用", Diagnostic: "已自动切换受管兼容运行环境"}, nil
 }
 
 func ensureManagedLinuxRuntime() (managedLinuxRuntime, error) {
@@ -139,7 +169,15 @@ func ensureManagedLinuxRuntime() (managedLinuxRuntime, error) {
 	if err != nil {
 		return managedLinuxRuntime{}, fmt.Errorf("当前 QQ 插件 Release（%s）尚未附带 %s；请更新到包含兼容运行环境的 QQ 插件版本", release.TagName, assetContract.Name)
 	}
-	return installManagedLinuxRuntime(assetContract, asset)
+	checksums, err := releaseAssetByName(release, "SHA256SUMS")
+	if err != nil {
+		return managedLinuxRuntime{}, fmt.Errorf("当前 QQ 插件 Release（%s）缺少 SHA256SUMS，拒绝下载兼容运行环境", release.TagName)
+	}
+	sbom, err := releaseAssetByName(release, assetContract.Name+".sbom.json")
+	if err != nil {
+		return managedLinuxRuntime{}, fmt.Errorf("当前 QQ 插件 Release（%s）缺少 %s，拒绝下载兼容运行环境", release.TagName, assetContract.Name+".sbom.json")
+	}
+	return installManagedLinuxRuntime(assetContract, asset, checksums, sbom)
 }
 
 // linuxCompatibilityReleaseURL accepts a formal plugin tag when available,
@@ -160,7 +198,7 @@ func managedRuntimeBaseDir() (string, error) {
 	return filepath.Join(dir, "runtime"), nil
 }
 
-func installManagedLinuxRuntime(contract linuxCompatibilityAsset, asset releaseAsset) (managedLinuxRuntime, error) {
+func installManagedLinuxRuntime(contract linuxCompatibilityAsset, asset, checksums, sbom releaseAsset) (managedLinuxRuntime, error) {
 	base, err := managedRuntimeBaseDir()
 	if err != nil {
 		return managedLinuxRuntime{}, err
@@ -183,13 +221,27 @@ func installManagedLinuxRuntime(contract linuxCompatibilityAsset, asset releaseA
 	}
 	defer os.RemoveAll(stage)
 	archive := filepath.Join(stage, "package.tar.zst")
+	checksumFile := filepath.Join(stage, "SHA256SUMS")
+	sbomFile := filepath.Join(stage, "runtime.sbom.json")
 	reportNapcatProgress("runtime", 15, "正在准备兼容运行环境")
 	if err := downloadFileWithProgress(asset.URL, archive, napcatDownloadProgress("下载兼容运行环境", 15, 25)); err != nil {
 		return managedLinuxRuntime{}, err
 	}
+	if err := downloadFile(checksums.URL, checksumFile); err != nil {
+		return managedLinuxRuntime{}, fmt.Errorf("下载兼容运行环境校验清单失败：%w", err)
+	}
+	if err := verifyReleasedAssetSHA256(archive, checksumFile, asset.Name); err != nil {
+		return managedLinuxRuntime{}, err
+	}
+	if err := downloadFile(sbom.URL, sbomFile); err != nil {
+		return managedLinuxRuntime{}, fmt.Errorf("下载兼容运行环境 SBOM 失败：%w", err)
+	}
 	extracted := filepath.Join(stage, "extracted")
 	reportNapcatProgress("runtime", 25, "验证兼容运行环境")
 	if err := extractCompatibilityRuntime(archive, extracted); err != nil {
+		return managedLinuxRuntime{}, err
+	}
+	if err := verifyRuntimeSBOM(extracted, sbomFile, contract, asset.Name, archive); err != nil {
 		return managedLinuxRuntime{}, err
 	}
 	_, runtimeValue, err := readManagedLinuxRuntime(extracted, contract)
@@ -206,6 +258,118 @@ func installManagedLinuxRuntime(contract linuxCompatibilityAsset, asset releaseA
 	stage = ""
 	runtimeValue.Root = filepath.Join(runtimeRoot, "extracted")
 	return runtimeValue, nil
+}
+
+func verifyRuntimeSBOM(root, sbomPath string, contract linuxCompatibilityAsset, archiveName, archivePath string) error {
+	data, err := os.ReadFile(sbomPath)
+	if err != nil {
+		return err
+	}
+	var sbom runtimeSBOM
+	if err := json.Unmarshal(data, &sbom); err != nil {
+		return fmt.Errorf("兼容运行环境 SBOM 无效：%w", err)
+	}
+	if sbom.Format != "alx-runtime-sbom/v1" || sbom.Platform != contract.Platform || sbom.RuntimeID == "" || sbom.Archive != archiveName || len(sbom.ArchiveSHA256) != sha256.Size*2 {
+		return errors.New("兼容运行环境 SBOM 与当前资产不匹配")
+	}
+	archiveHash, err := fileSHA256(archivePath)
+	if err != nil {
+		return err
+	}
+	if !strings.EqualFold(sbom.ArchiveSHA256, archiveHash) {
+		return errors.New("兼容运行环境 SBOM 未绑定到已验证的发布资产")
+	}
+	expected := make(map[string]runtimeSBOMFile, len(sbom.Files))
+	for _, item := range sbom.Files {
+		path, pathErr := managedRuntimePath(root, filepath.FromSlash(item.Path))
+		if pathErr != nil || item.Path == "" || strings.Contains(item.Path, "\\") || len(item.SHA256) != sha256.Size*2 || item.Size < 0 {
+			return errors.New("兼容运行环境 SBOM 包含无效文件记录")
+		}
+		key, relErr := filepath.Rel(root, path)
+		if relErr != nil || filepath.ToSlash(key) != item.Path {
+			return errors.New("兼容运行环境 SBOM 包含非规范路径")
+		}
+		if _, exists := expected[item.Path]; exists {
+			return errors.New("兼容运行环境 SBOM 包含重复文件记录")
+		}
+		expected[item.Path] = item
+	}
+	actual := map[string]runtimeSBOMFile{}
+	err = filepath.Walk(root, func(path string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if path == root || info.IsDir() {
+			return nil
+		}
+		if !info.Mode().IsRegular() {
+			return errors.New("兼容运行环境包含未登记的特殊文件")
+		}
+		contents, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return readErr
+		}
+		relative, relErr := filepath.Rel(root, path)
+		if relErr != nil {
+			return relErr
+		}
+		key := filepath.ToSlash(relative)
+		hash := sha256.Sum256(contents)
+		actual[key] = runtimeSBOMFile{Path: key, SHA256: fmt.Sprintf("%x", hash[:]), Size: int64(len(contents))}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	if len(actual) != len(expected) {
+		return errors.New("兼容运行环境文件数量与 SBOM 不一致")
+	}
+	for path, want := range expected {
+		got, ok := actual[path]
+		if !ok || got.Size != want.Size || !strings.EqualFold(got.SHA256, want.SHA256) {
+			return fmt.Errorf("兼容运行环境文件校验失败：%s", path)
+		}
+	}
+	return nil
+}
+
+func verifyReleasedAssetSHA256(archive, manifestPath, assetName string) error {
+	manifest, err := os.ReadFile(manifestPath)
+	if err != nil {
+		return err
+	}
+	expected := ""
+	for _, line := range strings.Split(string(manifest), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 2 && strings.TrimPrefix(fields[1], "*") == assetName {
+			expected = fields[0]
+			break
+		}
+	}
+	if len(expected) != sha256.Size*2 {
+		return fmt.Errorf("兼容运行环境校验清单未包含 %s", assetName)
+	}
+	actual, err := fileSHA256(archive)
+	if err != nil {
+		return err
+	}
+	if !strings.EqualFold(actual, expected) {
+		return fmt.Errorf("兼容运行环境 SHA-256 校验失败（%s）", assetName)
+	}
+	return nil
+}
+
+func fileSHA256(path string) (string, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+	hash := sha256.New()
+	if _, err := io.Copy(hash, file); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%x", hash.Sum(nil)), nil
 }
 
 func loadManagedLinuxRuntime() (managedLinuxRuntime, error) {

@@ -140,7 +140,10 @@ func extractDebQQ(archivePath, destination string) error {
 		} else if err != nil {
 			return err
 		}
-		name := strings.TrimSpace(strings.TrimSuffix(string(header[:16]), "/"))
+		// ar members are commonly padded with spaces after the required trailing
+		// slash (for example "data.tar.xz/    "). Trim padding first, then the
+		// archive suffix; doing it in the other order misses real Debian files.
+		name := strings.TrimSuffix(strings.TrimSpace(string(header[:16])), "/")
 		size, err := strconv.ParseInt(strings.TrimSpace(string(header[48:58])), 10, 64)
 		if err != nil || size < 0 {
 			return errors.New("Linux QQ DEB 成员大小无效")

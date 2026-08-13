@@ -4,6 +4,8 @@ package main
 
 import (
 	"archive/tar"
+	"crypto/sha256"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -23,6 +25,61 @@ func TestLinuxCompatibilityRuntimeContract(t *testing.T) {
 	}
 	if _, err := linuxCompatibilityAssetFor("386"); err == nil {
 		t.Fatal("unsupported architecture must not receive an emulated runtime")
+	}
+}
+
+func TestLinuxProgramDependenciesUsableRejectsMissingProgram(t *testing.T) {
+	if linuxProgramDependenciesUsable(filepath.Join(t.TempDir(), "missing")) {
+		t.Fatal("missing executable must not pass dependency preflight")
+	}
+}
+
+func TestVerifyRuntimeSBOM(t *testing.T) {
+	root := t.TempDir()
+	contents := []byte("runtime file")
+	archive := filepath.Join(t.TempDir(), "runtime.tar.zst")
+	archiveContents := []byte("runtime archive")
+	if err := os.WriteFile(archive, archiveContents, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	archiveDigest := sha256.Sum256(archiveContents)
+	if err := os.WriteFile(filepath.Join(root, "bin"), contents, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256(contents)
+	sbom := filepath.Join(t.TempDir(), "runtime.sbom.json")
+	payload := fmt.Sprintf(`{"format":"alx-runtime-sbom/v1","platform":"linux-amd64","runtimeID":"test","archive":"runtime.tar.zst","archiveSha256":"%x","files":[{"path":"bin","sha256":"%x","size":%d}]}`, archiveDigest, digest, len(contents))
+	if err := os.WriteFile(sbom, []byte(payload), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	contract := linuxCompatibilityAsset{Platform: "linux-amd64", Name: "runtime.tar.zst"}
+	if err := verifyRuntimeSBOM(root, sbom, contract, "runtime.tar.zst", archive); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "bin"), []byte("changed"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyRuntimeSBOM(root, sbom, contract, "runtime.tar.zst", archive); err == nil {
+		t.Fatal("modified runtime file must be rejected")
+	}
+}
+
+func TestVerifyReleasedAssetSHA256(t *testing.T) {
+	archive := filepath.Join(t.TempDir(), "runtime.tar.zst")
+	payload := []byte("verified runtime")
+	if err := os.WriteFile(archive, payload, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256(payload)
+	checksums := filepath.Join(t.TempDir(), "SHA256SUMS")
+	if err := os.WriteFile(checksums, []byte(fmt.Sprintf("%x  runtime.tar.zst\n", digest)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyReleasedAssetSHA256(archive, checksums, "runtime.tar.zst"); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyReleasedAssetSHA256(archive, checksums, "missing.tar.zst"); err == nil {
+		t.Fatal("missing checksum entry must be rejected")
 	}
 }
 
