@@ -1,5 +1,5 @@
 export type QQEngine = 'napcat' | 'luckylillia'
-export type QQView = 'manage' | 'config' | 'webui'
+export type QQView = 'manage' | 'config' | 'webui' | 'background'
 
 export type QQSession = {
   version: 1
@@ -29,7 +29,7 @@ export function loadSession(): QQSession {
     return {
       version: 1,
       engine: value.engine === 'luckylillia' ? 'luckylillia' : 'napcat',
-      view: value.view === 'config' || value.view === 'webui' ? value.view : 'manage',
+      view: value.view === 'config' || value.view === 'webui' || value.view === 'background' ? value.view : 'manage',
       robotRoot: typeof value.robotRoot === 'string' ? value.robotRoot : '',
       napcatQQ: typeof value.napcatQQ === 'string' ? value.napcatQQ : ''
     }

@@ -426,13 +426,13 @@ export default function App() {
 	// engine that owns the task, even if the user switches to the other core.
 	const logEngine = state === 'running' ? activeEngine : engine
 
-	const run = async (action: string, params: Record<string, string> = {}, confirm = false, origin: ResultOrigin = 'manage') => {
+	const run = async (action: string, params: Record<string, string> = {}, confirm = false, origin: ResultOrigin = 'manage', actionEngine: Engine = engine) => {
 		// State updates are asynchronous, so `state === running` alone cannot
 		// stop two rapid clicks (or two confirmation clicks) from starting two
 		// installations. Keep a synchronous guard in the browser as well.
 		if (actionInFlight.current) return
 		actionInFlight.current = true
-		setActiveEngine(engine)
+		setActiveEngine(actionEngine)
 	setActiveAction(action)
     setState('running')
 		setResult(undefined)
@@ -725,7 +725,7 @@ export default function App() {
       </header>
 
 	  {!coreNeedsInstall && !nativeLauncherNapcat && <nav className="flex gap-1 border-b border-[var(--theme-border-default)] pb-2">
-        {(['manage', 'config', 'webui'] as View[]).map((tab) => (
+        {(['manage', 'config', 'background', 'webui'] as View[]).map((tab) => (
           <button
             key={tab}
             className={
@@ -736,7 +736,7 @@ export default function App() {
             }
             onClick={() => setView(tab)}
           >
-            {tab === 'manage' ? '管理' : tab === 'config' ? '网络配置' : '管理面板'}
+            {tab === 'manage' ? '管理' : tab === 'config' ? '网络配置' : tab === 'background' ? '后台运行' : '管理面板'}
           </button>
         ))}
 	  </nav>}
@@ -1039,6 +1039,26 @@ export default function App() {
         </div>
       )}
 
+      {view === 'background' && (
+        <div className="grid gap-3">
+          <p className="m-0 text-xs leading-5 text-[var(--theme-text-muted)]">后台进程独立于工作台运行；ALemonX 更新或重启不会中断它们。主机重启后需手动再次启动。</p>
+          <section className="grid gap-3 rounded-panel border border-[var(--theme-border-default)] bg-[var(--theme-surface-panel)] p-3">
+            <div className="flex items-center justify-between gap-3">
+              <strong className="text-sm font-semibold text-[var(--theme-text-strong)]">{engine === 'napcat' ? 'NapCat' : 'LuckyLillia'}</strong>
+              <span className={'text-xs ' + (liveStatus?.running ? 'text-[var(--theme-success-text)]' : 'text-[var(--theme-text-muted)]')}>
+                {liveStatus?.installed ? (liveStatus.running ? `后台运行中${liveStatus.pid ? `（PID ${liveStatus.pid}）` : ''}` : '已停止') : '未安装'}
+              </span>
+            </div>
+            {liveStatus?.error && <p className="m-0 rounded-md bg-[var(--theme-danger-soft)] px-2 py-1.5 text-xs text-[var(--theme-danger-text)]">{liveStatus.error}</p>}
+            <div className="flex flex-wrap gap-2">
+              <ActionButton label="后台启动" running={state === 'running'} disabled={!liveStatus?.installed || liveStatus?.running === true} onClick={() => confirm(`后台启动 ${engine === 'napcat' ? 'NapCat' : 'LuckyLillia'}`, '进程将脱离工作台独立运行；ALemonX 更新或重启不会中断。', () => run(engine === 'napcat' ? 'start' : luckyAction('start'), {}, true, 'manage', engine))} />
+              <ActionButton label="停止" variant="secondary" running={state === 'running'} disabled={liveStatus?.running !== true} onClick={() => confirm(`停止 ${engine === 'napcat' ? 'NapCat' : 'LuckyLillia'}`, '停止后台进程。', () => run(engine === 'napcat' ? 'stop' : luckyAction('stop'), {}, true, 'manage', engine))} />
+              <ActionButton label="看日志" variant="secondary" running={state === 'running'} onClick={() => void run(engine === 'napcat' ? 'log' : luckyAction('log'), {}, false, 'manage', engine)} />
+            </div>
+          </section>
+        </div>
+      )}
+
       {view === 'webui' && (
         <div className="relative min-h-0 overflow-hidden rounded-panel border border-[var(--theme-border-default)]">
           {webUrl ? (
@@ -1060,7 +1080,7 @@ export default function App() {
         </div>
       )}
 
-      {view === 'manage' && resultOrigin === 'manage' && <ResultPanel state={state} result={result ?? (state === 'running' ? { output: actionTitle(activeAction) } : undefined)} steps={operationSteps} liveDetail={operationDetail} onViewLog={() => void openLiveLog()} />}
+      {(view === 'manage' || view === 'background') && resultOrigin === 'manage' && <ResultPanel state={state} result={result ?? (state === 'running' ? { output: actionTitle(activeAction) } : undefined)} steps={operationSteps} liveDetail={operationDetail} onViewLog={() => void openLiveLog()} />}
 
       {pendingConfirm && (
         <ConfirmModal
