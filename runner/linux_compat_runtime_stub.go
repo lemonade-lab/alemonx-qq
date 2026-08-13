@@ -21,6 +21,8 @@ func prepareLinuxEnvironment(bool) (linuxEnvironment, error) {
 	return linuxEnvironment{}, fmt.Errorf("当前系统不支持 Linux 兼容运行环境")
 }
 
+func linuxSystemRuntimeDiagnostic() string { return "" }
+
 func loadManagedLinuxRuntime() (managedLinuxRuntime, error) {
 	return managedLinuxRuntime{}, fmt.Errorf("当前系统不支持 Linux 兼容运行环境")
 }

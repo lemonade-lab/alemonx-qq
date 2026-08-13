@@ -1073,6 +1073,26 @@ func luckyOneBotConfig() (string, error) {
 	return "? 尚未找到 LuckyLillia OneBot 配置；保存连接配置将创建默认配置。", nil
 }
 
+// luckyOneBotToken returns the WebSocket token from the LuckyLillia OneBot
+// config for the one-click sync flow. The token is never logged or stored in
+// the workbench state.
+func luckyOneBotToken() (string, error) {
+	for _, file := range luckyConfigFiles() {
+		data, err := os.ReadFile(file)
+		if err != nil {
+			continue
+		}
+		var root map[string]any
+		if json.Unmarshal(data, &root) != nil {
+			continue
+		}
+		if config, ok := luckyReadOneBot(root); ok {
+			return oneBotTokenPayload(config.token)
+		}
+	}
+	return oneBotTokenPayload("")
+}
+
 func luckySetOneBotConfig(params map[string]string, confirmed bool) (string, error) {
 	if err := requireLuckyConfirmation(confirmed, "保存 LuckyLillia OneBot 配置"); err != nil {
 		return "", err

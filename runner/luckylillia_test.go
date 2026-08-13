@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"archive/zip"
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -166,6 +167,36 @@ func TestLuckyProgressUsesCurrentOperationLog(t *testing.T) {
 	data, err := os.ReadFile(path)
 	if err != nil || !strings.Contains(string(data), "65% 验证官方包") {
 		t.Fatalf("operation log = %q err=%v", data, err)
+	}
+}
+
+func TestLuckyOneBotTokenReadsWebSocketToken(t *testing.T) {
+	original := userConfigDir
+	dir := t.TempDir()
+	userConfigDir = func() (string, error) { return dir, nil }
+	t.Cleanup(func() { userConfigDir = original })
+	install := filepath.Join(dir, "alx-qq", "luckylillia")
+	dataDir := filepath.Join(install, "bin", "llbot", "data")
+	if err := os.MkdirAll(dataDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	config := `{"ob11":{"enable":true,"connect":[{"type":"ws","enable":true,"port":7199,"token":"lucky-secret"}]}}`
+	if err := os.WriteFile(filepath.Join(dataDir, "config.json"), []byte(config), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := saveLuckyState(luckyState{InstallDir: install}); err != nil {
+		t.Fatal(err)
+	}
+	output, err := luckyOneBotToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]string
+	if err := json.Unmarshal([]byte(output), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["token"] != "lucky-secret" {
+		t.Fatalf("token = %q, want lucky-secret", payload["token"])
 	}
 }
 

@@ -79,6 +79,8 @@ func collectStatus(state State) statusPayload {
 		compatibility := currentLinuxHostCompatibility()
 		if !compatibility.NativeSupported {
 			payload.DiagnosticHint = compatibility.Diagnostic
+		} else if reason := linuxSystemRuntimeDiagnostic(); reason != "" {
+			payload.DiagnosticHint = "Linux 图形运行环境未就绪：" + reason + "。请先执行“准备 QQ 登录运行环境”。"
 		}
 	}
 	if platform != nil && platform.Key == "darwin-external" && !payload.Installed && macQQInstalled() && macNapcatInjected() {

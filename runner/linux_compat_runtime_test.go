@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/klauspost/compress/zstd"
@@ -31,6 +32,14 @@ func TestLinuxCompatibilityRuntimeContract(t *testing.T) {
 func TestLinuxProgramDependenciesUsableRejectsMissingProgram(t *testing.T) {
 	if linuxProgramDependenciesUsable(filepath.Join(t.TempDir(), "missing")) {
 		t.Fatal("missing executable must not pass dependency preflight")
+	}
+}
+
+func TestLinuxSystemRuntimeDiagnosticReportsMissingXvfb(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	reason := linuxSystemRuntimeDiagnostic()
+	if !strings.Contains(reason, "Xvfb") {
+		t.Fatalf("diagnostic should name the missing component when PATH lacks it: %q", reason)
 	}
 }
 

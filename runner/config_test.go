@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -71,6 +72,25 @@ func TestReadOnebotConfigRedactsToken(t *testing.T) {
 	}
 	if !contains(text, redactedToken) {
 		t.Fatalf("token should be redacted: %s", text)
+	}
+}
+
+func TestNapcatOneBotTokenReadsWebSocketToken(t *testing.T) {
+	napcat := withTempState(t)
+	config := `{"network":{"httpServers":[{"enable":true,"port":3000,"token":"http-secret"}],"websocketServers":[{"enable":true,"port":3001,"token":"ws-secret"}]}}`
+	if err := os.WriteFile(filepath.Join(napcat, "config", "onebot11_7.json"), []byte(config), 0600); err != nil {
+		t.Fatal(err)
+	}
+	output, err := napcatOneBotToken(map[string]string{"qq": "7"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]string
+	if err := json.Unmarshal([]byte(output), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["token"] != "ws-secret" {
+		t.Fatalf("token = %q, want ws-secret", payload["token"])
 	}
 }
 

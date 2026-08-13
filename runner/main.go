@@ -157,6 +157,8 @@ func runNapcatAction(action string, params map[string]string, confirmed bool) (s
 		return luckyOperationStatusAction()
 	case "onebot-config":
 		return onebotConfigAction(params)
+	case "napcat-onebot-token-read":
+		return napcatOneBotToken(params)
 	case "onebot-http-set":
 		return setServerConfig(params, false, confirmed)
 	case "onebot-ws-set":
@@ -201,6 +203,8 @@ func runNapcatAction(action string, params map[string]string, confirmed bool) (s
 		return logStatusAction(true)
 	case "luckylillia-onebot-config":
 		return luckyOneBotConfig()
+	case "luckylillia-onebot-token-read":
+		return luckyOneBotToken()
 	case "luckylillia-onebot-set":
 		return luckySetOneBotConfig(params, confirmed)
 	case "luckylillia-auth-token-set":

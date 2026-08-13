@@ -82,7 +82,8 @@ func prepareLinuxEnvironment(forceManaged bool) (linuxEnvironment, error) {
 	if err := linuxPreflightError(); err != nil {
 		return linuxEnvironment{}, err
 	}
-	if linuxSystemRuntimeUsable() {
+	reason := linuxSystemRuntimeDiagnostic()
+	if reason == "" {
 		if xvfb, err := exec.LookPath("Xvfb"); err == nil && xvfb != "" {
 			return linuxEnvironment{Mode: "system", Diagnostic: "已使用系统图形运行环境"}, nil
 		}
@@ -92,34 +93,43 @@ func prepareLinuxEnvironment(forceManaged bool) (linuxEnvironment, error) {
 	// the 85% wait. Do not claim this is portable compatibility: require the
 	// reviewed system dependency operation before an Electron process starts.
 	if forceManaged {
-		return linuxEnvironment{}, errors.New("系统 QQ 运行依赖仍不完整；请先执行“准备 QQ 登录运行环境”，完成后重新安装")
+		return linuxEnvironment{}, fmt.Errorf("系统 QQ 运行依赖仍不完整：%s。请先执行“准备 QQ 登录运行环境”，完成后重新安装", reason)
 	}
-	return linuxEnvironment{}, errors.New("Linux 图形运行环境未就绪；请先执行“准备 QQ 登录运行环境”（会安装 Xvfb、XKB、GTK、NSS、GBM、音频和 X11 依赖）")
+	return linuxEnvironment{}, fmt.Errorf("Linux 图形运行环境未就绪：%s。请先执行“准备 QQ 登录运行环境”（会安装 Xvfb、XKB、GTK、NSS、GBM、音频和 X11 依赖）", reason)
 }
 
-func linuxSystemRuntimeUsable() bool {
+// linuxSystemRuntimeDiagnostic returns the first missing prerequisite of the
+// native Linux graphics runtime, or "" when the system path is usable. It is
+// the single source of truth for both the usability probe and user-facing
+// diagnostics, so an install failure names the exact missing component.
+func linuxSystemRuntimeDiagnostic() string {
 	xvfb, err := exec.LookPath("Xvfb")
 	if err != nil {
-		return false
+		return "缺少 Xvfb（虚拟显示服务器）"
 	}
 	if _, err := exec.LookPath("xkbcomp"); err != nil {
-		return false
+		return "缺少 xkbcomp（X 键盘配置工具）"
 	}
 	if !dirExists("/usr/share/X11/xkb") {
-		return false
+		return "缺少 XKB 键盘布局数据（/usr/share/X11/xkb）"
 	}
 	if _, err := exec.LookPath("apt-get"); err != nil {
 		if _, dnfErr := exec.LookPath("dnf"); dnfErr != nil {
-			return false
+			return "未检测到 apt-get 或 dnf 包管理器"
 		}
 	}
 	// Alpine and similar musl systems can expose Xvfb but cannot directly run
 	// the reviewed glibc QQ package. Select the managed loader proactively.
 	if matches, _ := filepath.Glob("/lib/ld-musl-*.so.1"); len(matches) > 0 {
-		return false
+		return "检测到 musl 运行库；官方 QQ 是 glibc 运行时"
 	}
-	return linuxProgramDependenciesUsable(xvfb)
+	if !linuxProgramDependenciesUsable(xvfb) {
+		return "Xvfb 动态库不完整（ldd 报告缺失依赖）"
+	}
+	return ""
 }
+
+func linuxSystemRuntimeUsable() bool { return linuxSystemRuntimeDiagnostic() == "" }
 
 // linuxProgramDependenciesUsable identifies the ordinary missing-library
 // failure before QQ is launched. ldd is a local inspection tool here; its

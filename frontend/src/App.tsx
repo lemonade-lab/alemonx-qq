@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { chooseSystemPath, fetchHostRobotContext, fetchLocalServices, fetchOperationLog, fetchPluginLog, fetchRobotProjects, fetchStatus, luckyQRCodeURL, napcatQRCodeURL, runActionAndPoll, syncRobotOneBot, type ActionResult, type LocalService, type RobotProject, type StatusPayload, type Task, type TaskStep } from './api'
+import { chooseSystemPath, fetchHostRobotContext, fetchLocalServices, fetchOperationLog, fetchPluginLog, fetchPrivilegedAudit, fetchRobotProjects, fetchStatus, luckyQRCodeURL, napcatQRCodeURL, privilegePreflight, runActionAndPoll, syncRobotOneBot, type ActionResult, type LocalService, type PrivilegedAuditItem, type RobotProject, type StatusPayload, type Task, type TaskStep } from './api'
 import { splitStatusLines, type StatusLine } from './status'
 import { loadSession, saveSession, type QQEngine, type QQView } from './session'
 
@@ -260,6 +260,53 @@ function LogModal({
   )
 }
 
+function SudoModal({
+  title,
+  description,
+  busy,
+  onConfirm,
+  onCancel
+}: {
+  title: string
+  description: string
+  busy: boolean
+  onConfirm: (password: string) => void
+  onCancel: () => void
+}) {
+  const passwordRef = useRef<HTMLInputElement>(null)
+  useEffect(() => {
+    const previous = document.activeElement as HTMLElement | null
+    passwordRef.current?.focus()
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onCancel()
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('keydown', onKeyDown)
+      previous?.focus()
+    }
+  }, [onCancel])
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-[var(--theme-surface-overlay)]" role="dialog" aria-modal="true" aria-label={title}>
+      <form className="grid w-[min(460px,calc(100vw-32px))] gap-3 rounded-panel border border-[var(--theme-border-default)] bg-[var(--theme-surface-panel)] p-4 shadow-[var(--theme-shadow-pop)]" onSubmit={event => {
+        event.preventDefault()
+        onConfirm(passwordRef.current?.value || '')
+      }}>
+        <h3 className="m-0 mb-1 text-[15px] font-semibold text-[var(--theme-text-strong)]">{title}</h3>
+        <p className="m-0 text-[13px] leading-5 text-[var(--theme-text-muted)]">{description}</p>
+        <label className="grid gap-1 text-xs font-semibold text-[var(--theme-text-secondary)]">
+         系统 sudo 密码
+          <input ref={passwordRef} className={inputClass} type="password" name="sudoPassword" autoComplete="current-password" placeholder="root 或已配置免密 sudo 时可留空" />
+        </label>
+        <div className="flex justify-end gap-2">
+          <button type="button" className="secondary-button" onClick={onCancel} disabled={busy}>取消</button>
+          <button type="submit" className="primary-button" disabled={busy}>{busy ? '正在执行…' : '执行'}</button>
+        </div>
+      </form>
+    </div>
+  )
+}
+
 function ActionButton({
   label,
   variant = 'primary',
@@ -324,6 +371,7 @@ export default function App() {
     tone?: 'primary' | 'danger'
     action: () => Promise<void>
 	} | null>(null)
+	const [sudoRequest, setSudoRequest] = useState<{ action: string; title: string; description: string; intentId: string } | null>(null)
 	const [logText, setLogText] = useState<string | null>(null)
 	const [logAutoRefresh, setLogAutoRefresh] = useState(true)
 	const [qrLoadFailed, setQrLoadFailed] = useState(false)
@@ -335,8 +383,9 @@ export default function App() {
 	const liveStatus = statusByEngine[engine] ?? null
 	const [projects, setProjects] = useState<RobotProject[]>([])
 	const [services, setServices] = useState<LocalService[]>([])
+	const [auditItems, setAuditItems] = useState<PrivilegedAuditItem[]>([])
+	const [auditLoading, setAuditLoading] = useState(false)
 	const [robotRoot, setRobotRoot] = useState(initialSession.robotRoot)
-	const [syncToken, setSyncToken] = useState('')
 	const webServiceID = engine === 'napcat' ? 'napcat-webui' : 'luckylillia-webui'
 	const webService = services.find(service => service.id === webServiceID)
 	const webUrl = webService?.reachable && webService.embed ? webService.proxyUrl : ''
@@ -403,6 +452,73 @@ export default function App() {
 		setActiveAction(null)
 		actionInFlight.current = false
 	  }
+	}
+
+	// Manifest-declared system operation (password-authorized). The host owns
+	// the sudo prompt, intent validation, timeout and audit; the plugin UI only
+	// forwards the one-time intent and the password for this single request.
+	const runPrivileged = async (action: string, sudoPassword: string, authorizationId: string) => {
+		if (actionInFlight.current) return
+		actionInFlight.current = true
+		setActiveEngine(engine)
+		setActiveAction(action)
+		setState('running')
+		setResult(undefined)
+		setOperationSteps([])
+		setOperationDetail('正在创建本次操作记录…')
+		setResultOrigin('manage')
+		try {
+			const outcome = await runActionAndPoll(action, {}, true, task => applyOperationTask(task), { sudoPassword, authorizationId })
+			setResult(outcome)
+			setState(outcome.error ? 'failed' : 'done')
+		} catch (reason) {
+			setResult({ output: '', error: reason instanceof Error ? reason.message : String(reason) })
+			setState('failed')
+		} finally {
+			setActiveAction(null)
+			actionInFlight.current = false
+			setSudoRequest(null)
+			void refreshAudit()
+		}
+	}
+
+	const refreshAudit = useCallback(async () => {
+		setAuditLoading(true)
+		try {
+			setAuditItems(await fetchPrivilegedAudit('alemonx-qq'))
+		} catch {
+			// Audit is auxiliary; a failure must not disturb the main UI.
+		} finally {
+			setAuditLoading(false)
+		}
+	}, [])
+
+	const requestLinuxEnvironment = async () => {
+		try {
+			const preflight = await privilegePreflight('alemonx-qq', 'napcat-install-dependencies')
+			if (!preflight.available) {
+				setResultOrigin('manage')
+				setResult({ output: '', error: preflight.reason || '该系统操作当前不可用。' })
+				setState('failed')
+				return
+			}
+			if (preflight.authorization !== 'password' || !preflight.intentId) {
+				setResultOrigin('manage')
+				setResult({ output: '', error: `当前环境需要「${preflight.authorization}」授权方式，请使用 ALemonX 的系统操作入口执行。` })
+				setState('failed')
+				return
+			}
+			setSudoRequest({
+				action: 'napcat-install-dependencies',
+				title: preflight.title,
+				description: preflight.description || '将安装 QQ 登录所需的系统组件；密码只用于本次系统授权。',
+				intentId: preflight.intentId
+			})
+		} catch (reason) {
+			setResultOrigin('manage')
+			setResult({ output: '', error: reason instanceof Error ? reason.message : String(reason) })
+			setState('failed')
+		}
 	}
 
 	// Live operation detail: while a lifecycle task runs, poll the runner's
@@ -489,6 +605,8 @@ export default function App() {
 			.catch(() => setProjects([]))
 	}, [])
 
+	useEffect(() => { void refreshAudit() }, [refreshAudit])
+
   const confirm = (title: string, description: string, action: () => Promise<void>, tone: 'primary' | 'danger' = 'primary') => {
     setPendingConfirm({ title, description, action, tone })
   }
@@ -502,7 +620,7 @@ export default function App() {
 		}
 		if (engine === 'napcat' && liveStatus.platform === 'darwin-external' && !liveStatus.installed) return liveStatus.installerReady ? {
 			title: '安装 NapCat',
-			description: liveStatus.installerPath ? `${liveStatus.installerPath}` : '安装器已下载。',
+			description: '安装器已下载，点击打开。',
 			label: '打开安装器',
 			action: () => confirm('打开 NapCat 安装器', '将打开已下载的官方安装器。', () => run('napcat-macos-installer-open', {}, true)),
 		} : {
@@ -542,7 +660,13 @@ export default function App() {
 			label: '查看实时日志',
 			action: () => void openLiveLog()
 		}
-		if (engine === 'napcat' && !liveStatus.installed) return { title: '安装 NapCat', description: '点击后自动安装并启动，随后显示登录二维码。', label: '安装 NapCat', action: () => void requestNapcatInstall() }
+		if (engine === 'napcat' && liveStatus.diagnosticHint?.includes('图形运行环境未就绪')) return {
+			title: 'Linux 图形运行环境未就绪',
+			description: liveStatus.diagnosticHint,
+			label: '准备 QQ 登录运行环境',
+			action: () => void requestLinuxEnvironment()
+		}
+		if (engine === 'napcat' && !liveStatus.installed) return { title: '安装 NapCat', description: '自动安装并启动。', label: '安装 NapCat', action: () => void requestNapcatInstall() }
 		if (engine === 'napcat' && liveStatus.installed && liveStatus.running && !liveStatus.oneBotReady && !liveStatus.loginPending) return { title: '正在准备登录二维码', description: '核心已启动，请稍候。二维码出现后用手机 QQ 扫描即可。', label: '等待二维码', action: () => void refreshStatus() }
 		if (nativeLauncherNapcat) return {
 			title: 'NapCat 启动器',
@@ -552,13 +676,13 @@ export default function App() {
 		}
 		if (engine === 'napcat' && liveStatus.installed && !liveStatus.managed) return { title: 'NapCat 已关联', description: webUrl ? '可以继续登录 QQ。' : '正在检查登录状态。', label: webUrl ? '打开登录页' : '刷新', action: () => webUrl ? setView('webui') : void refreshStatus() }
 		if (engine === 'luckylillia' && liveStatus.supported === false) return { title: '此系统暂不支持', description: '请改用 NapCat，或手动安装后关联。', label: '关联目录', action: () => document.getElementById('luckylillia-association')?.scrollIntoView({ behavior: 'smooth', block: 'center' }) }
-		if (!liveStatus.installed) return { title: '安装 QQ 核心', description: engine === 'napcat' ? '安装完成后会自动启动并进入登录。' : '安装后需先填写官方 Auth Token，再启动登录服务。', label: engine === 'napcat' ? '安装 NapCat' : '安装 LuckyLillia', action: () => engine === 'napcat' ? void requestNapcatInstall() : confirm('安装 QQ 核心', '将下载并验证官方组件。填写 Auth Token 后才会启动。', () => run(luckyAction('install'), {}, true)) }
+		if (!liveStatus.installed) return { title: '安装 QQ 核心', description: engine === 'napcat' ? '自动安装并启动。' : '安装后需填写 Auth Token。', label: engine === 'napcat' ? '安装 NapCat' : '安装 LuckyLillia', action: () => engine === 'napcat' ? void requestNapcatInstall() : confirm('安装 QQ 核心', '下载并安装 LuckyLillia。', () => run(luckyAction('install'), {}, true)) }
 		if (engine === 'luckylillia' && !liveStatus.managed) return { title: 'LuckyLillia 已关联', description: webUrl ? '可以继续登录 QQ。' : '正在检查登录状态。', label: webUrl ? '打开登录页' : '刷新', action: () => webUrl ? setView('webui') : void refreshStatus() }
-		if (engine === 'luckylillia' && !liveStatus.authTokenReady) return { title: '需要 Auth Token', description: '从 auth.luckylillia.com 获取 Token 后，在网络配置中保存。', label: '填写 Token', action: () => setView('config') }
+		if (engine === 'luckylillia' && !liveStatus.authTokenReady) return { title: '需要 Auth Token', description: '在「网络配置」中填写 Token。', label: '填写 Token', action: () => setView('config') }
 		if (!liveStatus.running) return { title: '启动 QQ', description: '启动后即可扫码登录。', label: engine === 'napcat' ? '启动 NapCat' : '启动 LuckyLillia', action: () => confirm('启动 QQ', '启动后请使用手机 QQ 扫码。', () => run(engine === 'napcat' ? 'start' : luckyAction('start'), {}, true)) }
-		if (liveStatus.loginPending) return { title: '请用手机 QQ 扫码', description: liveStatus.qrCodeAvailable ? '二维码已显示在下方，用手机 QQ 扫描即可。扫码后会自动继续。' : '正在生成二维码，请稍候；长时间未出现可查看实时日志。', label: liveStatus.qrCodeAvailable ? '查看实时日志' : (webUrl ? '打开登录页' : '等待登录'), action: liveStatus.qrCodeAvailable ? () => void openLiveLog() : (webUrl ? () => setView('webui') : () => void refreshStatus()) }
+		if (liveStatus.loginPending) return { title: '请用手机 QQ 扫码', description: liveStatus.qrCodeAvailable ? '扫码后自动继续。' : '正在生成二维码…', label: liveStatus.qrCodeAvailable ? '查看实时日志' : (webUrl ? '打开登录页' : '等待登录'), action: liveStatus.qrCodeAvailable ? () => void openLiveLog() : (webUrl ? () => setView('webui') : () => void refreshStatus()) }
 		if (!liveStatus.oneBotReady) return { title: '正在连接', description: '请稍候。', label: '刷新', action: () => void refreshStatus() }
-		return { title: 'QQ 已就绪', description: '现在可同步到机器人。', label: '同步到机器人', action: () => setView('config') }
+		return { title: 'QQ 已就绪', description: '可同步到机器人。', label: '同步到机器人', action: () => setView('config') }
 	}, [engine, liveStatus, refreshStatus, statusLoading, webUrl])
 
 	// A single result panel per origin: lifecycle tasks use the global panel at
@@ -566,6 +690,22 @@ export default function App() {
 	const localResult = (origin: Exclude<ResultOrigin, null>) => resultOrigin === origin
 		? <ResultPanel compact state={state} result={result} steps={operationSteps} liveDetail={operationDetail} onViewLog={() => void openLiveLog()} />
 		: null
+
+	// The one-click sync reads the core's current WebSocket token directly from
+	// its config; the intermediate token response is consumed in memory and
+	// never rendered or persisted.
+	const readOneBotToken = async (): Promise<string> => {
+		const action = engine === 'napcat' ? 'napcat-onebot-token-read' : 'luckylillia-onebot-token-read'
+		const params: Record<string, string> = engine === 'napcat' && napcatQQ ? { qq: napcatQQ } : {}
+		const outcome = await runActionAndPoll(action, params, false)
+		if (outcome.error) throw new Error(outcome.error)
+		try {
+			const payload = JSON.parse(outcome.output || '{}') as { token?: string }
+			return payload.token || ''
+		} catch {
+			throw new Error('无法读取核心 OneBot Token，请先保存连接配置。')
+		}
+	}
 
   return (
     <div className="mx-auto grid min-w-0 max-w-[860px] gap-4 p-4">
@@ -619,7 +759,7 @@ export default function App() {
 		  {engine === 'luckylillia' && liveStatus?.supported === false && (
 			<section id="luckylillia-association" className="grid gap-3 rounded-panel border border-[var(--theme-border-default)] bg-[var(--theme-surface-panel)] p-3">
 				<h2 className="m-0 text-sm font-semibold text-[var(--theme-text-strong)]">关联已有 LuckyLillia 安装</h2>
-				<p className="m-0 text-xs leading-5 text-[var(--theme-text-muted)]">当前系统暂不支持自动安装；可手动下载官方 CLI 包并解压后，选择目录完成关联。关联后工作台只读状态与 WebUI，不会修改该目录。</p>
+				<p className="m-0 text-xs leading-5 text-[var(--theme-text-muted)]">当前系统不支持自动安装，可手动解压官方 CLI 后关联。</p>
 				<div>
 					<ActionButton label="选择目录并关联" variant="secondary" running={state === 'running'} onClick={async () => {
 						try {
@@ -655,17 +795,37 @@ export default function App() {
 			</div>
 		  </details>}
 
+		  <details className="rounded-panel border border-[var(--theme-border-default)] bg-[var(--theme-surface-panel)] p-3">
+			<summary className="cursor-pointer text-xs font-semibold text-[var(--theme-text-secondary)]">系统操作记录（{auditItems.length}）</summary>
+			<div className="mt-2 grid gap-1.5">
+				{auditItems.length === 0 ? (
+					<p className="m-0 text-xs text-[var(--theme-text-muted)]">{auditLoading ? '正在读取…' : '暂无系统操作记录。'}</p>
+				) : (
+					auditItems.slice(0, 8).map(item => (
+						<div key={item.id} className="grid grid-cols-[auto_1fr_auto] items-baseline gap-2 text-xs">
+							<span className="font-semibold text-[var(--theme-text-strong)]">{item.action}</span>
+							<span className="min-w-0 truncate text-[var(--theme-text-muted)]">{item.output || item.operation}</span>
+							<span className="shrink-0 text-[var(--theme-text-faint)]">{new Date(item.createdAt).toLocaleString()}</span>
+						</div>
+					))
+				)}
+				<div>
+					<ActionButton label="刷新" variant="secondary" running={state === 'running' || auditLoading} onClick={() => void refreshAudit()} />
+				</div>
+			</div>
+		  </details>
+
 
 		  {!nativeLauncherNapcat && liveStatus?.loginPending && (
 			<section className="grid justify-items-center gap-3 rounded-panel border border-[var(--theme-border-default)] bg-[var(--theme-surface-panel)] p-4 text-center">
 				<div>
 					<h2 className="m-0 text-sm font-semibold text-[var(--theme-text-strong)]">{engine === 'napcat' ? '请用手机 QQ 扫码登录' : 'LuckyLillia 登录二维码'}</h2>
-					<p className="m-0 mt-1 text-xs text-[var(--theme-text-muted)]">扫码完成后会自动继续。</p>
+					<p className="m-0 mt-1 text-xs text-[var(--theme-text-muted)]">扫码后自动继续。</p>
 				</div>
 				{qrImageUrl ? (
 					qrLoadFailed ? (
 						<div className="grid gap-2 text-[var(--theme-warning-text)]">
-							<p className="m-0 text-xs">二维码图片读取失败。内核可能正在刷新二维码，可稍后重试或查看日志。</p>
+							<p className="m-0 text-xs">二维码读取失败，请重试或查看日志。</p>
 							<div className="flex justify-center gap-2">
 								<ActionButton label="重试" variant="secondary" running={state === 'running'} onClick={() => void refreshStatus()} />
 								<ActionButton label="查看日志" variant="secondary" running={state === 'running'} onClick={() => void openLiveLog()} />
@@ -679,7 +839,7 @@ export default function App() {
 				)}
 				{qrStale && (
 					<div className="grid gap-2 rounded-md bg-[var(--theme-warning-soft)] px-3 py-2 text-xs text-[var(--theme-warning-text)]">
-						<p className="m-0">二维码已超过 2.5 分钟未更新，可能已过期。内核通常会自动刷新；若长时间未变化，请刷新状态或查看日志。</p>
+						<p className="m-0">二维码可能已过期，正在等待内核刷新。</p>
 						<div className="flex justify-center gap-2">
 							<ActionButton label="刷新状态" variant="secondary" running={state === 'running'} onClick={() => void refreshStatus()} />
 							<ActionButton label="查看日志" variant="secondary" running={state === 'running'} onClick={() => void openLiveLog()} />
@@ -740,11 +900,7 @@ export default function App() {
                 管理面板可用
               </strong>
               <p className="m-0 text-[var(--theme-text-muted)]">
-                切到「管理面板」页签，或{' '}
-                <a className="text-[var(--theme-accent)] underline" href={webUrl} target="_blank" rel="noreferrer">
-                  在浏览器打开
-                </a>{' '}
-                用手机 QQ 扫码登录。
+                可在「管理面板」页签或新窗口打开。
               </p>
             </section>
           )}
@@ -756,7 +912,7 @@ export default function App() {
 		  <section className="flex flex-wrap items-center justify-between gap-3 rounded-panel border border-[var(--theme-border-default)] bg-[var(--theme-surface-panel)] p-3 text-xs">
 			<div className="grid gap-1">
 				<strong className="text-sm text-[var(--theme-text-strong)]">OneBot 连接健康</strong>
-				<p className="m-0 text-[var(--theme-text-muted)]">{liveStatus?.oneBotReady ? `核心已在 ${liveStatus.oneBotUrl || '本机 WebSocket 地址'} 就绪。选择机器人后即可同步，Token 可留空。` : '核心 OneBot 尚未就绪。请先完成 QQ 登录，再同步到机器人。'}</p>
+				<p className="m-0 text-[var(--theme-text-muted)]">{liveStatus?.oneBotReady ? '核心已就绪，可同步到机器人。' : '核心未就绪，请先完成 QQ 登录。'}</p>
 			</div>
 			<ActionButton label="读取当前配置" variant="secondary" running={state === 'running'} onClick={() => void run(engine === 'napcat' ? 'onebot-config' : luckyAction('onebot-config'), engine === 'napcat' && napcatQQ ? { qq: napcatQQ } : {}, false, 'config-read')} />
 		  </section>
@@ -768,9 +924,9 @@ export default function App() {
 				<form className="grid gap-3" onSubmit={(event) => {
 					event.preventDefault()
 					const data = new FormData(event.currentTarget)
-					confirm('保存并启动 LuckyLillia', 'Token 只会保存到本机私有文件，不会在状态或日志中显示。保存后将立即启动并等待管理页面。', () => run(luckyAction('auth-token-set-start'), { authToken: String(data.get('authToken') || '') }, true, 'config-auth'))
+					confirm('保存并启动 LuckyLillia', '保存 Token 并启动。', () => run(luckyAction('auth-token-set-start'), { authToken: String(data.get('authToken') || '') }, true, 'config-auth'))
 				}}>
-					<p className="m-0 text-xs leading-5 text-[var(--theme-text-muted)]">先到 <a className="text-[var(--theme-accent)] underline" href="https://auth.luckylillia.com" target="_blank" rel="noreferrer">auth.luckylillia.com</a> 获取 Token。保存后才可启动 WebUI。</p>
+					<p className="m-0 text-xs leading-5 text-[var(--theme-text-muted)]">从 <a className="text-[var(--theme-accent)] underline" href="https://auth.luckylillia.com" target="_blank" rel="noreferrer">auth.luckylillia.com</a> 获取 Token。</p>
 					<Field label="Auth Token" name="authToken" type="password" />
 					<div><button className="primary-button min-h-9" type="submit" disabled={state === 'running'}>保存并启动</button></div>
 				</form>
@@ -856,27 +1012,28 @@ export default function App() {
 		  </section>
 
 		  <section className="grid gap-3 rounded-panel border border-[var(--theme-border-default)] bg-[var(--theme-surface-panel)] p-3">
-			<h2 className="m-0 text-sm font-semibold text-[var(--theme-text-strong)]">集成到 AlemonJS 机器人</h2>
+			<div className="flex items-center justify-between gap-3">
+				<h2 className="m-0 text-sm font-semibold text-[var(--theme-text-strong)]">集成到 AlemonJS 机器人</h2>
+				<ActionButton label="刷新" variant="secondary" running={state === 'running'} onClick={() => void fetchRobotProjects(true).then(setProjects).catch(() => setProjects([]))} />
+			</div>
 			<div className="grid grid-cols-[repeat(auto-fit,minmax(180px,1fr))] gap-3">
 				<label className="grid gap-1 text-xs font-semibold text-[var(--theme-text-secondary)]">目标机器人
 					<select className={inputClass} value={robotRoot} onChange={event => setRobotRoot(event.target.value)}><option value="">请选择机器人</option>{projects.map(project => <option key={project.root} value={project.root}>{project.name}</option>)}</select>
 				</label>
-				<ActionField><ActionButton label="刷新列表" variant="secondary" running={state === 'running'} onClick={() => void fetchRobotProjects(true).then(setProjects).catch(() => setProjects([]))} /></ActionField>
-				<label className="grid gap-1 text-xs font-semibold text-[var(--theme-text-secondary)]">OneBot Token
-					<input className={inputClass} type="password" value={syncToken} onChange={event => setSyncToken(event.target.value)} placeholder="输入当前内核的 Token（可留空）" />
-				</label>
-				<ActionField><ActionButton label="同步连接" running={state === 'running'} disabled={!selectedOneBotReady} title={!selectedOneBotReady ? '核心 OneBot 尚未就绪，请先完成 QQ 登录。' : undefined} onClick={() => confirm('同步 OneBot 配置', '将写入目标机器人的 OneBot URL、Token 并切换登录连接；不会重启机器人。', async () => {
+				<ActionField><ActionButton label="同步连接" running={state === 'running'} onClick={() => confirm('同步 OneBot 配置', '自动读取 Token 并写入目标机器人。', async () => {
 					setResultOrigin('config-sync')
 					if (!robotRoot) { setResult({ output: '', error: '请选择目标机器人。' }); setState('failed'); return }
 					setState('running'); setResult(undefined); setOperationSteps([])
-					const url = selectedOneBotURL || (engine === 'napcat' ? 'ws://127.0.0.1:3001' : 'ws://127.0.0.1:7199')
 					try {
-						await syncRobotOneBot(robotRoot, url, syncToken)
-						setResult({ output: '✓ OneBot 配置已同步到目标机器人。请按需重启机器人使连接生效。' }); setState('done')
+						const token = await readOneBotToken()
+						const url = selectedOneBotURL || (engine === 'napcat' ? 'ws://127.0.0.1:3001' : 'ws://127.0.0.1:7199')
+						await syncRobotOneBot(robotRoot, url, token)
+						setResult({ output: '✓ OneBot 配置已同步到目标机器人（Token 已自动读取）。请按需重启机器人使连接生效。' }); setState('done')
 					} catch (reason) { setResult({ output: '', error: reason instanceof Error ? reason.message : String(reason) }); setState('failed') }
 				})} /></ActionField>
 			</div>
-			{projects.length === 0 && <p className="m-0 text-xs text-[var(--theme-text-muted)]">未发现受工作台管理的机器人项目；请先在 ALemonX 中创建机器人，再回来同步。</p>}
+			{!selectedOneBotReady && <p className="m-0 text-xs text-[var(--theme-warning-text)]">核心未就绪，可先同步，就绪后自动连接。</p>}
+			{projects.length === 0 && <p className="m-0 text-xs text-[var(--theme-text-muted)]">未发现机器人项目。</p>}
 			{localResult('config-sync')}
 		  </section>
         </div>
@@ -884,14 +1041,9 @@ export default function App() {
 
       {view === 'webui' && (
         <div className="relative min-h-0 overflow-hidden rounded-panel border border-[var(--theme-border-default)]">
-          {engine === 'luckylillia' && webUrl && (
-            <p className="m-0 border-b border-[var(--theme-border-default)] bg-[var(--theme-warning-soft)] px-3 py-2 text-xs leading-5 text-[var(--theme-warning-text)]">
-              内嵌管理页的二维码可能受代理路径影响无法显示；可直接切回「管理」页扫码登录。
-            </p>
-          )}
           {webUrl ? (
             <iframe
-              className="h-[640px] w-full border-0"
+              className="h-[min(720px,calc(100vh-160px))] min-h-[480px] w-full border-0"
               src={webUrl}
               title={engine === 'napcat' ? 'NapCat 管理面板' : 'LuckyLillia 管理面板'}
             />
@@ -920,6 +1072,15 @@ export default function App() {
             setPendingConfirm(null)
           }}
           onCancel={() => setPendingConfirm(null)}
+        />
+      )}
+      {sudoRequest && (
+        <SudoModal
+          title={sudoRequest.title}
+          description={sudoRequest.description}
+          busy={state === 'running'}
+          onConfirm={(password) => void runPrivileged(sudoRequest.action, password, sudoRequest.intentId)}
+          onCancel={() => setSudoRequest(null)}
         />
       )}
       {logText !== null && <LogModal text={logText} onClose={() => setLogText(null)} autoRefresh={logAutoRefresh} onToggleAutoRefresh={() => setLogAutoRefresh(current => !current)} onRefresh={() => void openLiveLog()} title={`${engine === 'napcat' ? 'NapCat' : 'LuckyLillia'} 日志`} />}

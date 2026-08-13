@@ -130,6 +130,45 @@ func onebotConfigAction(params map[string]string) (string, error) {
 	return readOnebotConfig(cfg)
 }
 
+// napcatOneBotToken returns the WebSocket token currently written in the
+// NapCat OneBot config for the selected QQ account. It is a read-only helper
+// for the one-click sync flow; the token is never logged or stored in state.
+func napcatOneBotToken(params map[string]string) (string, error) {
+	state, err := loadState()
+	if err != nil {
+		return "", err
+	}
+	cfg, err := findQQConfigFor(state, param(params, "qq"))
+	if err != nil {
+		return "", err
+	}
+	data, err := os.ReadFile(cfg.Path)
+	if err != nil {
+		return "", fmt.Errorf("无法读取配置：%w", err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return "", fmt.Errorf("NapCat 配置解析失败：%w", err)
+	}
+	network, _ := doc["network"].(map[string]any)
+	if servers, ok := network["websocketServers"].([]any); ok {
+		for _, raw := range servers {
+			if server, ok := raw.(map[string]any); ok {
+				return oneBotTokenPayload(fmt.Sprint(server["token"]))
+			}
+		}
+	}
+	return oneBotTokenPayload("")
+}
+
+func oneBotTokenPayload(token string) (string, error) {
+	data, err := json.Marshal(map[string]string{"token": token})
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
+
 func displayHost(value any) string {
 	if value == nil || strings.TrimSpace(fmt.Sprint(value)) == "" {
 		return "全部接口"

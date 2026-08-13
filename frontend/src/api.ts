@@ -41,13 +41,14 @@ async function json<T>(response: Response): Promise<T> {
 export async function runAction(
   action: string,
   params: Record<string, string>,
-  confirm = false
+  confirm = false,
+  extra: { sudoPassword?: string; authorizationId?: string } = {}
 ): Promise<string> {
   const payload = await json<{ id: string }>(
     await fetch(`/api/v1/setup/plugins/${PLUGIN_ID}/actions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action, confirm, params })
+      body: JSON.stringify({ action, confirm, params, ...extra })
     })
   )
   return payload.id
@@ -98,10 +99,49 @@ export async function runActionAndPoll(
   action: string,
   params: Record<string, string>,
   confirm = false,
-  onUpdate?: (task: Task) => void
+  onUpdate?: (task: Task) => void,
+  extra: { sudoPassword?: string; authorizationId?: string } = {}
 ): Promise<ActionResult> {
-  const id = await runAction(action, params, confirm)
+  const id = await runAction(action, params, confirm, extra)
   return pollTask(id, onUpdate)
+}
+
+export type PrivilegePreflight = {
+  available: boolean
+  authorization: string
+  title: string
+  description: string
+  reason?: string
+  intentId?: string
+  expiresAt?: string
+}
+
+// privilegePreflight asks the host to authorize a manifest-declared system
+// operation. For password-authorized operations it returns a one-time intent
+// id that the sudo action request must carry.
+export async function privilegePreflight(pluginId: string, action: string): Promise<PrivilegePreflight> {
+  return json<PrivilegePreflight>(await fetch('/api/v1/system/privileged/preflight', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ pluginId, action })
+  }))
+}
+
+export type PrivilegedAuditItem = {
+  id: string
+  action: string
+  operation: string
+  output: string
+  createdAt: string
+  legacy?: boolean
+}
+
+// fetchPrivilegedAudit reads the host's audit trail for this plugin's
+// manifest-declared system operations (for example the Linux dependency
+// install). Output text is host-validated and truncated by the host.
+export async function fetchPrivilegedAudit(pluginId: string): Promise<PrivilegedAuditItem[]> {
+  const payload = await json<{ items?: PrivilegedAuditItem[] }>(await fetch(`/api/v1/system/privileged/audit?plugin=${encodeURIComponent(pluginId)}`))
+  return payload.items ?? []
 }
 
 export type StatusPayload = {
