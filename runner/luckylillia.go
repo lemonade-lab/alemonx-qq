@@ -321,7 +321,7 @@ func luckyJourney(status kernelStatus) runtimeJourney {
 }
 
 func luckyRelease() (githubRelease, error) {
-	response, err := officialReleaseHTTPClient(20 * time.Second).Get(luckyReleaseURL)
+	response, err := officialReleaseHTTPClient(20 * time.Second).Get(officialReleaseMetadataURL(luckyReleaseURL))
 	if err != nil {
 		return githubRelease{}, fmt.Errorf("无法访问 LuckyLillia 发布信息：%w", err)
 	}

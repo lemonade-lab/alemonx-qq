@@ -34,7 +34,7 @@ function StatusLineRow({ line }: { line: StatusLine }) {
       </span>
 		<span
 		  className={
-			'min-w-0 break-words ' + (line.kind === 'plain' ? 'whitespace-pre-wrap font-mono' : '')
+			'min-w-0 [overflow-wrap:anywhere] ' + (line.kind === 'plain' ? 'whitespace-pre-wrap font-mono' : '')
 		  }
 		>
 		  {line.text || ' '}
@@ -78,7 +78,7 @@ function ResultPanel({
       {state === 'failed' && result?.error && (
         <div className="grid gap-2 rounded-md bg-[var(--theme-danger-soft)] px-2 py-2 text-[var(--theme-danger-text)]">
           <strong>操作失败</strong>
-          <pre className="m-0 max-h-48 min-w-0 max-w-full overflow-auto whitespace-pre-wrap break-words font-mono text-xs font-normal leading-5">
+          <pre className="m-0 max-h-48 min-w-0 max-w-full overflow-auto whitespace-pre-wrap [overflow-wrap:anywhere] font-mono text-xs font-normal leading-5">
             {result.error}
           </pre>
           {onViewLog && (
@@ -102,13 +102,13 @@ function ResultPanel({
 			{state === 'running' && liveDetail && (
 				<div className="grid gap-1.5 rounded-md border border-[var(--theme-border-default)] bg-[var(--theme-surface-input)] p-2.5">
 					<strong className="text-xs text-[var(--theme-text-secondary)]">当前执行详情</strong>
-					<pre className={'m-0 min-w-0 max-w-full overflow-auto whitespace-pre-wrap break-words font-mono text-xs leading-5 text-[var(--theme-text-secondary)] ' + (compact ? 'max-h-32' : 'max-h-56')}>{liveDetail}</pre>
+					<pre className={'m-0 min-w-0 max-w-full overflow-auto whitespace-pre-wrap [overflow-wrap:anywhere] font-mono text-xs leading-5 text-[var(--theme-text-secondary)] ' + (compact ? 'max-h-32' : 'max-h-56')}>{liveDetail}</pre>
 				</div>
 			)}
 			{steps.length > 1 && (
 				<details className="text-xs text-[var(--theme-text-muted)]">
 					<summary className="cursor-pointer">已完成步骤（{steps.length}）</summary>
-					<div className="mt-1 grid min-w-0 gap-1 break-words font-mono">{steps.map((step, index) => <div key={`${step.at}-${index}`}>{step.progress}% {step.message}</div>)}</div>
+					<div className="mt-1 grid min-w-0 max-w-full gap-1 [overflow-wrap:anywhere] font-mono">{steps.map((step, index) => <div key={`${step.at}-${index}`}>{step.progress}% {step.message}</div>)}</div>
 				</details>
 			)}
       {state === 'running' && !result?.output ? (
@@ -135,15 +135,13 @@ function Field({
   name,
   type = 'text',
   defaultValue,
-  children,
-  hint
+  children
 }: {
   label: string
   name: string
   type?: string
   defaultValue?: string
   children?: ReactNode
-  hint?: string
 }) {
   return (
     <label className="grid min-w-[180px] flex-1 gap-1 text-xs font-semibold text-[var(--theme-text-secondary)]">
@@ -155,11 +153,6 @@ function Field({
           name={name}
           defaultValue={defaultValue}
         />
-      )}
-      {hint && (
-        <span className="font-normal leading-4 text-[var(--theme-text-muted)]">
-          {hint}
-        </span>
       )}
     </label>
   )
@@ -261,7 +254,7 @@ function LogModal({
             <button ref={closeRef} className="secondary-button" onClick={onClose}>关闭</button>
           </div>
         </div>
-        <pre className="m-0 max-h-[560px] min-w-0 max-w-full overflow-auto whitespace-pre-wrap break-words rounded-md bg-[var(--theme-surface-input)] p-3 font-mono text-xs leading-5 text-[var(--theme-text-secondary)]">{text}</pre>
+        <pre className="m-0 max-h-[560px] min-w-0 max-w-full overflow-auto whitespace-pre-wrap [overflow-wrap:anywhere] rounded-md bg-[var(--theme-surface-input)] p-3 font-mono text-xs leading-5 text-[var(--theme-text-secondary)]">{text}</pre>
       </div>
     </div>
   )
@@ -778,7 +771,7 @@ export default function App() {
 					confirm('保存并启动 LuckyLillia', 'Token 只会保存到本机私有文件，不会在状态或日志中显示。保存后将立即启动并等待管理页面。', () => run(luckyAction('auth-token-set-start'), { authToken: String(data.get('authToken') || '') }, true, 'config-auth'))
 				}}>
 					<p className="m-0 text-xs leading-5 text-[var(--theme-text-muted)]">先到 <a className="text-[var(--theme-accent)] underline" href="https://auth.luckylillia.com" target="_blank" rel="noreferrer">auth.luckylillia.com</a> 获取 Token。保存后才可启动 WebUI。</p>
-					<Field label="Auth Token" name="authToken" type="password" hint="仅保存到本机私有文件，不会回显。" />
+					<Field label="Auth Token" name="authToken" type="password" />
 					<div><button className="primary-button min-h-9" type="submit" disabled={state === 'running'}>保存并启动</button></div>
 				</form>
 				{localResult('config-auth')}
@@ -805,14 +798,14 @@ export default function App() {
               HTTP 服务
             </h3>
 			{(liveStatus?.accounts?.length || 0) > 1 && <Field label="QQ 账号" name="httpQQ"><select className={inputClass} value={napcatQQ} onChange={event => setNapcatQQ(event.target.value)}><option value="">请选择账号</option>{liveStatus?.accounts?.map(account => <option key={account.qq} value={account.qq}>{account.qq}</option>)}</select></Field>}
-            <Field label="启用" name="httpEnable" defaultValue="true" hint="是否启用该服务。">
+            <Field label="启用" name="httpEnable" defaultValue="true">
               <select className={inputClass} name="httpEnable" defaultValue="true">
                 <option value="true">是</option>
                 <option value="false">否</option>
               </select>
             </Field>
-            <Field label="端口" name="httpPort" type="number" defaultValue="3000" hint="默认 3000。" />
-            <Field label="Token" name="httpToken" hint="留空不改动；填 **** 视为不改动。" />
+            <Field label="端口" name="httpPort" type="number" defaultValue="3000" />
+            <Field label="Token" name="httpToken" />
 			<ActionField><button className="primary-button min-h-9" type="submit" disabled={!napcatManagedActions || ((liveStatus?.accounts?.length || 0) > 1 && !napcatQQ)}>保存 HTTP</button></ActionField>
 			{localResult('config-http')}
           </form>
@@ -835,14 +828,14 @@ export default function App() {
               WebSocket 服务
             </h3>
 			{(liveStatus?.accounts?.length || 0) > 1 && <Field label="QQ 账号" name="wsQQ"><select className={inputClass} value={napcatQQ} onChange={event => setNapcatQQ(event.target.value)}><option value="">请选择账号</option>{liveStatus?.accounts?.map(account => <option key={account.qq} value={account.qq}>{account.qq}</option>)}</select></Field>}
-            <Field label="启用" name="wsEnable" defaultValue="true" hint="是否启用该服务。">
+            <Field label="启用" name="wsEnable" defaultValue="true">
               <select className={inputClass} name="wsEnable" defaultValue="true">
                 <option value="true">是</option>
                 <option value="false">否</option>
               </select>
             </Field>
-            <Field label="端口" name="wsPort" type="number" defaultValue="3001" hint="默认 3001。" />
-            <Field label="Token" name="wsToken" hint="留空不改动；填 **** 视为不改动。" />
+            <Field label="端口" name="wsPort" type="number" defaultValue="3001" />
+            <Field label="Token" name="wsToken" />
 			<ActionField><button className="primary-button min-h-9" type="submit" disabled={!napcatManagedActions || ((liveStatus?.accounts?.length || 0) > 1 && !napcatQQ)}>保存 WebSocket</button></ActionField>
 			{localResult('config-ws')}
 		  </form></> : <form
@@ -854,9 +847,9 @@ export default function App() {
 				confirm('保存 LuckyLillia OneBot 服务', '更新 WebSocket 端口与 Token，重启 LuckyLillia 后生效。', () => run(luckyAction('onebot-set'), params, true, 'config-lucky'))
 			}}>
 			<h3 className="col-span-full m-0 text-sm font-semibold text-[var(--theme-text-strong)]">LuckyLillia OneBot WebSocket</h3>
-			<Field label="启用" name="enable" hint="是否启用该服务。"><select className={inputClass} name="enable" defaultValue="true"><option value="true">是</option><option value="false">否</option></select></Field>
-			<Field label="端口" name="port" type="number" defaultValue="7199" hint="默认 7199。" />
-			<Field label="Token" name="token" hint="留空不改动；Token 不会在状态中显示。" />
+			<Field label="启用" name="enable"><select className={inputClass} name="enable" defaultValue="true"><option value="true">是</option><option value="false">否</option></select></Field>
+			<Field label="端口" name="port" type="number" defaultValue="7199" />
+			<Field label="Token" name="token" />
 			<ActionField><button className="primary-button min-h-9" type="submit" disabled={!liveStatus?.managed}>保存连接</button></ActionField>
 			{localResult('config-lucky')}
 		  </form>}
@@ -864,7 +857,6 @@ export default function App() {
 
 		  <section className="grid gap-3 rounded-panel border border-[var(--theme-border-default)] bg-[var(--theme-surface-panel)] p-3">
 			<h2 className="m-0 text-sm font-semibold text-[var(--theme-text-strong)]">集成到 AlemonJS 机器人</h2>
-			<p className="m-0 text-xs leading-5 text-[var(--theme-text-muted)]">选择已受工作台管理的机器人，写入 OneBot URL 与 Token；不会自动重启机器人。缺少 @alemonjs/onebot 时只会提示安装。</p>
 			<div className="grid grid-cols-[repeat(auto-fit,minmax(180px,1fr))] gap-3">
 				<label className="grid gap-1 text-xs font-semibold text-[var(--theme-text-secondary)]">目标机器人
 					<select className={inputClass} value={robotRoot} onChange={event => setRobotRoot(event.target.value)}><option value="">请选择机器人</option>{projects.map(project => <option key={project.root} value={project.root}>{project.name}</option>)}</select>
@@ -916,7 +908,7 @@ export default function App() {
         </div>
       )}
 
-      {resultOrigin === 'manage' && <ResultPanel state={state} result={result ?? (state === 'running' ? { output: actionTitle(activeAction) } : undefined)} steps={operationSteps} liveDetail={operationDetail} onViewLog={() => void openLiveLog()} />}
+      {view === 'manage' && resultOrigin === 'manage' && <ResultPanel state={state} result={result ?? (state === 'running' ? { output: actionTitle(activeAction) } : undefined)} steps={operationSteps} liveDetail={operationDetail} onViewLog={() => void openLiveLog()} />}
 
       {pendingConfirm && (
         <ConfirmModal

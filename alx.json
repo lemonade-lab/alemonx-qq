@@ -166,6 +166,7 @@
       "healthPath": "/",
       "embed": true,
       "rewriteHtml": true,
+      "rewriteApiBase": true,
       "sse": true
     }
   ],

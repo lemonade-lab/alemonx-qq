@@ -61,6 +61,7 @@ func fetchLatest() (githubRelease, error) {
 }
 
 func fetchRelease(releaseURL, name string) (githubRelease, error) {
+	releaseURL = officialReleaseMetadataURL(releaseURL)
 	client := officialReleaseHTTPClient(metadataTimeout)
 	response, err := client.Get(releaseURL)
 	if err != nil {
@@ -97,23 +98,7 @@ type downloadProgress func(downloaded, total int64)
 // large as long as it keeps making progress; only an incomplete response,
 // timeout, or I/O error is retried and eventually reported to the user.
 func downloadFileWithProgress(url, dest string, progress downloadProgress) error {
-	var lastErr error
-	for attempt := 0; attempt < 2; attempt++ {
-		_ = os.Remove(dest)
-		err := downloadFileOnce(url, dest, progress)
-		if err == nil {
-			return nil
-		}
-		lastErr = err
-		_ = os.Remove(dest)
-	}
-	if lastErr == nil {
-		lastErr = errors.New("download did not start")
-	}
-	// Keep the final transport/HTTP/I/O cause. The UI can keep its top-level
-	// wording friendly, but the operation detail and core log must tell an
-	// operator what actually failed after the automatic retry.
-	return fmt.Errorf("下载重试后仍未完成：%w", lastErr)
+	return downloadFromCandidates(url, dest, progress, downloadFileOnce)
 }
 
 func downloadFileOnce(url, dest string, progress downloadProgress) error {
