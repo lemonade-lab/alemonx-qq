@@ -67,7 +67,7 @@ func lifecycleOperationAction(action string) bool {
 		return true
 	}
 	switch action {
-	case "luckylillia-install", "luckylillia-reinstall", "luckylillia-start", "luckylillia-restart", "luckylillia-update", "luckylillia-auth-token-set", "luckylillia-auth-token-set-start":
+	case "luckylillia-install", "luckylillia-reinstall", "luckylillia-start", "luckylillia-restart", "luckylillia-update", "luckylillia-auth-token-set", "luckylillia-auth-token-set-start", "snowluma-install", "snowluma-start", "snowluma-restart", "snowluma-update":
 		return true
 	default:
 		return false
@@ -83,6 +83,9 @@ func errorText(err error) string {
 }
 
 func run(action string, params map[string]string, confirmed bool) (string, error) {
+	if snowLumaLifecycleAction(action) {
+		return withNapcatLifecycleLock(func() (string, error) { return runNapcatAction(action, params, confirmed) })
+	}
 	if napcatLifecycleAction(action) {
 		return withNapcatLifecycleLock(func() (string, error) {
 			return runNapcatAction(action, params, confirmed)
@@ -94,6 +97,15 @@ func run(action string, params map[string]string, confirmed bool) (string, error
 func napcatLifecycleAction(action string) bool {
 	switch action {
 	case "install", "uninstall", "start", "stop", "restart", "update", "watchdog-on", "watchdog-off":
+		return true
+	default:
+		return false
+	}
+}
+
+func snowLumaLifecycleAction(action string) bool {
+	switch action {
+	case "snowluma-install", "snowluma-start", "snowluma-stop", "snowluma-restart", "snowluma-update", "snowluma-uninstall":
 		return true
 	default:
 		return false
@@ -211,6 +223,30 @@ func runNapcatAction(action string, params map[string]string, confirmed bool) (s
 		return luckySetAuthToken(params, confirmed)
 	case "luckylillia-auth-token-set-start":
 		return luckySetAuthTokenAndStart(params, confirmed)
+	case "snowluma-status":
+		return snowLumaStatus()
+	case "snowluma-install":
+		return snowLumaInstall(params, confirmed)
+	case "snowluma-start":
+		return snowLumaStart(confirmed)
+	case "snowluma-stop":
+		return snowLumaStop(confirmed)
+	case "snowluma-restart":
+		return snowLumaRestart(confirmed)
+	case "snowluma-update":
+		return snowLumaUpdate(confirmed)
+	case "snowluma-uninstall":
+		return snowLumaUninstall(confirmed)
+	case "snowluma-log":
+		return snowLumaLog(params)
+	case "snowluma-log-status":
+		return snowLumaLogStatusAction()
+	case "snowluma-operation-status":
+		return snowLumaOperationStatusAction()
+	case "snowluma-log-clear":
+		return clearSnowLumaLogs()
+	case "snowluma-onebot-token-read":
+		return snowLumaOneBotToken()
 	default:
 		return "", fmt.Errorf("未知操作：%s", action)
 	}

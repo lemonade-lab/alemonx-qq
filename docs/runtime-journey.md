@@ -1,12 +1,14 @@
 # QQ 核心运行旅程
 
-本插件把 NapCat 与 LuckyLillia 的安装和扫码流程视为一个可观测的运行旅程，而不是“进程存在即成功”。`status` 会返回 `journey`，其中的 `phase`、`detail` 和 `nextAction` 是前端的唯一引导依据。
+本插件把 NapCat、LuckyLillia 与 SnowLuma 的安装和登录流程视为一个可观测的运行旅程，而不是“进程存在即成功”。`status` 会返回 `journey`，其中的 `phase`、`detail` 和 `nextAction` 是前端的唯一引导依据。
 
 ```
 环境预检 → 下载并验证 → 原子安装 → 必填凭据 → 启动进程 → WebUI/二维码 → OneBot 就绪
 ```
 
 `NapCat` 在 Linux 上会先验证 glibc、包管理器、Xvfb、XKB 和 QQ Electron 动态库；依赖不足时不得启动 QQ。`LuckyLillia` 在当前官方 CLI 要求 Auth Token 时，会在“安装完成”后进入 `needs-auth-token`，保留已验证的安装目录和私有配置，不会伪装成 WebUI 超时或回滚安装。
+
+`SnowLuma` 仅支持 Windows x64、Linux x64 与 Linux ARM64 的上游原生 addon。它不安装 QQ，也不创建 Linux 图形桌面；启动前必须检测到同一用户的 QQ。Linux 还会检查 `DISPLAY` 和 ptrace 策略。其 `scan-qq` 阶段表示“请在已有 QQ 窗口扫码”，不是插件生成或托管二维码。SnowLuma 的 WebUI/OneBot 状态只会在受管进程存活时检查，且 WebUI 端口冲突会阻止启动。
 
 每个启动、安装、重装、更新和 Token 保存操作都有独立的操作日志。界面在任务运行期间轮询该日志，因此“当前执行详情”显示的是本次任务的真实阶段；核心长期日志只用于进程输出和故障排查。
 
@@ -18,7 +20,7 @@
 | `repair` | 安装目录不完整 | 重新安装 |
 | `needs-auth-token` | LuckyLillia 官方 CLI 尚未授权 | 填写 Auth Token |
 | `start` / `starting` | 已具备启动条件，正在等待真实 WebUI 监听 | 启动 / 查看实时日志 |
-| `scan-qq` | WebUI 已就绪，尚未完成 QQ 登录 | 扫码或打开管理页 |
+| `scan-qq` | WebUI 已就绪，尚未完成 QQ 登录；SnowLuma 则在已有 QQ 窗口扫码 | 扫码或打开管理页 |
 | `connecting` | 已登录，OneBot 尚未监听 | 查看实时日志 |
 | `ready` | QQ 与 OneBot 均就绪 | 配置并同步机器人 |
 

@@ -5,6 +5,7 @@ package main
 import (
 	"archive/tar"
 	"archive/zip"
+	"compress/gzip"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
@@ -39,6 +40,15 @@ var luckyAssets = map[string]string{
 	"linux-arm64":   "LLBot-CLI-linux-arm64.zip",
 }
 
+var snowLumaPlatforms = map[string]struct {
+	assetSuffix string
+	native      string
+}{
+	"windows-amd64": {assetSuffix: "win-x64.zip", native: "snowluma-win32-x64.node"},
+	"linux-amd64":   {assetSuffix: "linux-x64.tar.gz", native: "snowluma-linux-x64.node"},
+	"linux-arm64":   {assetSuffix: "linux-arm64.tar.gz", native: "snowluma-linux-arm64.node"},
+}
+
 type releaseAsset struct {
 	Name string `json:"name"`
 	URL  string `json:"browser_download_url"`
@@ -58,7 +68,7 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: alx-ci <validate-manifest|set-version|verify-version|evidence|validate-runtime|stage-napcat-runtime|package-napcat-runtime|verify-lucky-e2e|verify-napcat-e2e|verify-napcat-runtime>")
+		return errors.New("usage: alx-ci <validate-manifest|set-version|verify-version|evidence|validate-runtime|stage-napcat-runtime|package-napcat-runtime|verify-lucky-e2e|verify-snowluma-e2e|verify-napcat-e2e|verify-napcat-runtime>")
 	}
 	switch args[0] {
 	case "validate-manifest":
@@ -85,6 +95,8 @@ func run(args []string) error {
 		return stageNapcatRuntime(args[1:])
 	case "verify-lucky-e2e":
 		return verifyLuckyE2E()
+	case "verify-snowluma-e2e":
+		return verifySnowLumaE2E()
 	case "verify-napcat-e2e":
 		return verifyNapcatE2E()
 	case "verify-napcat-runtime":
@@ -468,6 +480,138 @@ func verifyLuckyE2E() error {
 	}
 	report["core"], report["tag"], report["platform"], report["asset"], report["archiveSha256"], report["validatedAt"], report["status"] = "luckylillia", releaseInfo.TagName, platform, asset.Name, actual, time.Now().UTC().Format(time.RFC3339), "passed"
 	return writeJSON(filepath.Join("artifacts", "luckylillia-validation.json"), report)
+}
+
+func snowLumaAssetForE2E(value release, platform string) (releaseAsset, string, error) {
+	spec, ok := snowLumaPlatforms[platform]
+	if !ok {
+		return releaseAsset{}, "", fmt.Errorf("unsupported SnowLuma platform: %s", platform)
+	}
+	for _, asset := range value.Assets {
+		if strings.HasSuffix(asset.Name, spec.assetSuffix) && !strings.Contains(asset.Name, "-lite.") {
+			return asset, spec.native, nil
+		}
+	}
+	return releaseAsset{}, "", fmt.Errorf("SnowLuma release lacks full %s package", spec.assetSuffix)
+}
+
+func inspectSnowLumaArchive(archive, assetName, native string) error {
+	entryFound, nativeFound := false, false
+	check := func(name string) {
+		name = filepath.ToSlash(name)
+		if filepath.Base(name) == "index.mjs" {
+			entryFound = true
+		}
+		if filepath.Base(name) == native {
+			nativeFound = true
+		}
+	}
+	if strings.HasSuffix(assetName, ".zip") {
+		reader, err := zip.OpenReader(archive)
+		if err != nil {
+			return err
+		}
+		defer reader.Close()
+		for _, file := range reader.File {
+			check(file.Name)
+		}
+	} else {
+		file, err := os.Open(archive)
+		if err != nil {
+			return err
+		}
+		defer file.Close()
+		gzipReader, err := gzip.NewReader(file)
+		if err != nil {
+			return err
+		}
+		defer gzipReader.Close()
+		tarReader := tar.NewReader(gzipReader)
+		for {
+			header, nextErr := tarReader.Next()
+			if errors.Is(nextErr, io.EOF) {
+				break
+			}
+			if nextErr != nil {
+				return nextErr
+			}
+			check(header.Name)
+		}
+	}
+	if !entryFound || !nativeFound {
+		return fmt.Errorf("SnowLuma archive missing required files: index.mjs=%t native=%t", entryFound, nativeFound)
+	}
+	return nil
+}
+
+// verifySnowLumaE2E validates the upstream full package before handing off to
+// a dedicated, same-architecture host. The host command owns QQ/X11 setup and
+// writes a bounded report; no credentials or QR image enter CI artifacts.
+func verifySnowLumaE2E() error {
+	platform := strings.TrimSpace(os.Getenv("SNOWLUMA_PLATFORM"))
+	spec, ok := snowLumaPlatforms[platform]
+	if !ok {
+		return fmt.Errorf("unsupported SnowLuma platform: %s", platform)
+	}
+	parts := strings.SplitN(platform, "-", 2)
+	if len(parts) != 2 || runtime.GOOS != parts[0] || runtime.GOARCH != parts[1] {
+		return fmt.Errorf("SnowLuma E2E platform %s must run on a matching native host", platform)
+	}
+	if err := os.MkdirAll("artifacts", 0o755); err != nil {
+		return err
+	}
+	releaseInfo, err := latestRelease("SnowLuma/SnowLuma")
+	if err != nil {
+		return err
+	}
+	asset, native, err := snowLumaAssetForE2E(releaseInfo, platform)
+	if err != nil {
+		return err
+	}
+	archive := filepath.Join("artifacts", asset.Name)
+	defer os.Remove(archive)
+	digest, err := downloadAndHash(asset.URL, archive)
+	if err != nil {
+		return err
+	}
+	if err = inspectSnowLumaArchive(archive, asset.Name, native); err != nil {
+		return err
+	}
+	candidate := map[string]any{"core": "snowluma", "platform": platform, "tag": releaseInfo.TagName, "asset": asset.Name, "nativeAddon": native, "archiveSha256": digest}
+	if err = writeJSON(filepath.Join("artifacts", "snowluma-candidate-evidence.json"), candidate); err != nil {
+		return err
+	}
+	environment := []string{
+		"SNOWLUMA_RELEASE_TAG=" + releaseInfo.TagName,
+		"SNOWLUMA_PLATFORM=" + platform,
+		"SNOWLUMA_ASSET=" + asset.Name,
+		"SNOWLUMA_ARCHIVE=" + archive,
+		"SNOWLUMA_NATIVE_ADDON=" + spec.native,
+	}
+	if err = runCommandFromJSON("SNOWLUMA_E2E_COMMAND_JSON", environment); err != nil {
+		return err
+	}
+	report, err := readJSON(filepath.Join("artifacts", "snowluma-e2e-report.json"))
+	if err != nil {
+		return err
+	}
+	if asString(report["platform"]) != platform || asString(report["processModel"]) != "managed-detached" {
+		return errors.New("SnowLuma E2E report platform or process model is invalid")
+	}
+	stages, ok := report["stages"].(map[string]any)
+	if !ok {
+		return errors.New("SnowLuma E2E report stages are missing")
+	}
+	for _, stage := range []string{"install", "preflight", "start", "webUI", "qqProcess", "loginPending", "tokenRead", "stop", "update", "rollback"} {
+		if stages[stage] != true {
+			return fmt.Errorf("SnowLuma E2E stage %s did not pass", stage)
+		}
+	}
+	if report["websocketRequired"] != true {
+		return errors.New("SnowLuma E2E report must state websocketRequired")
+	}
+	report["core"], report["tag"], report["asset"], report["nativeAddon"], report["archiveSha256"], report["validatedAt"], report["status"] = "snowluma", releaseInfo.TagName, asset.Name, native, digest, time.Now().UTC().Format(time.RFC3339), "passed"
+	return writeJSON(filepath.Join("artifacts", "snowluma-validation.json"), report)
 }
 
 func verifyNapcatE2E() error {

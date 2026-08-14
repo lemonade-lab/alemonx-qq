@@ -70,7 +70,10 @@
     "napcat-log-status",
     "napcat-operation-status",
     "luckylillia-log-status",
-    "luckylillia-operation-status"
+    "luckylillia-operation-status",
+    "snowluma-status",
+    "snowluma-log-status",
+    "snowluma-operation-status"
   ],
   "media": [
     {
@@ -162,6 +165,18 @@
       "name": "LuckyLillia WebUI",
       "host": "127.0.0.1",
       "port": 3080,
+      "basePath": "/",
+      "healthPath": "/",
+      "embed": true,
+      "rewriteHtml": true,
+      "rewriteApiBase": true,
+      "sse": true
+    },
+    {
+      "id": "snowluma-webui",
+      "name": "SnowLuma WebUI",
+      "host": "127.0.0.1",
+      "port": 5099,
       "basePath": "/",
       "healthPath": "/",
       "embed": true,

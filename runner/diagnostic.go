@@ -77,6 +77,9 @@ func actionDiagnosticLogPath(action string) (string, error) {
 	if strings.HasPrefix(action, "luckylillia-") {
 		return luckyOperationLogPath()
 	}
+	if strings.HasPrefix(action, "snowluma-") {
+		return snowLumaOperationLogPath()
+	}
 	return logPath()
 }
 

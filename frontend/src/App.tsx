@@ -340,6 +340,8 @@ function actionTitle(action: string | null) {
 	if (action.includes('reinstall')) return '正在重装并保留现有配置'
 	if (action === 'luckylillia-install') return '正在下载、验证并准备 LuckyLillia'
 	if (action === 'luckylillia-auth-token-set' || action === 'luckylillia-auth-token-set-start') return '正在保存 Auth Token 并启动 LuckyLillia'
+	if (action === 'snowluma-install') return '正在下载并准备 SnowLuma 原生内核'
+	if (action === 'snowluma-update') return '正在更新 SnowLuma 原生内核'
 	if (action === 'install') return '正在下载、安装并启动 NapCat'
 	if (action === 'start' || action.endsWith('-start')) return '正在启动 QQ 服务并等待二维码'
 	if (action === 'stop' || action.endsWith('-stop')) return '正在停止核心服务'
@@ -352,6 +354,14 @@ function actionTitle(action: string | null) {
 	if (action === 'onebot-config' || action === 'luckylillia-onebot-config') return '正在读取 OneBot 配置'
 	if (action.includes('onebot')) return '正在保存 OneBot 连接配置'
 	return '正在执行操作'
+}
+
+function engineLabel(engine: Engine) {
+	return engine === 'napcat' ? 'NapCat' : engine === 'luckylillia' ? 'LuckyLillia' : 'SnowLuma'
+}
+
+function engineAction(engine: Engine, action: string) {
+	return engine === 'napcat' ? action : `${engine}-${action}`
 }
 
 export default function App() {
@@ -386,7 +396,7 @@ export default function App() {
 	const [auditItems, setAuditItems] = useState<PrivilegedAuditItem[]>([])
 	const [auditLoading, setAuditLoading] = useState(false)
 	const [robotRoot, setRobotRoot] = useState(initialSession.robotRoot)
-	const webServiceID = engine === 'napcat' ? 'napcat-webui' : 'luckylillia-webui'
+	const webServiceID = engine === 'napcat' ? 'napcat-webui' : engine === 'luckylillia' ? 'luckylillia-webui' : 'snowluma-webui'
 	const webService = services.find(service => service.id === webServiceID)
 	const webUrl = webService?.reachable && webService.embed ? webService.proxyUrl : ''
 	const qrImageUrl = liveStatus?.qrCodeAvailable
@@ -403,6 +413,7 @@ export default function App() {
 	const qrStale = liveStatus?.loginPending === true && qrAgeSeconds != null && qrAgeSeconds > 150
 	useEffect(() => { setQrLoadFailed(false) }, [qrImageUrl])
 	const luckyAction = (action: string) => `luckylillia-${action}`
+	const snowLumaAction = (action: string) => `snowluma-${action}`
 	const applyOperationTask = (task: Task) => {
 		const output = task.output || (task.progress ? `正在执行（${task.progress}%）` : '正在执行…')
 		setResult({ output })
@@ -613,7 +624,7 @@ export default function App() {
 
 	const guide = useMemo(() => {
 		if (!liveStatus) return {
-			title: engine === 'napcat' ? 'NapCat' : 'LuckyLillia',
+			title: engineLabel(engine),
 			description: statusLoading[engine] ? '正在读取当前状态…' : '暂时无法读取状态，点击刷新重试。',
 			label: statusLoading[engine] ? '读取中' : '刷新状态',
 			action: () => { if (!statusLoading[engine]) void refreshStatus() }
@@ -675,6 +686,10 @@ export default function App() {
 			action: () => confirm('打开 NapCat 启动器', '启动器负责安装、启动和管理 NapCat。', () => run('napcat-macos-launcher-open', {}, true)),
 		}
 		if (engine === 'napcat' && liveStatus.installed && !liveStatus.managed) return { title: 'NapCat 已关联', description: webUrl ? '可以继续登录 QQ。' : '正在检查登录状态。', label: webUrl ? '打开登录页' : '刷新', action: () => webUrl ? setView('webui') : void refreshStatus() }
+		if (engine === 'snowluma' && liveStatus.supported === false) return { title: '此系统暂无上游原生 Hook', description: liveStatus.diagnosticHint || 'macOS 尚无官方 Darwin Hook。', label: '查看状态', action: () => void refreshStatus() }
+		if (engine === 'snowluma' && !liveStatus.installed) return { title: '安装 SnowLuma', description: '下载官方完整发行包，不使用 Docker。', label: '安装 SnowLuma', action: () => confirm('安装 SnowLuma', '将下载、验证并安装官方原生完整包。', () => run(snowLumaAction('install'), {}, true)) }
+		if (engine === 'snowluma' && !liveStatus.running) return { title: '启动 SnowLuma', description: '先启动同一系统用户、同一权限级别的 QQ；Linux 还需可用的 X11/Xvfb 与 ptrace 条件。', label: '启动 SnowLuma', action: () => confirm('启动 SnowLuma', '将先验证 QQ 与运行环境，再启动工作台受管的 SnowLuma 原生进程。', () => run(snowLumaAction('start'), {}, true)) }
+		if (engine === 'snowluma' && liveStatus.loginPending) return { title: '请在 QQ 窗口扫码', description: 'SnowLuma 已启动，正在等待 QQ 登录并建立 OneBot 服务。', label: '查看实时日志', action: () => void openLiveLog() }
 		if (engine === 'luckylillia' && liveStatus.supported === false) return { title: '此系统暂不支持', description: '请改用 NapCat，或手动安装后关联。', label: '关联目录', action: () => document.getElementById('luckylillia-association')?.scrollIntoView({ behavior: 'smooth', block: 'center' }) }
 		if (!liveStatus.installed) return { title: '安装 QQ 核心', description: engine === 'napcat' ? '自动安装并启动。' : '安装后需填写 Auth Token。', label: engine === 'napcat' ? '安装 NapCat' : '安装 LuckyLillia', action: () => engine === 'napcat' ? void requestNapcatInstall() : confirm('安装 QQ 核心', '下载并安装 LuckyLillia。', () => run(luckyAction('install'), {}, true)) }
 		if (engine === 'luckylillia' && !liveStatus.managed) return { title: 'LuckyLillia 已关联', description: webUrl ? '可以继续登录 QQ。' : '正在检查登录状态。', label: webUrl ? '打开登录页' : '刷新', action: () => webUrl ? setView('webui') : void refreshStatus() }
@@ -695,7 +710,7 @@ export default function App() {
 	// its config; the intermediate token response is consumed in memory and
 	// never rendered or persisted.
 	const readOneBotToken = async (): Promise<string> => {
-		const action = engine === 'napcat' ? 'napcat-onebot-token-read' : 'luckylillia-onebot-token-read'
+		const action = engine === 'napcat' ? 'napcat-onebot-token-read' : engine === 'luckylillia' ? 'luckylillia-onebot-token-read' : 'snowluma-onebot-token-read'
 		const params: Record<string, string> = engine === 'napcat' && napcatQQ ? { qq: napcatQQ } : {}
 		const outcome = await runActionAndPoll(action, params, false)
 		if (outcome.error) throw new Error(outcome.error)
@@ -716,16 +731,16 @@ export default function App() {
           </h1>
         </div>
 		<div className="flex overflow-hidden rounded-control border border-[var(--theme-border-strong)]">
-			{(['napcat', 'luckylillia'] as Engine[]).map(item => (
+			{(['napcat', 'luckylillia', 'snowluma'] as Engine[]).map(item => (
 				<button key={item} className={'min-h-8 px-3 text-xs font-semibold transition ' + (engine === item ? 'bg-[var(--theme-accent)] text-white' : 'bg-[var(--theme-surface-panel)] text-[var(--theme-text-secondary)] hover:bg-[var(--theme-surface-hover)]')} onClick={() => { setEngine(item); setView('manage'); setResult(undefined); setOperationSteps([]); setState('idle'); setResultOrigin(null); setOperationDetail(''); void refreshStatus(item) }}>
-					{item === 'napcat' ? 'NapCat' : 'LuckyLillia'}
+					{engineLabel(item)}
 				</button>
 			))}
 		</div>
       </header>
 
 	  {!coreNeedsInstall && !nativeLauncherNapcat && <nav className="flex gap-1 border-b border-[var(--theme-border-default)] pb-2">
-        {(['manage', 'config', 'background', 'webui'] as View[]).map((tab) => (
+			{(['manage', 'config', 'background', 'webui'] as View[]).map(tab => (
           <button
             key={tab}
             className={
@@ -736,7 +751,7 @@ export default function App() {
             }
             onClick={() => setView(tab)}
           >
-            {tab === 'manage' ? '管理' : tab === 'config' ? '网络配置' : tab === 'background' ? '后台运行' : '管理面板'}
+			{tab === 'manage' ? '管理' : tab === 'config' ? '网络配置' : tab === 'background' ? '后台运行' : '管理面板'}
           </button>
         ))}
 	  </nav>}
@@ -755,6 +770,7 @@ export default function App() {
 				</div>
 			</section>
 		  )}
+
 
 		  {engine === 'luckylillia' && liveStatus?.supported === false && (
 			<section id="luckylillia-association" className="grid gap-3 rounded-panel border border-[var(--theme-border-default)] bg-[var(--theme-surface-panel)] p-3">
@@ -785,12 +801,18 @@ export default function App() {
 				{liveStatus?.installed && !liveStatus?.managed ? <ActionButton label="取消关联" variant="danger" running={state === 'running'} onClick={() => confirm('取消关联 NapCat', '不会删除或修改外部目录。', () => run('napcat-forget', {}, true), 'danger')} /> : <ActionButton label="卸载" variant="danger" running={state === 'running'} disabled={!napcatManagedActions} onClick={() => confirm('卸载 NapCat', '会停止并删除工作台受管目录。', () => run('uninstall', {}, true), 'danger')} />}
 				<ActionButton label="看日志" variant="secondary" running={state === 'running'} onClick={() => void run('log')} />
 				<ActionButton label="清理日志" variant="secondary" running={state === 'running'} onClick={() => confirm('清理 NapCat 日志', '将清空核心日志与操作日志，不影响安装与配置。', () => run('napcat-log-clear', {}, true), 'danger')} />
-			</> : <>
+			</> : engine === 'luckylillia' ? <>
 				<ActionButton label="启动" variant="secondary" running={state === 'running'} disabled={!luckyManaged || !luckyInstalled} onClick={() => confirm('启动 LuckyLillia', '将启动官方 CLI 并等待登录。', () => run(luckyAction('start'), {}, true))} />
 				<ActionButton label="停止" variant="secondary" running={state === 'running'} disabled={!luckyManaged || !liveStatus?.running} onClick={() => confirm('停止 LuckyLillia', '停止由工作台管理的 LuckyLillia 进程。', () => run(luckyAction('stop'), {}, true))} />
 				{luckyInstalled && (luckyManaged ? <ActionButton label="卸载" variant="danger" running={state === 'running'} onClick={() => confirm('卸载 LuckyLillia', '会停止并删除工作台安装的 LuckyLillia。', () => run(luckyAction('uninstall'), {}, true), 'danger')} /> : <ActionButton label="取消关联" variant="danger" running={state === 'running'} onClick={() => confirm('取消关联 LuckyLillia', '不会删除外部目录或修改其中的文件。', () => run(luckyAction('forget'), {}, true), 'danger')} />)}
 				<ActionButton label="看日志" variant="secondary" running={state === 'running'} onClick={() => void run(luckyAction('log'))} />
 				<ActionButton label="清理日志" variant="secondary" running={state === 'running'} onClick={() => confirm('清理 LuckyLillia 日志', '将清空核心日志与操作日志，不影响安装与配置。', () => run(luckyAction('log-clear'), {}, true), 'danger')} />
+			</> : <>
+				<ActionButton label="启动" variant="secondary" running={state === 'running'} disabled={!liveStatus?.managed || !liveStatus?.installed} onClick={() => confirm('启动 SnowLuma', '启动工作台受管的 SnowLuma 原生进程。', () => run(snowLumaAction('start'), {}, true))} />
+				<ActionButton label="停止" variant="secondary" running={state === 'running'} disabled={!liveStatus?.managed || !liveStatus?.running} onClick={() => confirm('停止 SnowLuma', '停止工作台受管的 SnowLuma 原生进程。', () => run(snowLumaAction('stop'), {}, true))} />
+				<ActionButton label="卸载" variant="danger" running={state === 'running'} disabled={!liveStatus?.managed} onClick={() => confirm('卸载 SnowLuma', '将删除工作台安装的 SnowLuma 原生完整包。', () => run(snowLumaAction('uninstall'), {}, true), 'danger')} />
+				<ActionButton label="看日志" variant="secondary" running={state === 'running'} onClick={() => void run(snowLumaAction('log'))} />
+				<ActionButton label="清理操作日志" variant="secondary" running={state === 'running'} onClick={() => confirm('清理 SnowLuma 操作日志', '不会删除 SnowLuma 安装、QQ 登录或配置。', () => run(snowLumaAction('log-clear'), {}, true), 'danger')} />
 			</>}
 			</div>
 		  </details>}
@@ -816,7 +838,7 @@ export default function App() {
 		  </details>
 
 
-		  {!nativeLauncherNapcat && liveStatus?.loginPending && (
+		  {engine !== 'snowluma' && !nativeLauncherNapcat && liveStatus?.loginPending && (
 			<section className="grid justify-items-center gap-3 rounded-panel border border-[var(--theme-border-default)] bg-[var(--theme-surface-panel)] p-4 text-center">
 				<div>
 					<h2 className="m-0 text-sm font-semibold text-[var(--theme-text-strong)]">{engine === 'napcat' ? '请用手机 QQ 扫码登录' : 'LuckyLillia 登录二维码'}</h2>
@@ -890,6 +912,9 @@ export default function App() {
                   <ActionButton label="一键重启" running={state === 'running'} onClick={() => void run(luckyAction('restart'), {}, true)} />
                 </div>
               )}
+			  {engine === 'snowluma' && liveStatus.managed && liveStatus.installed && !liveStatus.running && (
+				<div className="flex gap-2"><ActionButton label="一键重启" running={state === 'running'} onClick={() => void run(snowLumaAction('restart'), {}, true)} /></div>
+			  )}
 			</section>
 		  )}
 
@@ -914,7 +939,7 @@ export default function App() {
 				<strong className="text-sm text-[var(--theme-text-strong)]">OneBot 连接健康</strong>
 				<p className="m-0 text-[var(--theme-text-muted)]">{liveStatus?.oneBotReady ? '核心已就绪，可同步到机器人。' : '核心未就绪，请先完成 QQ 登录。'}</p>
 			</div>
-			<ActionButton label="读取当前配置" variant="secondary" running={state === 'running'} onClick={() => void run(engine === 'napcat' ? 'onebot-config' : luckyAction('onebot-config'), engine === 'napcat' && napcatQQ ? { qq: napcatQQ } : {}, false, 'config-read')} />
+			{engine === 'snowluma' ? <p className="m-0 text-xs text-[var(--theme-text-muted)]">SnowLuma 的账号级 OneBot 配置由其 WebUI 管理；默认 WebSocket 为 3001。</p> : <ActionButton label="读取当前配置" variant="secondary" running={state === 'running'} onClick={() => void run(engine === 'napcat' ? 'onebot-config' : luckyAction('onebot-config'), engine === 'napcat' && napcatQQ ? { qq: napcatQQ } : {}, false, 'config-read')} />}
 		  </section>
 		  {localResult('config-read')}
 
@@ -994,7 +1019,7 @@ export default function App() {
             <Field label="Token" name="wsToken" />
 			<ActionField><button className="primary-button min-h-9" type="submit" disabled={!napcatManagedActions || ((liveStatus?.accounts?.length || 0) > 1 && !napcatQQ)}>保存 WebSocket</button></ActionField>
 			{localResult('config-ws')}
-		  </form></> : <form
+		  </form></> : engine === 'luckylillia' ? <form
 			className="grid grid-cols-[repeat(auto-fit,minmax(180px,1fr))] gap-3 rounded-panel border border-[var(--theme-border-default)] bg-[var(--theme-surface-panel)] p-3"
 			onSubmit={(event) => {
 				event.preventDefault()
@@ -1008,7 +1033,7 @@ export default function App() {
 			<Field label="Token" name="token" />
 			<ActionField><button className="primary-button min-h-9" type="submit" disabled={!liveStatus?.managed}>保存连接</button></ActionField>
 			{localResult('config-lucky')}
-		  </form>}
+		  </form> : <section className="grid gap-2 rounded-panel border border-[var(--theme-border-default)] bg-[var(--theme-surface-panel)] p-3 text-xs"><strong className="text-sm text-[var(--theme-text-strong)]">SnowLuma OneBot</strong><p className="m-0 leading-5 text-[var(--theme-text-muted)]">请在 SnowLuma WebUI 中完成登录并管理 `config/onebot.json`。默认 HTTP 为 3000，WebSocket 为 3001；只有在已生成并启用 WebSocket 配置后，工作台才会读取 Token 并允许同步。</p><div><ActionButton label="打开 SnowLuma WebUI" variant="secondary" running={state === 'running'} disabled={!webUrl} onClick={() => setView('webui')} /></div></section>}
 		  </section>
 
 		  <section className="grid gap-3 rounded-panel border border-[var(--theme-border-default)] bg-[var(--theme-surface-panel)] p-3">
@@ -1026,7 +1051,7 @@ export default function App() {
 					setState('running'); setResult(undefined); setOperationSteps([])
 					try {
 						const token = await readOneBotToken()
-						const url = selectedOneBotURL || (engine === 'napcat' ? 'ws://127.0.0.1:3001' : 'ws://127.0.0.1:7199')
+						const url = selectedOneBotURL || (engine === 'napcat' || engine === 'snowluma' ? 'ws://127.0.0.1:3001' : 'ws://127.0.0.1:7199')
 						await syncRobotOneBot(robotRoot, url, token)
 						setResult({ output: '✓ OneBot 配置已同步到目标机器人（Token 已自动读取）。请按需重启机器人使连接生效。' }); setState('done')
 					} catch (reason) { setResult({ output: '', error: reason instanceof Error ? reason.message : String(reason) }); setState('failed') }
@@ -1044,16 +1069,16 @@ export default function App() {
           <p className="m-0 text-xs leading-5 text-[var(--theme-text-muted)]">后台进程独立于工作台运行；ALemonX 更新或重启不会中断它们。主机重启后需手动再次启动。</p>
           <section className="grid gap-3 rounded-panel border border-[var(--theme-border-default)] bg-[var(--theme-surface-panel)] p-3">
             <div className="flex items-center justify-between gap-3">
-              <strong className="text-sm font-semibold text-[var(--theme-text-strong)]">{engine === 'napcat' ? 'NapCat' : 'LuckyLillia'}</strong>
+              <strong className="text-sm font-semibold text-[var(--theme-text-strong)]">{engineLabel(engine)}</strong>
               <span className={'text-xs ' + (liveStatus?.running ? 'text-[var(--theme-success-text)]' : 'text-[var(--theme-text-muted)]')}>
                 {liveStatus?.installed ? (liveStatus.running ? `后台运行中${liveStatus.pid ? `（PID ${liveStatus.pid}）` : ''}` : '已停止') : '未安装'}
               </span>
             </div>
             {liveStatus?.error && <p className="m-0 rounded-md bg-[var(--theme-danger-soft)] px-2 py-1.5 text-xs text-[var(--theme-danger-text)]">{liveStatus.error}</p>}
             <div className="flex flex-wrap gap-2">
-              <ActionButton label="后台启动" running={state === 'running'} disabled={!liveStatus?.installed || liveStatus?.running === true} onClick={() => confirm(`后台启动 ${engine === 'napcat' ? 'NapCat' : 'LuckyLillia'}`, '进程将脱离工作台独立运行；ALemonX 更新或重启不会中断。', () => run(engine === 'napcat' ? 'start' : luckyAction('start'), {}, true, 'manage', engine))} />
-              <ActionButton label="停止" variant="secondary" running={state === 'running'} disabled={liveStatus?.running !== true} onClick={() => confirm(`停止 ${engine === 'napcat' ? 'NapCat' : 'LuckyLillia'}`, '停止后台进程。', () => run(engine === 'napcat' ? 'stop' : luckyAction('stop'), {}, true, 'manage', engine))} />
-              <ActionButton label="看日志" variant="secondary" running={state === 'running'} onClick={() => void run(engine === 'napcat' ? 'log' : luckyAction('log'), {}, false, 'manage', engine)} />
+              <ActionButton label="后台启动" running={state === 'running'} disabled={!liveStatus?.installed || liveStatus?.running === true} onClick={() => confirm(`后台启动 ${engineLabel(engine)}`, '进程将脱离工作台独立运行；ALemonX 更新或重启不会中断。', () => run(engineAction(engine, 'start'), {}, true, 'manage', engine))} />
+              <ActionButton label="停止" variant="secondary" running={state === 'running'} disabled={liveStatus?.running !== true} onClick={() => confirm(`停止 ${engineLabel(engine)}`, '停止后台进程。', () => run(engineAction(engine, 'stop'), {}, true, 'manage', engine))} />
+              <ActionButton label="看日志" variant="secondary" running={state === 'running'} onClick={() => void run(engineAction(engine, 'log'), {}, false, 'manage', engine)} />
             </div>
           </section>
         </div>
@@ -1065,7 +1090,7 @@ export default function App() {
             <iframe
               className="h-[min(720px,calc(100vh-160px))] min-h-[480px] w-full border-0"
               src={webUrl}
-              title={engine === 'napcat' ? 'NapCat 管理面板' : 'LuckyLillia 管理面板'}
+              title={`${engineLabel(engine)} 管理面板`}
             />
           ) : (
             <div className="grid gap-2 p-6 text-center">
@@ -1079,6 +1104,7 @@ export default function App() {
           )}
         </div>
       )}
+
 
       {(view === 'manage' || view === 'background') && resultOrigin === 'manage' && <ResultPanel state={state} result={result ?? (state === 'running' ? { output: actionTitle(activeAction) } : undefined)} steps={operationSteps} liveDetail={operationDetail} onViewLog={() => void openLiveLog()} />}
 
@@ -1103,7 +1129,7 @@ export default function App() {
           onCancel={() => setSudoRequest(null)}
         />
       )}
-      {logText !== null && <LogModal text={logText} onClose={() => setLogText(null)} autoRefresh={logAutoRefresh} onToggleAutoRefresh={() => setLogAutoRefresh(current => !current)} onRefresh={() => void openLiveLog()} title={`${engine === 'napcat' ? 'NapCat' : 'LuckyLillia'} 日志`} />}
+      {logText !== null && <LogModal text={logText} onClose={() => setLogText(null)} autoRefresh={logAutoRefresh} onToggleAutoRefresh={() => setLogAutoRefresh(current => !current)} onRefresh={() => void openLiveLog()} title={`${engineLabel(logEngine)} 日志`} />}
     </div>
   )
 }

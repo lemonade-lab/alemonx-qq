@@ -145,7 +145,7 @@ export async function fetchPrivilegedAudit(pluginId: string): Promise<Privileged
 }
 
 export type StatusPayload = {
-	engine: 'napcat' | 'luckylillia'
+	engine: 'napcat' | 'luckylillia' | 'snowluma'
   installed: boolean
 	installHealthy?: boolean
   running: boolean
@@ -215,23 +215,23 @@ export async function chooseSystemPath(pickerId: string): Promise<string> {
 
 // fetchStatus uses the workbench's read-only status endpoint. Unlike actions,
 // it does not allocate or persist an operation task on each refresh.
-export async function fetchStatus(engine: 'napcat' | 'luckylillia' = 'napcat'): Promise<StatusPayload> {
-	const action = engine === 'napcat' ? 'napcat-status' : 'luckylillia-status'
+export async function fetchStatus(engine: 'napcat' | 'luckylillia' | 'snowluma' = 'napcat'): Promise<StatusPayload> {
+	const action = engine === 'napcat' ? 'napcat-status' : engine === 'luckylillia' ? 'luckylillia-status' : 'snowluma-status'
 	return json<StatusPayload>(await fetch(`/api/v1/setup/plugins/${PLUGIN_ID}/status?action=${encodeURIComponent(action)}`))
 }
 
 // Logs use the same read-only runner route as status. This stays available
 // while an installation task owns the normal actions route.
-export async function fetchPluginLog(engine: 'napcat' | 'luckylillia'): Promise<string> {
-	const action = engine === 'napcat' ? 'napcat-log-status' : 'luckylillia-log-status'
+export async function fetchPluginLog(engine: 'napcat' | 'luckylillia' | 'snowluma'): Promise<string> {
+	const action = engine === 'napcat' ? 'napcat-log-status' : engine === 'luckylillia' ? 'luckylillia-log-status' : 'snowluma-log-status'
 	const payload = await json<{ output?: string }>(await fetch(`/api/v1/setup/plugins/${PLUGIN_ID}/status?action=${encodeURIComponent(action)}`))
 	return payload.output || '（日志为空）'
 }
 
 // This is the current operation trace, reset by the runner when an install,
 // update or start begins. It must not be confused with the historical core log.
-export async function fetchOperationLog(engine: 'napcat' | 'luckylillia'): Promise<string> {
-	const action = engine === 'napcat' ? 'napcat-operation-status' : 'luckylillia-operation-status'
+export async function fetchOperationLog(engine: 'napcat' | 'luckylillia' | 'snowluma'): Promise<string> {
+	const action = engine === 'napcat' ? 'napcat-operation-status' : engine === 'luckylillia' ? 'luckylillia-operation-status' : 'snowluma-operation-status'
 	const payload = await json<{ output?: string }>(await fetch(`/api/v1/setup/plugins/${PLUGIN_ID}/status?action=${action}`))
 	return payload.output || ''
 }
