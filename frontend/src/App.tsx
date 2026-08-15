@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { chooseSystemPath, fetchHostRobotContext, fetchLocalServices, fetchOperationLog, fetchPluginLog, fetchPrivilegedAudit, fetchRobotProjects, fetchStatus, luckyQRCodeURL, napcatQRCodeURL, privilegePreflight, runActionAndPoll, syncRobotOneBot, type ActionResult, type LocalService, type PrivilegedAuditItem, type RobotProject, type StatusPayload, type Task, type TaskStep } from './api'
+import { chooseSystemPath, closeHostWebview, fetchHostRobotContext, fetchLocalServices, fetchOperationLog, fetchPluginLog, fetchPrivilegedAudit, fetchRobotProjects, fetchStatus, hostAlert, hostConfirm, luckyQRCodeURL, napcatQRCodeURL, openHostWebview, privilegePreflight, runActionAndPoll, syncRobotOneBot, type ActionResult, type LocalService, type PrivilegedAuditItem, type RobotProject, type StatusPayload, type Task, type TaskStep } from './api'
 import { splitStatusLines, type StatusLine } from './status'
 import { loadSession, saveSession, type QQEngine, type QQView } from './session'
 
@@ -167,53 +167,6 @@ function ActionField({ label = '', children }: { label?: string; children: React
 	)
 }
 
-function ConfirmModal({
-  title,
-  description,
-  onConfirm,
-  onCancel,
-  tone = 'primary'
-}: {
-  title: string
-  description: string
-  onConfirm: () => void
-  onCancel: () => void
-  tone?: 'primary' | 'danger'
-}) {
-  const confirmRef = useRef<HTMLButtonElement>(null)
-  useEffect(() => {
-    const previous = document.activeElement as HTMLElement | null
-    confirmRef.current?.focus()
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onCancel()
-    }
-    document.addEventListener('keydown', onKeyDown)
-    return () => {
-      document.removeEventListener('keydown', onKeyDown)
-      previous?.focus()
-    }
-  }, [onCancel])
-  return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-[var(--theme-surface-overlay)]" role="dialog" aria-modal="true" aria-label={title}>
-      <div className="w-[min(460px,calc(100vw-32px))] rounded-panel border border-[var(--theme-border-default)] bg-[var(--theme-surface-panel)] p-4 shadow-[var(--theme-shadow-pop)]">
-        <h3 className="m-0 mb-1 text-[15px] font-semibold text-[var(--theme-text-strong)]">
-          {title}
-        </h3>
-        <p className="m-0 mb-3 text-[13px] text-[var(--theme-text-muted)]">
-          {description}
-        </p>
-        <div className="flex justify-end gap-2">
-          <button className="secondary-button" onClick={onCancel}>
-            取消
-          </button>
-          <button ref={confirmRef} className={tone === 'danger' ? 'danger-button' : 'primary-button'} onClick={onConfirm}>
-            确认执行
-          </button>
-        </div>
-      </div>
-    </div>
-  )
-}
 
 function LogModal({
   text,
@@ -375,12 +328,6 @@ export default function App() {
   const [state, setState] = useState<'idle' | 'running' | 'done' | 'failed'>(
     'idle'
   )
-	const [pendingConfirm, setPendingConfirm] = useState<{
-    title: string
-    description: string
-    tone?: 'primary' | 'danger'
-    action: () => Promise<void>
-	} | null>(null)
 	const [sudoRequest, setSudoRequest] = useState<{ action: string; title: string; description: string; intentId: string } | null>(null)
 	const [logText, setLogText] = useState<string | null>(null)
 	const [logAutoRefresh, setLogAutoRefresh] = useState(true)
@@ -399,6 +346,16 @@ export default function App() {
 	const webServiceID = engine === 'napcat' ? 'napcat-webui' : engine === 'luckylillia' ? 'luckylillia-webui' : 'snowluma-webui'
 	const webService = services.find(service => service.id === webServiceID)
 	const webUrl = webService?.reachable && webService.embed ? webService.proxyUrl : ''
+	const webviewID = useRef<string | null>(null)
+	const openWebview = (title: string, url: string) => {
+		void closeHostWebview(webviewID.current).finally(() => {
+			void openHostWebview({ title, url: window.location.origin + url, width: 1080, height: 720 })
+				.then(id => { webviewID.current = id ?? null })
+				.catch(error => {
+					hostAlert('无法打开管理面板', error instanceof Error ? error.message : String(error))
+				})
+		})
+	}
 	const qrImageUrl = liveStatus?.qrCodeAvailable
 		? engine === 'napcat'
 			? napcatQRCodeURL(liveStatus.qrCodeUpdatedAt)
@@ -618,8 +575,10 @@ export default function App() {
 
 	useEffect(() => { void refreshAudit() }, [refreshAudit])
 
-  const confirm = (title: string, description: string, action: () => Promise<void>, tone: 'primary' | 'danger' = 'primary') => {
-    setPendingConfirm({ title, description, action, tone })
+  const confirm = (title: string, description: string, action: () => Promise<void>, _tone: 'primary' | 'danger' = 'primary') => {
+    void hostConfirm(title, description, '确认执行', '取消').then(confirmed => {
+      if (confirmed) void action()
+    })
   }
 
 	const guide = useMemo(() => {
@@ -685,17 +644,17 @@ export default function App() {
 			label: '打开 NapCat 启动器',
 			action: () => confirm('打开 NapCat 启动器', '启动器负责安装、启动和管理 NapCat。', () => run('napcat-macos-launcher-open', {}, true)),
 		}
-		if (engine === 'napcat' && liveStatus.installed && !liveStatus.managed) return { title: 'NapCat 已关联', description: webUrl ? '可以继续登录 QQ。' : '正在检查登录状态。', label: webUrl ? '打开登录页' : '刷新', action: () => webUrl ? setView('webui') : void refreshStatus() }
+		if (engine === 'napcat' && liveStatus.installed && !liveStatus.managed) return { title: 'NapCat 已关联', description: webUrl ? '可以继续登录 QQ。' : '正在检查登录状态。', label: webUrl ? '打开登录页' : '刷新', action: () => webUrl ? openWebview(`${engineLabel(engine)} 管理面板`, webUrl) : void refreshStatus() }
 		if (engine === 'snowluma' && liveStatus.supported === false) return { title: '此系统暂无上游原生 Hook', description: liveStatus.diagnosticHint || 'macOS 尚无官方 Darwin Hook。', label: '查看状态', action: () => void refreshStatus() }
 		if (engine === 'snowluma' && !liveStatus.installed) return { title: '安装 SnowLuma', description: '下载官方完整发行包，不使用 Docker。', label: '安装 SnowLuma', action: () => confirm('安装 SnowLuma', '将下载、验证并安装官方原生完整包。', () => run(snowLumaAction('install'), {}, true)) }
 		if (engine === 'snowluma' && !liveStatus.running) return { title: '启动 SnowLuma', description: '先启动同一系统用户、同一权限级别的 QQ；Linux 还需可用的 X11/Xvfb 与 ptrace 条件。', label: '启动 SnowLuma', action: () => confirm('启动 SnowLuma', '将先验证 QQ 与运行环境，再启动工作台受管的 SnowLuma 原生进程。', () => run(snowLumaAction('start'), {}, true)) }
 		if (engine === 'snowluma' && liveStatus.loginPending) return { title: '请在 QQ 窗口扫码', description: 'SnowLuma 已启动，正在等待 QQ 登录并建立 OneBot 服务。', label: '查看实时日志', action: () => void openLiveLog() }
 		if (engine === 'luckylillia' && liveStatus.supported === false) return { title: '此系统暂不支持', description: '请改用 NapCat，或手动安装后关联。', label: '关联目录', action: () => document.getElementById('luckylillia-association')?.scrollIntoView({ behavior: 'smooth', block: 'center' }) }
 		if (!liveStatus.installed) return { title: '安装 QQ 核心', description: engine === 'napcat' ? '自动安装并启动。' : '安装后需填写 Auth Token。', label: engine === 'napcat' ? '安装 NapCat' : '安装 LuckyLillia', action: () => engine === 'napcat' ? void requestNapcatInstall() : confirm('安装 QQ 核心', '下载并安装 LuckyLillia。', () => run(luckyAction('install'), {}, true)) }
-		if (engine === 'luckylillia' && !liveStatus.managed) return { title: 'LuckyLillia 已关联', description: webUrl ? '可以继续登录 QQ。' : '正在检查登录状态。', label: webUrl ? '打开登录页' : '刷新', action: () => webUrl ? setView('webui') : void refreshStatus() }
+		if (engine === 'luckylillia' && !liveStatus.managed) return { title: 'LuckyLillia 已关联', description: webUrl ? '可以继续登录 QQ。' : '正在检查登录状态。', label: webUrl ? '打开登录页' : '刷新', action: () => webUrl ? openWebview(`${engineLabel(engine)} 管理面板`, webUrl) : void refreshStatus() }
 		if (engine === 'luckylillia' && !liveStatus.authTokenReady) return { title: '需要 Auth Token', description: '在「网络配置」中填写 Token。', label: '填写 Token', action: () => setView('config') }
 		if (!liveStatus.running) return { title: '启动 QQ', description: '启动后即可扫码登录。', label: engine === 'napcat' ? '启动 NapCat' : '启动 LuckyLillia', action: () => confirm('启动 QQ', '启动后请使用手机 QQ 扫码。', () => run(engine === 'napcat' ? 'start' : luckyAction('start'), {}, true)) }
-		if (liveStatus.loginPending) return { title: '请用手机 QQ 扫码', description: liveStatus.qrCodeAvailable ? '扫码后自动继续。' : '正在生成二维码…', label: liveStatus.qrCodeAvailable ? '查看实时日志' : (webUrl ? '打开登录页' : '等待登录'), action: liveStatus.qrCodeAvailable ? () => void openLiveLog() : (webUrl ? () => setView('webui') : () => void refreshStatus()) }
+		if (liveStatus.loginPending) return { title: '请用手机 QQ 扫码', description: liveStatus.qrCodeAvailable ? '扫码后自动继续。' : '正在生成二维码…', label: liveStatus.qrCodeAvailable ? '查看实时日志' : (webUrl ? '打开登录页' : '等待登录'), action: liveStatus.qrCodeAvailable ? () => void openLiveLog() : (webUrl ? () => openWebview(`${engineLabel(engine)} 管理面板`, webUrl) : () => void refreshStatus()) }
 		if (!liveStatus.oneBotReady) return { title: '正在连接', description: '请稍候。', label: '刷新', action: () => void refreshStatus() }
 		return { title: 'QQ 已就绪', description: '可同步到机器人。', label: '同步到机器人', action: () => setView('config') }
 	}, [engine, liveStatus, refreshStatus, statusLoading, webUrl])
@@ -1053,7 +1012,7 @@ export default function App() {
 			<Field label="Token" name="token" />
 			<ActionField><button className="primary-button min-h-9" type="submit" disabled={!liveStatus?.managed}>保存连接</button></ActionField>
 			{localResult('config-lucky')}
-		  </form> : <section className="grid gap-2 rounded-panel border border-[var(--theme-border-default)] bg-[var(--theme-surface-panel)] p-3 text-xs"><strong className="text-sm text-[var(--theme-text-strong)]">SnowLuma OneBot</strong><p className="m-0 leading-5 text-[var(--theme-text-muted)]">请在 SnowLuma WebUI 中完成登录并管理 `config/onebot.json`。默认 HTTP 为 3000，WebSocket 为 3001；只有在已生成并启用 WebSocket 配置后，工作台才会读取 Token 并允许同步。</p><div><ActionButton label="打开 SnowLuma WebUI" variant="secondary" running={state === 'running'} disabled={!webUrl} onClick={() => setView('webui')} /></div></section>}
+		  </form> : <section className="grid gap-2 rounded-panel border border-[var(--theme-border-default)] bg-[var(--theme-surface-panel)] p-3 text-xs"><strong className="text-sm text-[var(--theme-text-strong)]">SnowLuma OneBot</strong><p className="m-0 leading-5 text-[var(--theme-text-muted)]">请在 SnowLuma WebUI 中完成登录并管理 `config/onebot.json`。默认 HTTP 为 3000，WebSocket 为 3001；只有在已生成并启用 WebSocket 配置后，工作台才会读取 Token 并允许同步。</p><div><ActionButton label="打开 SnowLuma WebUI" variant="secondary" running={state === 'running'} disabled={!webUrl} onClick={() => openWebview('SnowLuma WebUI', webUrl)} /></div></section>}
 		  </section>
 
 		  <section className="grid gap-3 rounded-panel border border-[var(--theme-border-default)] bg-[var(--theme-surface-panel)] p-3">
@@ -1105,20 +1064,26 @@ export default function App() {
       )}
 
       {view === 'webui' && (
-        <div className="relative min-h-0 overflow-hidden rounded-panel border border-[var(--theme-border-default)]">
+        <div className="grid gap-3">
           {webUrl ? (
-            <iframe
-              className="h-[min(720px,calc(100vh-160px))] min-h-[480px] w-full border-0"
-              src={webUrl}
-              title={`${engineLabel(engine)} 管理面板`}
-            />
+            <section className="grid gap-2 rounded-panel border border-[var(--theme-border-default)] bg-[var(--theme-surface-panel)] p-3 text-xs">
+              <strong className="text-sm text-[var(--theme-text-strong)]">
+                {engineLabel(engine)} 管理面板
+              </strong>
+              <p className="m-0 leading-5 text-[var(--theme-text-muted)]">
+                管理面板在宿主 WebView 窗口中打开（可拖拽、缩放、最小化），不再内嵌在插件页内。
+              </p>
+              <div>
+                <ActionButton label="在宿主窗口打开管理面板" variant="secondary" running={state === 'running'} onClick={() => openWebview(`${engineLabel(engine)} 管理面板`, webUrl)} />
+              </div>
+            </section>
           ) : (
-            <div className="grid gap-2 p-6 text-center">
+            <div className="grid gap-2 rounded-panel border border-[var(--theme-border-default)] p-6 text-center">
               <strong className="text-sm text-[var(--theme-text-strong)]">
                 管理面板未连接
               </strong>
               <p className="m-0 text-xs leading-5 text-[var(--theme-text-muted)]">
-                需先「安装」并「启动」，且其管理面板就绪后，这里才能内嵌显示。
+                需先「安装」并「启动」，且其管理面板就绪后才能打开。
               </p>
             </div>
           )}
@@ -1128,18 +1093,6 @@ export default function App() {
 
       {(view === 'manage' || view === 'background') && resultOrigin === 'manage' && <ResultPanel state={state} result={result ?? (state === 'running' ? { output: actionTitle(activeAction) } : undefined)} steps={operationSteps} liveDetail={operationDetail} onViewLog={() => void openLiveLog()} />}
 
-      {pendingConfirm && (
-        <ConfirmModal
-          title={pendingConfirm.title}
-          description={pendingConfirm.description}
-          tone={pendingConfirm.tone}
-          onConfirm={() => {
-            void pendingConfirm.action()
-            setPendingConfirm(null)
-          }}
-          onCancel={() => setPendingConfirm(null)}
-        />
-      )}
       {sudoRequest && (
         <SudoModal
           title={sudoRequest.title}

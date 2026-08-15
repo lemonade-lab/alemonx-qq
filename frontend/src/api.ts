@@ -255,3 +255,94 @@ export async function syncRobotOneBot(root: string, url: string, token: string):
 		body: JSON.stringify({ root, url, token })
 	}))
 }
+
+export type HostWebviewOptions = {
+	title?: string
+	url?: string
+	resource?: string
+	width?: number
+	height?: number
+}
+
+// openHostWebview opens a host-managed floating window instead of an inline
+// iframe: the workbench owns drag/resize/minimize/maximize and position
+// memory, so the plugin never re-implements window chrome.
+export async function openHostWebview(options: HostWebviewOptions): Promise<string | undefined> {
+	const host = window.ALXHost
+	if (!host?.webview) throw new Error('当前 ALemonX 版本不支持宿主 WebView。')
+	const result = await host.webview.open(PLUGIN_ID, options)
+	if (!result?.ok) throw new Error(result?.error || '打开宿主 WebView 失败。')
+	return result.id
+}
+
+export async function closeHostWebview(webviewID: string | null | undefined): Promise<void> {
+	if (!webviewID) return
+	const host = window.ALXHost
+	if (!host?.webview) return
+	try {
+		await host.webview.close(PLUGIN_ID, webviewID)
+	} catch {
+		// The window may already have been closed by the user.
+	}
+}
+
+// hostConfirm asks through the host's global modal, falling back to the
+// browser confirm dialog on older hosts.
+export async function hostConfirm(
+	title: string,
+	message: string,
+	confirmText = '确认执行',
+	cancelText = '取消'
+): Promise<boolean> {
+	const host = window.ALXHost
+	if (host?.ui?.modal) {
+		const result = await host.ui.modal(PLUGIN_ID, { title, message, confirmText, cancelText })
+		return result?.confirmed === true
+	}
+	return window.confirm(`${title}\n\n${message}`)
+}
+
+export function hostAlert(title: string, message: string, confirmText = '知道了'): void {
+	const host = window.ALXHost
+	if (host?.ui?.alert) {
+		void host.ui.alert(PLUGIN_ID, { title, message, confirmText })
+	} else {
+		window.alert(`${title}\n\n${message}`)
+	}
+}
+
+declare global {
+	interface Window {
+		ALXHost?: {
+			webview?: {
+				open: (
+					pluginId: string,
+					options: HostWebviewOptions
+				) => Promise<{ ok: boolean; id?: string; error?: string }>
+				close: (
+					pluginId: string,
+					webviewID?: string
+				) => Promise<{ ok: boolean; closed?: number; error?: string }>
+			}
+			ui?: {
+				alert: (
+					pluginId: string,
+					options: {
+						title?: string
+						message?: string
+						confirmText?: string
+					}
+				) => Promise<{ ok: boolean; error?: string }>
+				modal: (
+					pluginId: string,
+					options: {
+						title?: string
+						message?: string
+						confirmText?: string
+						cancelText?: string
+					}
+				) => Promise<{ ok: boolean; confirmed?: boolean; error?: string }>
+			}
+		}
+	}
+}
