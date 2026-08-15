@@ -723,38 +723,58 @@ export default function App() {
 	}
 
   return (
-    <div className="mx-auto grid min-w-0 max-w-[860px] gap-4 p-4">
-      <header className="flex items-baseline justify-between gap-3 border-b border-[var(--theme-border-default)] pb-3">
-        <div>
-          <h1 className="m-0 text-base font-semibold tracking-tight text-[var(--theme-text-strong)]">
-            QQ 内核管理
-          </h1>
-        </div>
-		<div className="flex overflow-hidden rounded-control border border-[var(--theme-border-strong)]">
-			{(['napcat', 'luckylillia', 'snowluma'] as Engine[]).map(item => (
-				<button key={item} className={'min-h-8 px-3 text-xs font-semibold transition ' + (engine === item ? 'bg-[var(--theme-accent)] text-white' : 'bg-[var(--theme-surface-panel)] text-[var(--theme-text-secondary)] hover:bg-[var(--theme-surface-hover)]')} onClick={() => { setEngine(item); setView('manage'); setResult(undefined); setOperationSteps([]); setState('idle'); setResultOrigin(null); setOperationDetail(''); void refreshStatus(item) }}>
-					{engineLabel(item)}
-				</button>
-			))}
-		</div>
-      </header>
+    <div className="qq-plugin-shell">
+      <aside className="qq-plugin-sidebar" aria-label="QQ 插件导航">
+        <nav className="qq-plugin-nav" aria-label="QQ 内核">
+          {(['napcat', 'luckylillia', 'snowluma'] as Engine[]).map(item => (
+            <button
+              key={item}
+              type="button"
+              className="qq-plugin-nav-button"
+              aria-current={engine === item ? 'page' : undefined}
+              onClick={() => {
+                setEngine(item)
+                setView('manage')
+                setResult(undefined)
+                setOperationSteps([])
+                setState('idle')
+                setResultOrigin(null)
+                setOperationDetail('')
+                void refreshStatus(item)
+              }}
+            >
+              <span className="qq-plugin-nav-icon" data-icon={item} aria-hidden />
+              {engineLabel(item)}
+            </button>
+          ))}
+        </nav>
 
-	  {!coreNeedsInstall && !nativeLauncherNapcat && <nav className="flex gap-1 border-b border-[var(--theme-border-default)] pb-2">
-			{(['manage', 'config', 'background', 'webui'] as View[]).map(tab => (
-          <button
-            key={tab}
-            className={
-              'min-h-8 rounded-control border px-3 text-xs font-semibold transition ' +
-              (view === tab
-                ? 'border-[var(--theme-border-strong)] bg-[var(--theme-surface-panel)] text-[var(--theme-text-strong)]'
-                : 'border-transparent text-[var(--theme-text-muted)] hover:bg-[var(--theme-surface-hover)] hover:text-[var(--theme-text-strong)]')
-            }
-            onClick={() => setView(tab)}
-          >
-			{tab === 'manage' ? '管理' : tab === 'config' ? '网络配置' : tab === 'background' ? '后台运行' : '管理面板'}
-          </button>
-        ))}
-	  </nav>}
+        {!coreNeedsInstall && !nativeLauncherNapcat && (
+          <nav className="qq-plugin-nav qq-plugin-view-nav" aria-label="QQ 功能">
+            {(['manage', 'config', 'background', 'webui'] as View[]).map(tab => (
+              <button
+                key={tab}
+                type="button"
+                className="qq-plugin-nav-button"
+                aria-current={view === tab ? 'page' : undefined}
+                onClick={() => setView(tab)}
+              >
+                <span className="qq-plugin-nav-icon" data-icon={tab} aria-hidden />
+                {tab === 'manage'
+                  ? '管理'
+                  : tab === 'config'
+                    ? '网络配置'
+                    : tab === 'background'
+                      ? '后台运行'
+                      : '管理面板'}
+              </button>
+            ))}
+          </nav>
+        )}
+      </aside>
+
+      <main className="qq-plugin-content">
+        <div className="qq-plugin-content-inner">
 
       {view === 'manage' && (
         <div className="grid gap-3">
@@ -1130,6 +1150,8 @@ export default function App() {
         />
       )}
       {logText !== null && <LogModal text={logText} onClose={() => setLogText(null)} autoRefresh={logAutoRefresh} onToggleAutoRefresh={() => setLogAutoRefresh(current => !current)} onRefresh={() => void openLiveLog()} title={`${engineLabel(logEngine)} 日志`} />}
+        </div>
+      </main>
     </div>
   )
 }

@@ -174,3 +174,140 @@ body {
 [data-theme='dark'] .primary-button {
   color: var(--theme-accent-contrast);
 }
+
+/* QQ 插件遵循工作台的独立窗口结构：左侧负责切换内核和功能，右侧只
+ * 渲染当前面板。插件在 iframe 内运行，因此在此维护同一套侧栏契约。 */
+html,
+body,
+#root {
+  height: 100%;
+  min-height: 0;
+}
+
+.qq-plugin-shell {
+  background: var(--theme-surface-panel);
+  display: grid;
+  grid-template-columns: 176px minmax(0, 1fr);
+  height: 100%;
+  min-height: 0;
+}
+
+.qq-plugin-sidebar {
+  background: var(--theme-surface-raised);
+  border-right: 1px solid var(--theme-border-default);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  overflow-y: overlay;
+  padding: 14px 12px;
+}
+
+.qq-plugin-nav {
+  display: grid;
+  gap: 4px;
+}
+
+.qq-plugin-view-nav {
+  margin-top: 4px;
+}
+
+.qq-plugin-nav-button {
+  align-items: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: var(--theme-text-secondary);
+  cursor: pointer;
+  display: flex;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  gap: 8px;
+  min-height: 36px;
+  padding: 0 10px;
+  text-align: left;
+  transition: background-color 140ms ease, color 140ms ease;
+  width: 100%;
+}
+
+.qq-plugin-nav-button:hover {
+  background: var(--theme-surface-hover);
+  color: var(--theme-text-strong);
+}
+
+.qq-plugin-nav-button[aria-current='page'] {
+  background: var(--theme-accent-soft);
+  border-color: var(--theme-accent-soft-border);
+  color: var(--theme-accent-text);
+}
+
+.qq-plugin-nav-icon {
+  align-items: center;
+  display: inline-flex;
+  font-size: 15px;
+  height: 16px;
+  justify-content: center;
+  line-height: 1;
+  width: 16px;
+}
+
+.qq-plugin-nav-icon[data-icon='napcat']::before { content: '◈'; }
+.qq-plugin-nav-icon[data-icon='luckylillia']::before { content: '◌'; }
+.qq-plugin-nav-icon[data-icon='snowluma']::before { content: '✦'; }
+.qq-plugin-nav-icon[data-icon='manage']::before { content: '◫'; }
+.qq-plugin-nav-icon[data-icon='config']::before { content: '⌘'; }
+.qq-plugin-nav-icon[data-icon='background']::before { content: '◉'; }
+.qq-plugin-nav-icon[data-icon='webui']::before { content: '↗'; }
+
+.qq-plugin-content {
+  height: 100%;
+  min-height: 0;
+  overflow: overlay;
+  padding: 16px 20px 24px;
+}
+
+.qq-plugin-content-inner {
+  display: grid;
+  gap: 16px;
+  margin: 0 auto;
+  max-width: 860px;
+  min-width: 0;
+}
+
+@media (max-width: 640px) {
+  .qq-plugin-shell {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  .qq-plugin-sidebar {
+    align-items: center;
+    border-bottom: 1px solid var(--theme-border-default);
+    border-right: 0;
+    flex-direction: row;
+    gap: 8px;
+    overflow-x: overlay;
+    overflow-y: hidden;
+    padding: 10px 12px;
+  }
+
+  .qq-plugin-nav {
+    display: flex;
+    flex: 0 0 auto;
+    gap: 4px;
+  }
+
+  .qq-plugin-view-nav {
+    margin-top: 0;
+  }
+
+  .qq-plugin-nav-button {
+    flex: 0 0 auto;
+    width: auto;
+  }
+
+  .qq-plugin-content {
+    padding: 12px;
+  }
+}
