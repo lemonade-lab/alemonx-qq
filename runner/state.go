@@ -8,9 +8,9 @@ import (
 	"runtime"
 )
 
-// State tracks the installed NapCat location and the running process. It lives
-// in the user config/data directory because the plugin directory may be
-// read-only (for example when installed next to the alx executable).
+// State tracks the installed NapCat location and the running process. The
+// host-managed plugin store keeps it independent of the replaceable plugin
+// code directory and persistent across Docker container replacement.
 
 type State struct {
 	Version               string `json:"version,omitempty"`
@@ -58,9 +58,9 @@ func napcatPlatformFor(goos, goarch string) *napcatPlatformSpec {
 // userConfigDir is a seam for tests; production code uses os.UserConfigDir.
 var userConfigDir = os.UserConfigDir
 
-// stateDir returns the base directory for alx-qq state: ~/.alx-qq on Unix,
-// %LOCALAPPDATA%\alx-qq on Windows.
-func stateDir() (string, error) {
+// legacyStateDir retains the former user-config location for one-time import.
+// New runs use ALX_PLUGIN_STORE when the host provides it.
+func legacyStateDir() (string, error) {
 	if runtime.GOOS == "windows" {
 		if base := os.Getenv("LOCALAPPDATA"); base != "" {
 			return filepath.Join(base, "alx-qq"), nil
@@ -71,6 +71,14 @@ func stateDir() (string, error) {
 		return "", err
 	}
 	return filepath.Join(config, "alx-qq"), nil
+}
+
+func stateDir() (string, error) {
+	legacy, err := legacyStateDir()
+	if err != nil {
+		return "", err
+	}
+	return pluginStoreDir(legacy)
 }
 
 func statePath() (string, error) {
@@ -102,7 +110,7 @@ func managedInstallDir() (string, error) {
 	case "windows":
 		return installDir()
 	case "linux":
-		return linuxRootlessInstallDir()
+		return installDir()
 	default:
 		return "", fmt.Errorf("当前平台不支持受管 NapCat 安装")
 	}

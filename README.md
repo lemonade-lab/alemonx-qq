@@ -2,6 +2,12 @@
 
 ALemonX 的 QQ 内核管理插件。NapCat、LuckyLillia 与 SnowLuma 使用独立的安装目录、状态、日志、进程组和 OneBot 配置；一个内核的操作不会修改另一个内核。
 
+工作台受管安装的内核、配置、日志和状态保存在
+`<workspace>/store/alemonx-qq/`；`<workspace>` 由启动参数 `--workspace` 或
+`ALX_WORKSPACE` 决定，因此 Docker 挂载工作区后可跨容器重启保留。首次使用新目录
+时会复制旧版插件数据，原目录不会被删除。用户手动关联的既有安装目录仍保留在其
+原位置，不会被插件迁移或移动。
+
 ## 支持范围
 
 | 内核 | 平台 | 安装模式 | 登录边界 |
