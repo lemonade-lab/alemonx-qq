@@ -168,12 +168,13 @@ export type StatusPayload = {
 	supported?: boolean
 	platform?: string
 	managed?: boolean
+	migrationAvailable?: boolean
 	authTokenReady?: boolean
 	journey?: {
-		phase: 'unsupported' | 'install' | 'repair' | 'external' | 'needs-auth-token' | 'start' | 'starting' | 'scan-qq' | 'connecting' | 'ready'
+		phase: 'unsupported' | 'install' | 'repair' | 'migrate' | 'external' | 'needs-auth-token' | 'start' | 'starting' | 'scan-qq' | 'connecting' | 'ready'
 		title: string
 		detail: string
-		nextAction: 'manual' | 'install' | 'repair' | 'open-webui' | 'auth-token' | 'start' | 'view-log' | 'scan-qq' | 'configure'
+		nextAction: 'manual' | 'install' | 'repair' | 'migrate' | 'open-webui' | 'auth-token' | 'start' | 'view-log' | 'scan-qq' | 'configure'
 	}
 	accounts?: Array<{ qq: string; oneBotUrl?: string; oneBotReady: boolean }>
 	selectedAccount?: string

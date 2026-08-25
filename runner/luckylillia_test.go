@@ -446,6 +446,46 @@ func TestLuckyHistoricalManagedStateRemainsManaged(t *testing.T) {
 	}
 }
 
+func TestLuckyLegacyMigrationCopiesAndPromotesExternalInstall(t *testing.T) {
+	original := userConfigDir
+	base := t.TempDir()
+	userConfigDir = func() (string, error) { return base, nil }
+	t.Cleanup(func() { userConfigDir = original })
+	t.Setenv("ALX_PLUGIN_STORE", "")
+	t.Setenv("ALX_PLUGIN_INSTALL_MODE", "legacy-local")
+	t.Setenv("ALX_PLUGIN_INSTALL_ORIGIN", "legacy-migration")
+	external := filepath.Join(base, "external-lucky")
+	if err := os.MkdirAll(external, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(external, "start.sh"), []byte("#!/bin/sh\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := saveLuckyState(luckyState{InstallDir: external, Managed: false, InstallMode: "external"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := luckyMigrateLegacy(true); err != nil {
+		t.Fatal(err)
+	}
+	state, err := loadLuckyState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	target, err := luckyInstallDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !state.Managed || state.InstallMode != "managed" || filepath.Clean(state.InstallDir) != filepath.Clean(target) {
+		t.Fatalf("migrated state = %+v, target = %q", state, target)
+	}
+	if _, err := os.Stat(filepath.Join(external, "start.sh")); err != nil {
+		t.Fatalf("external source was removed: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(target, "start.sh")); err != nil {
+		t.Fatalf("managed target missing: %v", err)
+	}
+}
+
 func TestLuckyMutatingActionsRequireConfirmation(t *testing.T) {
 	if err := requireLuckyConfirmation(false, "卸载 LuckyLillia"); err == nil {
 		t.Fatal("mutating Lucky action must require confirmation")

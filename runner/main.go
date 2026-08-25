@@ -67,7 +67,7 @@ func lifecycleOperationAction(action string) bool {
 		return true
 	}
 	switch action {
-	case "luckylillia-install", "luckylillia-reinstall", "luckylillia-start", "luckylillia-restart", "luckylillia-update", "luckylillia-auth-token-set", "luckylillia-auth-token-set-start", "snowluma-install", "snowluma-start", "snowluma-restart", "snowluma-update":
+	case "luckylillia-install", "luckylillia-reinstall", "luckylillia-migrate", "luckylillia-start", "luckylillia-restart", "luckylillia-update", "luckylillia-auth-token-set", "luckylillia-auth-token-set-start", "snowluma-install", "snowluma-start", "snowluma-restart", "snowluma-update":
 		return true
 	default:
 		return false
@@ -191,6 +191,8 @@ func runNapcatAction(action string, params map[string]string, confirmed bool) (s
 		return luckyInstall(false, confirmed)
 	case "luckylillia-adopt":
 		return luckyAdopt(params, confirmed)
+	case "luckylillia-migrate":
+		return luckyMigrateLegacy(confirmed)
 	case "luckylillia-reinstall":
 		return luckyInstall(true, confirmed)
 	case "luckylillia-start":

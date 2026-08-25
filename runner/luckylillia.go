@@ -47,31 +47,32 @@ type luckyProcess struct {
 }
 
 type kernelStatus struct {
-	Engine          string         `json:"engine"`
-	Installed       bool           `json:"installed"`
-	InstallHealthy  bool           `json:"installHealthy"`
-	Running         bool           `json:"running"`
-	PortReachable   bool           `json:"portReachable"`
-	WebUIReady      bool           `json:"webUiReady"`
-	OneBotReady     bool           `json:"oneBotReady"`
-	LoginPending    bool           `json:"loginPending"`
-	QRCodeAvailable bool           `json:"qrCodeAvailable"`
-	QRCodeUpdatedAt string         `json:"qrCodeUpdatedAt,omitempty"`
-	Version         string         `json:"version,omitempty"`
-	PID             int            `json:"pid,omitempty"`
-	WebUIURL        string         `json:"webUiUrl,omitempty"`
-	OneBotURL       string         `json:"oneBotUrl,omitempty"`
-	LogPath         string         `json:"logPath,omitempty"`
-	DiagnosticHint  string         `json:"diagnosticHint,omitempty"`
-	Error           string         `json:"error,omitempty"`
-	Supported       bool           `json:"supported"`
-	Platform        string         `json:"platform,omitempty"`
-	InstallMode     string         `json:"installMode,omitempty"`
-	Managed         bool           `json:"managed"`
-	AuthTokenReady  bool           `json:"authTokenReady"`
-	State           string         `json:"state"`
-	UpdatedAt       string         `json:"updatedAt"`
-	Journey         runtimeJourney `json:"journey"`
+	Engine             string         `json:"engine"`
+	Installed          bool           `json:"installed"`
+	InstallHealthy     bool           `json:"installHealthy"`
+	Running            bool           `json:"running"`
+	PortReachable      bool           `json:"portReachable"`
+	WebUIReady         bool           `json:"webUiReady"`
+	OneBotReady        bool           `json:"oneBotReady"`
+	LoginPending       bool           `json:"loginPending"`
+	QRCodeAvailable    bool           `json:"qrCodeAvailable"`
+	QRCodeUpdatedAt    string         `json:"qrCodeUpdatedAt,omitempty"`
+	Version            string         `json:"version,omitempty"`
+	PID                int            `json:"pid,omitempty"`
+	WebUIURL           string         `json:"webUiUrl,omitempty"`
+	OneBotURL          string         `json:"oneBotUrl,omitempty"`
+	LogPath            string         `json:"logPath,omitempty"`
+	DiagnosticHint     string         `json:"diagnosticHint,omitempty"`
+	Error              string         `json:"error,omitempty"`
+	Supported          bool           `json:"supported"`
+	Platform           string         `json:"platform,omitempty"`
+	InstallMode        string         `json:"installMode,omitempty"`
+	Managed            bool           `json:"managed"`
+	MigrationAvailable bool           `json:"migrationAvailable"`
+	AuthTokenReady     bool           `json:"authTokenReady"`
+	State              string         `json:"state"`
+	UpdatedAt          string         `json:"updatedAt"`
+	Journey            runtimeJourney `json:"journey"`
 }
 
 // luckyPlatformSpec describes the official CLI contract for each supported
@@ -203,6 +204,147 @@ func requireManagedLucky(state luckyState, action string) error {
 	return nil
 }
 
+func luckyLegacyMigrationAllowed() bool {
+	return strings.TrimSpace(os.Getenv("ALX_PLUGIN_INSTALL_MODE")) == "legacy-local" &&
+		strings.TrimSpace(os.Getenv("ALX_PLUGIN_INSTALL_ORIGIN")) == "legacy-migration"
+}
+
+// luckyMigrateLegacy converts an explicitly host-migrated external CLI into a
+// workbench-owned installation. The old directory is copied, never removed.
+func luckyMigrateLegacy(confirmed bool) (string, error) {
+	if err := requireLuckyConfirmation(confirmed, "迁移 LuckyLillia"); err != nil {
+		return "", err
+	}
+	if !luckyLegacyMigrationAllowed() {
+		return "", errors.New("当前 LuckyLillia 尚未完成工作区迁移，请先在工作台执行插件迁移")
+	}
+	state, err := loadLuckyState()
+	if err != nil {
+		return "", err
+	}
+	if state.Managed && luckyManagedState(state) {
+		return "? LuckyLillia 已经是工作台管理的安装。", nil
+	}
+	if state.InstallDir == "" || luckyEntryPoint(state.InstallDir) == "" {
+		return "", errors.New("未找到可迁移的 LuckyLillia 外部安装目录")
+	}
+	target, err := luckyInstallDir()
+	if err != nil {
+		return "", err
+	}
+	source, err := filepath.Abs(state.InstallDir)
+	if err != nil {
+		return "", err
+	}
+	target, err = filepath.Abs(target)
+	if err != nil {
+		return "", err
+	}
+	if filepath.Clean(source) == filepath.Clean(target) {
+		state.Managed = true
+		state.InstallMode = "managed"
+		if platform := luckyPlatform(); platform != nil {
+			state.Platform = platform.Key
+		}
+		if err := saveLuckyState(state); err != nil {
+			return "", err
+		}
+		return "✓ LuckyLillia 已切换为工作台管理。", nil
+	}
+	if _, err := os.Lstat(target); err == nil {
+		if luckyEntryPoint(target) == "" {
+			return "", errors.New("工作区 LuckyLillia 目标目录已存在但不完整，请先确认其内容")
+		}
+		state.InstallDir = target
+		state.Managed = true
+		state.InstallMode = "managed"
+		if platform := luckyPlatform(); platform != nil {
+			state.Platform = platform.Key
+		}
+		if err := saveLuckyState(state); err != nil {
+			return "", err
+		}
+		return "✓ 已接管工作区中的 LuckyLillia 安装，原目录未删除。", nil
+	} else if !os.IsNotExist(err) {
+		return "", err
+	}
+	if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
+		return "", err
+	}
+	stage, err := os.MkdirTemp(filepath.Dir(target), ".luckylillia-migrate-")
+	if err != nil {
+		return "", err
+	}
+	defer os.RemoveAll(stage)
+	if err := copyLuckyTree(source, stage); err != nil {
+		return "", fmt.Errorf("复制 LuckyLillia 安装失败：%w", err)
+	}
+	if err := os.Rename(stage, target); err != nil {
+		return "", err
+	}
+	previous := state
+	state.InstallDir = target
+	state.Managed = true
+	state.InstallMode = "managed"
+	if platform := luckyPlatform(); platform != nil {
+		state.Platform = platform.Key
+	}
+	if err := saveLuckyState(state); err != nil {
+		_ = os.RemoveAll(target)
+		_ = saveLuckyState(previous)
+		return "", err
+	}
+	return "✓ LuckyLillia 已迁移到工作区管理目录，原目录未删除。", nil
+}
+
+func copyLuckyTree(source, destination string) error {
+	return filepath.WalkDir(source, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		relative, err := filepath.Rel(source, path)
+		if err != nil {
+			return err
+		}
+		target := destination
+		if relative != "." {
+			target = filepath.Join(destination, relative)
+		}
+		if entry.IsDir() {
+			return os.MkdirAll(target, 0o700)
+		}
+		if entry.Type()&os.ModeSymlink != 0 {
+			return errors.New("安装目录包含不支持的符号链接")
+		}
+		info, err := entry.Info()
+		if err != nil || !info.Mode().IsRegular() {
+			return errors.New("安装目录包含不支持的文件类型")
+		}
+		if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
+			return err
+		}
+		input, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		output, err := os.OpenFile(target, os.O_CREATE|os.O_EXCL|os.O_WRONLY, info.Mode().Perm()|0o600)
+		if err != nil {
+			_ = input.Close()
+			return err
+		}
+		_, copyErr := io.Copy(output, input)
+		inputCloseErr := input.Close()
+		outputCloseErr := output.Close()
+		if copyErr != nil {
+			return copyErr
+		}
+		if inputCloseErr != nil {
+			return inputCloseErr
+		}
+		return outputCloseErr
+	})
+}
+
 func reportLuckyProgress(stage string, percent int, message string) {
 	appendActionDiagnostic(currentLuckyOperationAction(), fmt.Sprintf("[%s] %d%% %s", time.Now().UTC().Format(time.RFC3339), percent, message))
 	if strings.TrimSpace(os.Getenv("ALX_PLUGIN_PROGRESS_MODE")) != "structured" {
@@ -257,7 +399,7 @@ func luckyStatus() (string, error) {
 	if !luckySupported() {
 		stateName = "unsupported"
 	}
-	status := kernelStatus{Engine: "luckylillia", Installed: installed, InstallHealthy: healthy, Running: running, PortReachable: webUI != "", WebUIReady: webUI != "", OneBotReady: onebot != "", LoginPending: running && webUI != "" && onebot == "", Version: state.Version, PID: state.PID, WebUIURL: webUI, OneBotURL: "ws://127.0.0.1:" + strconv.Itoa(oneBotPort), Supported: luckySupported(), Managed: state.Managed, AuthTokenReady: authTokenReady, InstallMode: state.InstallMode, State: stateName, UpdatedAt: time.Now().UTC().Format(time.RFC3339)}
+	status := kernelStatus{Engine: "luckylillia", Installed: installed, InstallHealthy: healthy, Running: running, PortReachable: webUI != "", WebUIReady: webUI != "", OneBotReady: onebot != "", LoginPending: running && webUI != "" && onebot == "", Version: state.Version, PID: state.PID, WebUIURL: webUI, OneBotURL: "ws://127.0.0.1:" + strconv.Itoa(oneBotPort), Supported: luckySupported(), Managed: state.Managed, MigrationAvailable: luckyLegacyMigrationAllowed() && installed && !luckyManagedState(state), AuthTokenReady: authTokenReady, InstallMode: state.InstallMode, State: stateName, UpdatedAt: time.Now().UTC().Format(time.RFC3339)}
 	status.QRCodeAvailable, status.QRCodeUpdatedAt = luckyQRCodeStatus(state)
 	if platform != nil {
 		status.Platform = platform.Key
@@ -303,6 +445,8 @@ func luckyJourney(status kernelStatus) runtimeJourney {
 		return runtimeJourney{Phase: "install", Title: "安装 LuckyLillia", Detail: "将下载并验证官方 CLI；安装后还需填写官方 Auth Token。", NextAction: "install"}
 	case !status.InstallHealthy:
 		return runtimeJourney{Phase: "repair", Title: "LuckyLillia 安装不完整", Detail: firstStatusDetail(status.DiagnosticHint, "请重新安装后再启动。"), NextAction: "repair"}
+	case status.MigrationAvailable:
+		return runtimeJourney{Phase: "migrate", Title: "迁移 LuckyLillia", Detail: "旧版安装已复制到工作区，确认后将保留原目录并切换为工作台管理。", NextAction: "migrate"}
 	case !status.Managed:
 		return runtimeJourney{Phase: "external", Title: "LuckyLillia 已关联", Detail: firstStatusDetail(status.DiagnosticHint, "这是外部实例；工作台不会修改其进程或配置。"), NextAction: "open-webui"}
 	case !status.AuthTokenReady:

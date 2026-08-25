@@ -2,6 +2,7 @@
 /dist
 /release
 /web
+/\.alx-install.json
 /frontend/node_modules
 /frontend/dist
 
