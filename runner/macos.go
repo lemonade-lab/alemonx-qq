@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -21,8 +22,30 @@ import (
 const (
 	macQQApp          = "/Applications/QQ.app"
 	macQQContainer    = "Library/Containers/com.tencent.qq/Data"
-	macInstallerAsset = "NapCatInstaller.zip"
+	// macInstallerArchiveName is our local, stable cache name. It is not the
+	// upstream release-asset name: upstream renamed its macOS assets in v1.5.
+	macInstallerArchiveName = "NapCatInstaller.zip"
 )
+
+// macInstallerReleaseAsset selects a real asset advertised by the official
+// NapCat-Mac-Installer release.  The historical NapCatInstaller.zip filename
+// disappeared upstream; requesting it produced a non-installer response (or
+// an apparent download failure) even though the release itself was healthy.
+func macInstallerReleaseAsset(release githubRelease) (releaseAsset, error) {
+	// The universal package is the official choice for both Intel and Apple
+	// silicon. Keep the Apple-silicon-only package as a compatible fallback if
+	// a later release omits the universal build.
+	names := []string{"NapCatInstaller_arm64+x86_64.zip"}
+	if runtime.GOARCH == "arm64" {
+		names = append(names, "NapCatInstaller_arm64.zip")
+	}
+	for _, name := range names {
+		if asset, err := releaseAssetByName(release, name); err == nil {
+			return asset, nil
+		}
+	}
+	return releaseAsset{}, fmt.Errorf("NapCat macOS 发布包中未找到兼容当前 Mac 的安装器（可用文件：%s）", strings.Join(names, "、"))
+}
 
 // macNapcatContainer returns the NapCat sandbox container path for QQ.
 func macNapcatContainer() string {
@@ -96,7 +119,7 @@ func downloadMacNapcatInstaller() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	asset, err := releaseAssetByName(release, macInstallerAsset)
+	asset, err := macInstallerReleaseAsset(release)
 	if err != nil {
 		return "", err
 	}
@@ -108,13 +131,21 @@ func downloadMacNapcatInstaller() (string, error) {
 	if err := os.MkdirAll(downloads, 0o700); err != nil {
 		return "", err
 	}
-	if macInstallerReady() {
+	if macInstallerReady() && verifyReleaseAssetDigest(destination, asset) == nil {
 		return macInstallerDownloadResult(destination, release.TagName), nil
 	}
+	// Earlier versions stored an unverified file under the old generic name.
+	// Do not mistake that stale archive (including a downloaded HTML error
+	// page) for the current official installer.
+	_ = os.Remove(destination)
 	temporary := destination + ".download"
 	_ = os.Remove(temporary)
 	reportNapcatProgress("download", 20, "下载官方 macOS NapCat 安装器")
 	if err = downloadFileWithProgress(asset.URL, temporary, napcatDownloadProgress("下载官方 macOS NapCat 安装器", 20, 85)); err != nil {
+		_ = os.Remove(temporary)
+		return "", err
+	}
+	if err = verifyReleaseAssetDigest(temporary, asset); err != nil {
 		_ = os.Remove(temporary)
 		return "", err
 	}
@@ -135,7 +166,7 @@ func macInstallerArchivePath() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(root, "downloads", macInstallerAsset), nil
+	return filepath.Join(root, "downloads", macInstallerArchiveName), nil
 }
 
 func macInstallerReady() bool {
