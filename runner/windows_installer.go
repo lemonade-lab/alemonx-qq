@@ -118,7 +118,7 @@ func downloadWindowsNapcatInstaller() (string, error) {
 		return "", err
 	}
 	reportNapcatProgress("complete", 100, "Windows NapCat 安装器已准备好")
-	return fmt.Sprintf("✓ 安装器已准备好（%s）。\n文件位置：%s\n下一步：点击「打开 NapCat 启动器」。", release.TagName, windowsNapcatLauncherPath()), nil
+	return fmt.Sprintf("✓ 安装器已准备好（%s）。\n文件位置：%s\n下一步：打开文件所在目录，手动双击 NapCatInstaller.exe。", release.TagName, windowsNapcatLauncherPath()), nil
 }
 
 func openWindowsNapcatLauncher() (string, error) {
@@ -126,9 +126,11 @@ func openWindowsNapcatLauncher() (string, error) {
 	if launcher == "" {
 		return "", fmt.Errorf("未找到 NapCat 启动器；请先点击「安装 NapCat」")
 	}
-	command := exec.Command(launcher)
+	// Windows NapCat is deliberately user-owned: reveal the verified launcher
+	// but never execute it or attempt to supervise its QQ process.
+	command := exec.Command("explorer.exe", "/select,"+launcher)
 	if err := command.Start(); err != nil {
-		return "", fmt.Errorf("无法打开 NapCat 启动器：%w", err)
+		return "", fmt.Errorf("无法打开 NapCat 文件所在目录：%w", err)
 	}
-	return "✓ NapCat 启动器已打开。请在启动器中完成安装、启动和后续管理。", nil
+	return "✓ 已打开 NapCat 文件所在目录。请手动双击 NapCatInstaller.exe 完成安装和启动。", nil
 }

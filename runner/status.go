@@ -1,10 +1,14 @@
 package main
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"net"
+	"net/http"
+	"net/url"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -104,17 +108,33 @@ func collectStatus(state State) statusPayload {
 		}
 		payload.LauncherPath = windowsNapcatLauncherPath()
 	}
+	// Desktop installers are intentionally download-only. Do not probe or
+	// report QQ/NapCat process, WebUI, QR, OneBot, or logs: none of those are
+	// owned by the workbench on macOS and Windows.
+	if platform != nil && (platform.Key == "darwin-external" || platform.Key == "windows-external") {
+		payload.Journey = runtimeJourney{
+			Phase:      "external",
+			Title:      "NapCat 本地安装器",
+			Detail:     "下载完成后打开文件所在目录，并由你手动启动官方安装器。工作台不管理其进程、面板或日志。",
+			NextAction: "manual",
+		}
+		return payload
+	}
 	payload.Running = isRunning(state)
 	payload.Watchdog = state.Managed && napcatStateVerified(state) && processAlive(state.WatchdogPID)
-	payload.WebUIURL = webUIBridge()
+	// The NapCat WebUI is separately authenticated from QQ. Its own frontend
+	// accepts the configured token only at the login route (`?token=`), then
+	// exchanges it for a short-lived credential kept in localStorage. The ALX
+	// service proxy is same-origin, so opening its bare mount skips that official
+	// bootstrap and immediately fails /api/auth/check with "Unauthorized".
+	payload.WebUIURL = napcatWebUIEntryURL(state)
 	payload.PortReachable = payload.WebUIURL != ""
 	payload.WebUIReady = payload.PortReachable
 	payload.QRCodeAvailable, payload.QRCodeUpdatedAt = napcatQRCodeStatus(state)
-	// QQ 登录和 OneBot 是两段完全独立的链路。OneBot 的配置文件会在
-	// 登录前创建，端口也可能因服务重启而暂时不可用，因此两者都不能
-	// 作为 QQ 登录状态的依据。NapCat 会把扫码请求与登录完成事件写入
-	// 自己的进程日志；以最新事件为准，避免旧的成功记录掩盖新二维码。
-	payload.QQLoggedIn = napcatQQLoggedIn(state)
+	// QQ 登录和 OneBot 是两段完全独立的链路。NapCat 在扫码成功回调中
+	// 维护 QQLoginStatus；从其受鉴权的 WebUI API 读取这个内存态，不能
+	// 用配置、端口或日志文字来猜测登录是否完成。
+	payload.QQLoggedIn = napcatQQLoginStatus(state)
 	if accounts, err := napcatAccounts(state); err == nil {
 		payload.Accounts = accounts
 		selected := state.SelectedQQ
@@ -160,45 +180,142 @@ func collectStatus(state State) statusPayload {
 	return payload
 }
 
-// napcatQQLoggedIn reads only NapCat's own login transition log. A current
-// QR request always overrides an earlier success, so a restarted instance
-// correctly returns to “waiting for scan” until it records a fresh success.
-// This intentionally has no dependency on OneBot configuration or ports.
-func napcatQQLoggedIn(state State) bool {
-	path, err := logPath()
+type napcatWebUIConfig struct {
+	Token string `json:"token"`
+}
+
+// napcatWebUIEntryURL keeps NapCat's documented one-click WebUI login flow
+// when the UI is opened through the ALX service proxy. The token is emitted
+// only in the authenticated plugin status response; it is never written to an
+// action result, application log, or persisted browser setting.
+func napcatWebUIEntryURL(state State) string {
+	if webUIBridge() == "" {
+		return ""
+	}
+	data, err := os.ReadFile(filepath.Join(state.InstallDir, "config", "webui.json"))
+	if err != nil {
+		return ""
+	}
+	var config napcatWebUIConfig
+	if json.Unmarshal(data, &config) != nil || strings.TrimSpace(config.Token) == "" {
+		return ""
+	}
+	return "http://127.0.0.1:6099/webui?token=" + url.QueryEscape(config.Token)
+}
+
+type napcatAPIResponse struct {
+	Code       int    `json:"code"`
+	Credential string `json:"Credential"`
+	Data       struct {
+		Credential string `json:"Credential"`
+		IsLogin    bool   `json:"isLogin"`
+	} `json:"data"`
+}
+
+type napcatCredentialCache struct {
+	Credential string `json:"credential"`
+}
+
+func napcatCredentialCachePath() (string, error) {
+	dir, err := stateDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "napcat-webui-credential.json"), nil
+}
+
+func readNapcatCredentialCache() string {
+	path, err := napcatCredentialCachePath()
+	if err != nil {
+		return ""
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	var cached napcatCredentialCache
+	if json.Unmarshal(data, &cached) != nil {
+		return ""
+	}
+	return strings.TrimSpace(cached.Credential)
+}
+
+func saveNapcatCredentialCache(credential string) {
+	path, err := napcatCredentialCachePath()
+	if err != nil || credential == "" {
+		return
+	}
+	data, err := json.Marshal(napcatCredentialCache{Credential: credential})
+	if err == nil {
+		_ = os.WriteFile(path, data, 0o600)
+	}
+}
+
+func napcatLoginStatusWithCredential(client *http.Client, credential string) (loggedIn, accepted bool) {
+	request, err := http.NewRequest(http.MethodPost, "http://127.0.0.1:6099/api/QQLogin/CheckLoginStatus", strings.NewReader("{}"))
+	if err != nil {
+		return false, false
+	}
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer "+credential)
+	response, err := client.Do(request)
+	if err != nil {
+		return false, false
+	}
+	defer response.Body.Close()
+	var status napcatAPIResponse
+	if response.StatusCode != http.StatusOK || json.NewDecoder(response.Body).Decode(&status) != nil || status.Code != 0 {
+		return false, false
+	}
+	return status.Data.IsLogin, true
+}
+
+// napcatQQLoginStatus asks NapCat's authoritative in-memory QQLogin router.
+// Its WebUI credential is cached privately and reused until rejected: status
+// polling must never repeatedly invoke /auth/login, because that competes with
+// an open WebUI session and made the UI flap back to its QR-login state.
+func napcatQQLoginStatus(state State) bool {
+	client := &http.Client{Timeout: 700 * time.Millisecond}
+	if credential := readNapcatCredentialCache(); credential != "" {
+		if loggedIn, accepted := napcatLoginStatusWithCredential(client, credential); accepted {
+			return loggedIn
+		}
+	}
+	configPath := filepath.Join(state.InstallDir, "config", "webui.json")
+	data, err := os.ReadFile(configPath)
 	if err != nil {
 		return false
 	}
-	return napcatQQLoggedInFromLog(path)
-}
-
-func napcatQQLoggedInFromLog(path string) bool {
-	data, err := os.ReadFile(path)
-	if err != nil || len(data) == 0 {
+	var config napcatWebUIConfig
+	if json.Unmarshal(data, &config) != nil || strings.TrimSpace(config.Token) == "" {
 		return false
 	}
-	// The runner rotates logs at a small bounded size. Keep this guard as the
-	// status call is on the UI polling path even if an old unrotated file exists.
-	if len(data) > 512<<10 {
-		data = data[len(data)-(512<<10):]
+	hash := sha256.Sum256([]byte(config.Token + ".napcat"))
+	authBody, _ := json.Marshal(map[string]string{"hash": fmt.Sprintf("%x", hash[:])})
+	authRequest, err := http.NewRequest(http.MethodPost, "http://127.0.0.1:6099/api/auth/login", strings.NewReader(string(authBody)))
+	if err != nil {
+		return false
 	}
-	text := string(data)
-	lastSuccess := -1
-	// Do not match the generic “登录成功”: NapCat also uses that wording for
-	// WebUI password authentication. These two messages are emitted only after
-	// the QQ login worker has completed and notified its supervising process.
-	for _, marker := range []string{"已通知主进程登录成功", "Worker进程已登录成功"} {
-		if index := strings.LastIndex(text, marker); index > lastSuccess {
-			lastSuccess = index
-		}
+	authRequest.Header.Set("Content-Type", "application/json")
+	authResponse, err := client.Do(authRequest)
+	if err != nil {
+		return false
 	}
-	lastQRCode := -1
-	for _, marker := range []string{"请扫描下面的二维码", "二维码已保存到", "二维码登录方式"} {
-		if index := strings.LastIndex(text, marker); index > lastQRCode {
-			lastQRCode = index
-		}
+	defer authResponse.Body.Close()
+	var auth napcatAPIResponse
+	if authResponse.StatusCode != http.StatusOK || json.NewDecoder(authResponse.Body).Decode(&auth) != nil {
+		return false
 	}
-	return lastSuccess >= 0 && lastSuccess > lastQRCode
+	credential := auth.Data.Credential
+	if credential == "" {
+		credential = auth.Credential
+	}
+	if credential == "" {
+		return false
+	}
+	saveNapcatCredentialCache(credential)
+	loggedIn, _ := napcatLoginStatusWithCredential(client, credential)
+	return loggedIn
 }
 
 func napcatJourney(status statusPayload) runtimeJourney {

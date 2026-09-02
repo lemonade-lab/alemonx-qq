@@ -346,7 +346,19 @@ export default function App() {
 	const [robotRoot, setRobotRoot] = useState(initialSession.robotRoot)
 	const webServiceID = engine === 'napcat' ? 'napcat-webui' : engine === 'luckylillia' ? 'luckylillia-webui' : 'snowluma-webui'
 	const webService = services.find(service => service.id === webServiceID)
-	const webUrl = webService?.reachable && webService.embed ? webService.proxyUrl : ''
+	// NapCat's WebUI treats its token as a separate WebUI login credential. The
+	// runner supplies its official one-click entry URL; move its token to a URL
+	// fragment before replacing the loopback origin, so it is never sent to the
+	// ALX request logger. The injected proxy bootstrap exchanges it locally.
+	const napcatWebUIFragment = engine === 'napcat' && liveStatus?.webUiUrl
+		? (() => {
+			try {
+				const token = new URL(liveStatus.webUiUrl).searchParams.get('token')
+				return token ? `#alx-napcat-token=${encodeURIComponent(token)}` : ''
+			} catch { return '' }
+		})()
+		: ''
+	const webUrl = webService?.reachable && webService.embed ? webService.proxyUrl + napcatWebUIFragment : ''
 	const desktopService = services.find(service => service.id === 'qq-desktop')
 	const desktopUrl = desktopService?.reachable && desktopService.embed ? desktopService.proxyUrl : ''
 	const webviewID = useRef<string | null>(null)
@@ -611,27 +623,27 @@ export default function App() {
 			label: statusLoading[engine] ? '读取中' : '刷新状态',
 			action: () => { if (!statusLoading[engine]) void refreshStatus() }
 		}
-		if (engine === 'napcat' && liveStatus.platform === 'darwin-external' && !liveStatus.installed) return liveStatus.installerReady ? {
-			title: '安装 NapCat',
-			description: '安装器已下载，点击打开。',
-			label: '打开安装器',
-			action: () => confirm('打开 NapCat 安装器', '将打开已下载的官方安装器。', () => run('napcat-macos-installer-open', {}, true)),
+		if (engine === 'napcat' && liveStatus.platform === 'darwin-external') return liveStatus.installerReady ? {
+			title: 'NapCat 安装器已下载',
+			description: '打开文件所在目录后，请自行解压并手动启动官方安装器。工作台不会启动或管理 NapCat。',
+			label: '打开文件所在目录',
+			action: () => confirm('打开 NapCat 文件所在目录', '将在 Finder 中显示已下载的官方安装器。', () => run('napcat-macos-installer-open', {}, true)),
 		} : {
-			title: '安装 NapCat',
-			description: '点击后自动下载官方安装器。',
-			label: '安装 NapCat',
-			action: () => confirm('安装 NapCat', '工作台将下载官方安装器。', () => run('napcat-macos-installer-download', {}, true)),
+			title: '下载 NapCat',
+			description: '仅下载官方 macOS 安装器；下载后由你手动启动。',
+			label: '下载 NapCat',
+			action: () => confirm('下载 NapCat', '工作台将下载官方安装器，不会执行它。', () => run('napcat-macos-installer-download', {}, true)),
 		}
-		if (engine === 'napcat' && liveStatus.platform === 'windows-external') return liveStatus.launcherPath ? {
-			title: 'NapCat 启动器',
-			description: liveStatus.launcherPath,
-			label: '打开 NapCat 启动器',
-			action: () => confirm('打开 NapCat 启动器', '将打开官方 NapCat 启动器。', () => run('napcat-windows-launcher-open', {}, true)),
+		if (engine === 'napcat' && liveStatus.platform === 'windows-external') return liveStatus.installerReady ? {
+			title: 'NapCat 安装器已下载',
+			description: '打开文件所在目录后，请自行解压并手动启动官方安装器。工作台不会启动或管理 NapCat。',
+			label: '打开文件所在目录',
+			action: () => confirm('打开 NapCat 文件所在目录', '将在资源管理器中显示已下载的官方安装器。', () => run('napcat-windows-launcher-open', {}, true)),
 		} : {
-			title: '安装 NapCat',
-			description: '点击后自动下载官方图形安装器。',
-			label: '安装 NapCat',
-			action: () => confirm('安装 NapCat', '工作台将下载官方安装器。', () => run('napcat-windows-installer-download', {}, true)),
+			title: '下载 NapCat',
+			description: '仅下载官方 Windows 安装器；下载后由你手动启动。',
+			label: '下载 NapCat',
+			action: () => confirm('下载 NapCat', '工作台将下载官方图形安装器，不会执行它。', () => run('napcat-windows-installer-download', {}, true)),
 		}
 		if (liveStatus.journey?.phase === 'repair') return {
 			title: liveStatus.journey.title,
@@ -855,7 +867,7 @@ export default function App() {
 
 
 
-		  {liveStatus && !liveStatus.loginPending && (
+		  {liveStatus && !nativeLauncherNapcat && !liveStatus.loginPending && (
 			<div className="order-2">
 			  <HealthSummary
 				status={liveStatus}

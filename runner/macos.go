@@ -127,7 +127,7 @@ func downloadMacNapcatInstaller() (string, error) {
 }
 
 func macInstallerDownloadResult(destination, tag string) string {
-	return fmt.Sprintf("✓ 安装器已准备好（%s）。\n文件位置：%s\n下一步：点击「打开安装器」，按 App 内提示完成安装。", tag, destination)
+	return fmt.Sprintf("✓ 安装器已准备好（%s）。\n文件位置：%s\n下一步：打开文件所在目录，手动解压并启动 NapCat 安装器。", tag, destination)
 }
 
 func macInstallerArchivePath() (string, error) {
@@ -173,40 +173,24 @@ func openMacNapcatLauncher() (string, error) {
 	if launcher == "" {
 		return "", fmt.Errorf("未找到 NapCat 启动器；请先点击「安装 NapCat」下载官方安装器")
 	}
-	if err := exec.Command("open", launcher).Run(); err != nil {
-		return "", fmt.Errorf("无法打开 NapCat 启动器：%w", err)
+	if err := exec.Command("open", "-R", launcher).Run(); err != nil {
+		return "", fmt.Errorf("无法打开 NapCat 文件所在目录：%w", err)
 	}
-	return "✓ NapCat 启动器已打开。请在启动器中安装、启动 NapCat 或切换原版 QQ。", nil
+	return "✓ 已打开 NapCat 文件所在目录。请手动启动 NapCat 安装器。", nil
 }
 
-// openMacNapcatInstaller expands the already verified archive to a
-// workbench-owned directory and launches its sole app bundle. It deliberately
-// uses Go's ZIP reader rather than Archive Utility or a shell command, so the
-// location and extracted paths remain bounded and predictable.
+// openMacNapcatInstaller only reveals the verified archive in Finder. macOS
+// NapCat belongs to the user after download; the workbench must not launch the
+// installer, QQ, or a later NapCat process on their behalf.
 func openMacNapcatInstaller() (string, error) {
 	archive, err := macInstallerArchivePath()
 	if err != nil || !macInstallerReady() {
 		return "", fmt.Errorf("安装器尚未下载完成；请先点击「安装 NapCat」")
 	}
-	root := filepath.Join(filepath.Dir(archive), "NapCatInstaller")
-	temporary, err := os.MkdirTemp(filepath.Dir(archive), ".NapCatInstaller-")
-	if err != nil {
-		return "", err
+	if err := exec.Command("open", "-R", archive).Run(); err != nil {
+		return "", fmt.Errorf("无法打开 NapCat 文件所在目录：%w", err)
 	}
-	defer os.RemoveAll(temporary)
-	app, err := extractMacInstallerApp(archive, temporary)
-	if err != nil {
-		return "", err
-	}
-	_ = os.RemoveAll(root)
-	if err := os.Rename(temporary, root); err != nil {
-		return "", err
-	}
-	app = filepath.Join(root, strings.TrimPrefix(app, temporary+string(filepath.Separator)))
-	if err := exec.Command("open", app).Run(); err != nil {
-		return "", fmt.Errorf("无法打开 NapCat 安装器：%w", err)
-	}
-	return "✓ NapCat 安装器已打开。请按 App 内提示完成安装；完成后回到这里继续。", nil
+	return "✓ 已打开 NapCat 文件所在目录。请手动解压并启动 NapCat 安装器。", nil
 }
 
 func extractMacInstallerApp(archive, destination string) (string, error) {
