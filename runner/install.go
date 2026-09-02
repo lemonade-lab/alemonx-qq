@@ -567,6 +567,9 @@ func installLinuxNapCat() (napcatInstallation, error) {
 	if err != nil {
 		return napcatInstallation{}, err
 	}
+	// Keep the reviewed contract as a recovery source. Tencent's live metadata
+	// can be readable while its advertised CDN URL rejects a Docker request.
+	fallbackQQAsset := qqAsset
 	// Tencent rotates QQ release paths frequently. Prefer the official current
 	// metadata, while retaining the pinned contract as a short outage fallback.
 	if current, currentErr := currentLinuxQQReleaseAsset(qqAsset.Kind); currentErr == nil {
@@ -585,7 +588,13 @@ func installLinuxNapCat() (napcatInstallation, error) {
 	if err != nil {
 		return napcatInstallation{}, err
 	}
+	installedQQAsset := qqAsset
 	qqArchive, _, err := cacheOfficialNapcatAsset(stateRoot, release.TagName, releaseAsset{Name: qqAsset.Name, URL: qqAsset.URL}, "Linux QQ 运行时", 35, 55)
+	if err != nil && qqAsset.URL != fallbackQQAsset.URL {
+		appendActionDiagnostic("install", "腾讯当前 Linux QQ 下载地址不可用，改用已验证的官方 QQNT 回退包："+err.Error())
+		installedQQAsset = fallbackQQAsset
+		qqArchive, _, err = cacheOfficialNapcatAsset(stateRoot, release.TagName, releaseAsset{Name: fallbackQQAsset.Name, URL: fallbackQQAsset.URL}, "Linux QQ 官方回退运行时", 35, 55)
+	}
 	if err != nil {
 		return napcatInstallation{}, err
 	}
@@ -627,7 +636,7 @@ func installLinuxNapCat() (napcatInstallation, error) {
 	}
 	reportNapcatProgress("extract", 58, "正在展开 Linux QQ 运行环境")
 	stopPulse := startNapcatInstallPulse(58, "正在展开 Linux QQ 运行环境")
-	switch qqAsset.Kind {
+	switch installedQQAsset.Kind {
 	case "deb":
 		err = extractDebQQ(qqArchive, stage)
 	case "rpm":
@@ -682,7 +691,7 @@ func installLinuxNapCat() (napcatInstallation, error) {
 		Version:               strings.TrimPrefix(release.TagName, "v"),
 		InstallDir:            root,
 		ReleaseTag:            release.TagName,
-		Asset:                 shellAsset.Name + "+" + qqAsset.Name,
+		Asset:                 shellAsset.Name + "+" + installedQQAsset.Name,
 		EnvironmentMode:       environment.Mode,
 		FallbackReason:        environment.Reason,
 		EnvironmentDiagnostic: environment.Diagnostic,

@@ -134,11 +134,27 @@ func TestNapCatStatusKeepsOneBotAccountsSeparate(t *testing.T) {
 	if len(payload.Accounts) != 2 || payload.SelectedAccount != "10002" || payload.OneBotURL != "ws://127.0.0.1:3102" {
 		t.Fatalf("accounts=%+v selected=%q url=%q", payload.Accounts, payload.SelectedAccount, payload.OneBotURL)
 	}
-	if !payload.QQLoggedIn || payload.LoginPending {
-		t.Fatalf("logged-in account must not be shown as awaiting QR scan: %#v", payload)
+	if payload.QQLoggedIn || payload.OneBotReady || payload.LoginPending {
+		t.Fatalf("config file alone must not be treated as a live QQ login: %#v", payload)
 	}
 	journey := napcatJourney(statusPayload{Supported: true, Installed: true, InstallHealthy: true, Managed: true, Running: true, WebUIReady: true, QQLoggedIn: true})
 	if journey.Phase != "connecting" {
 		t.Fatalf("journey=%#v, want OneBot connecting", journey)
+	}
+}
+
+func TestNapcatQQLoginEvidenceDoesNotDependOnOneBot(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "napcat.log")
+	if err := os.WriteFile(path, []byte("请扫描下面的二维码，然后在手Q上授权登录：\n[NapCat] 已通知主进程登录成功\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if !napcatQQLoggedInFromLog(path) {
+		t.Fatal("a NapCat login-success event after QR must report QQ logged in")
+	}
+	if err := os.WriteFile(path, []byte("[NapCat] 已通知主进程登录成功\n请扫描下面的二维码，然后在手Q上授权登录：\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if napcatQQLoggedInFromLog(path) {
+		t.Fatal("a newer QR event must invalidate an older QQ login event")
 	}
 }

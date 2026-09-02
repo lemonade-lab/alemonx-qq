@@ -109,6 +109,12 @@ func collectStatus(state State) statusPayload {
 	payload.WebUIURL = webUIBridge()
 	payload.PortReachable = payload.WebUIURL != ""
 	payload.WebUIReady = payload.PortReachable
+	payload.QRCodeAvailable, payload.QRCodeUpdatedAt = napcatQRCodeStatus(state)
+	// QQ 登录和 OneBot 是两段完全独立的链路。OneBot 的配置文件会在
+	// 登录前创建，端口也可能因服务重启而暂时不可用，因此两者都不能
+	// 作为 QQ 登录状态的依据。NapCat 会把扫码请求与登录完成事件写入
+	// 自己的进程日志；以最新事件为准，避免旧的成功记录掩盖新二维码。
+	payload.QQLoggedIn = napcatQQLoggedIn(state)
 	if accounts, err := napcatAccounts(state); err == nil {
 		payload.Accounts = accounts
 		selected := state.SelectedQQ
@@ -118,18 +124,13 @@ func collectStatus(state State) statusPayload {
 		for _, account := range accounts {
 			if account.QQ == selected {
 				payload.SelectedAccount = account.QQ
-				payload.QQLoggedIn = true
 				payload.OneBotURL = account.OneBotURL
 				payload.OneBotReady = account.OneBotReady
 				break
 			}
 		}
 	}
-	// NapCat creates onebot11_<QQ>.json for the logged-in account. A disabled
-	// or not-yet-restarted WebSocket must not make a successfully logged-in QQ
-	// account look as though it needs to scan a QR code again.
 	payload.LoginPending = payload.Running && payload.WebUIReady && !payload.QQLoggedIn
-	payload.QRCodeAvailable, payload.QRCodeUpdatedAt = napcatQRCodeStatus(state)
 	if path, err := logPath(); err == nil {
 		payload.LogPath = path
 	}
@@ -157,6 +158,47 @@ func collectStatus(state State) statusPayload {
 	payload.Error = strings.Join(reasons, "；")
 	payload.Journey = napcatJourney(payload)
 	return payload
+}
+
+// napcatQQLoggedIn reads only NapCat's own login transition log. A current
+// QR request always overrides an earlier success, so a restarted instance
+// correctly returns to “waiting for scan” until it records a fresh success.
+// This intentionally has no dependency on OneBot configuration or ports.
+func napcatQQLoggedIn(state State) bool {
+	path, err := logPath()
+	if err != nil {
+		return false
+	}
+	return napcatQQLoggedInFromLog(path)
+}
+
+func napcatQQLoggedInFromLog(path string) bool {
+	data, err := os.ReadFile(path)
+	if err != nil || len(data) == 0 {
+		return false
+	}
+	// The runner rotates logs at a small bounded size. Keep this guard as the
+	// status call is on the UI polling path even if an old unrotated file exists.
+	if len(data) > 512<<10 {
+		data = data[len(data)-(512<<10):]
+	}
+	text := string(data)
+	lastSuccess := -1
+	// Do not match the generic “登录成功”: NapCat also uses that wording for
+	// WebUI password authentication. These two messages are emitted only after
+	// the QQ login worker has completed and notified its supervising process.
+	for _, marker := range []string{"已通知主进程登录成功", "Worker进程已登录成功"} {
+		if index := strings.LastIndex(text, marker); index > lastSuccess {
+			lastSuccess = index
+		}
+	}
+	lastQRCode := -1
+	for _, marker := range []string{"请扫描下面的二维码", "二维码已保存到", "二维码登录方式"} {
+		if index := strings.LastIndex(text, marker); index > lastQRCode {
+			lastQRCode = index
+		}
+	}
+	return lastSuccess >= 0 && lastSuccess > lastQRCode
 }
 
 func napcatJourney(status statusPayload) runtimeJourney {

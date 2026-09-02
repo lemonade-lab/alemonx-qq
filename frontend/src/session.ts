@@ -1,8 +1,8 @@
 export type QQEngine = 'napcat' | 'luckylillia' | 'snowluma'
-export type QQView = 'manage' | 'config' | 'webui' | 'background'
+export type QQView = 'manage' | 'config'
 
 export type QQSession = {
-  version: 1
+  version: 2
   engine: QQEngine
   view: QQView
   robotRoot: string
@@ -12,7 +12,7 @@ export type QQSession = {
 const storageKey = 'alemonx-qq:ui-session:v1'
 
 export const defaultSession: QQSession = {
-  version: 1,
+  version: 2,
   engine: 'napcat',
   view: 'manage',
   robotRoot: '',
@@ -24,12 +24,20 @@ export const defaultSession: QQSession = {
 // storage.
 export function loadSession(): QQSession {
   try {
-    const value = JSON.parse(window.localStorage.getItem(storageKey) || '') as Partial<QQSession>
-    if (value.version !== 1) return defaultSession
+    const value = JSON.parse(window.localStorage.getItem(storageKey) || '') as {
+      version?: number
+      engine?: QQEngine
+      view?: string
+      robotRoot?: string
+      napcatQQ?: string
+    }
+    // Version 1 contained `webui` and `background` routes. Both were
+    // transitional surfaces, so returning users land on the new overview.
+    if (value.version !== 1 && value.version !== 2) return defaultSession
     return {
-      version: 1,
+      version: 2,
       engine: value.engine === 'luckylillia' || value.engine === 'snowluma' ? value.engine : 'napcat',
-      view: value.view === 'config' || value.view === 'webui' || value.view === 'background' ? value.view : 'manage',
+      view: value.view === 'config' ? 'config' : 'manage',
       robotRoot: typeof value.robotRoot === 'string' ? value.robotRoot : '',
       napcatQQ: typeof value.napcatQQ === 'string' ? value.napcatQQ : ''
     }

@@ -15,12 +15,12 @@ import (
 // not a reliable contract. The CLI itself starts its WebUI in direct mode;
 // PMHQ is a separate upstream service and must never be implied by an orphan
 // --pmhq flag on this single process.
-func startLuckyProcess(platform *luckyPlatformSpec, root, entry string, log *os.File) (luckyProcess, error) {
+func startLuckyProcess(platform *luckyPlatformSpec, root, entry string, log *os.File, qq string) (luckyProcess, error) {
 	if platform == nil {
 		return luckyProcess{}, errors.New("当前平台没有 LuckyLillia CLI 启动契约")
 	}
 	if platform.Key != "linux-amd64" && platform.Key != "linux-arm64" {
-		return startLuckyProcessDefault(platform, root, entry, log)
+		return startLuckyProcessDefault(platform, root, entry, log, qq)
 	}
 	binary := filepath.Join(root, platform.CLIBinary)
 	info, err := os.Stat(binary)
@@ -33,7 +33,11 @@ func startLuckyProcess(platform *luckyPlatformSpec, root, entry string, log *os.
 	if err := os.Chmod(binary, info.Mode()|0o700); err != nil {
 		return luckyProcess{}, fmt.Errorf("准备 LuckyLillia 启动程序失败：%w", err)
 	}
-	command := exec.Command(binary)
+	args := []string{}
+	if qq != "" {
+		args = append(args, "--qq="+qq)
+	}
+	command := exec.Command(binary, args...)
 	command.Dir = root
 	command.Stdout, command.Stderr, command.Stdin = log, log, nil
 	detachProcess(command)

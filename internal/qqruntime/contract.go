@@ -3,7 +3,11 @@ package qqruntime
 
 import "fmt"
 
-const baseURL = "https://qqdl.gtimg.cn/qqfile/QQNT/9.9.32/release/c390e792/"
+// Tencent's newer QQNTV2 links currently reject container downloads with 403.
+// Keep a tested official QQNT release as the recovery contract; the installer
+// tries Tencent's current metadata first and reaches this contract only if
+// that download itself fails.
+const baseURL = "https://qqdl.gtimg.cn/qqfile/QQNT/9.9.33/release/c97651b2/"
 
 // Asset is one official Linux QQ runtime archive.
 type Asset struct {
@@ -14,16 +18,16 @@ type Asset struct {
 
 var assets = map[string]Asset{
 	"apt/amd64": {
-		Name: "QQ_3.2.31_260710_amd64_01.deb", Kind: "deb",
+		Name: "QQ_3.2.32_260730_amd64_01.deb", Kind: "deb",
 	},
 	"apt/arm64": {
-		Name: "QQ_3.2.31_260710_arm64_01.deb", Kind: "deb",
+		Name: "QQ_3.2.32_260730_arm64_01.deb", Kind: "deb",
 	},
 	"dnf/amd64": {
-		Name: "QQ_3.2.31_260710_x86_64_01.rpm", Kind: "rpm",
+		Name: "QQ_3.2.32_260730_x86_64_01.rpm", Kind: "rpm",
 	},
 	"dnf/arm64": {
-		Name: "QQ_3.2.31_260710_aarch64_01.rpm", Kind: "rpm",
+		Name: "QQ_3.2.32_260730_aarch64_01.rpm", Kind: "rpm",
 	},
 }
 

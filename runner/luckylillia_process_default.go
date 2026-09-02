@@ -2,7 +2,7 @@ package main
 
 import "os"
 
-func startLuckyProcessDefault(platform *luckyPlatformSpec, root, entry string, log *os.File) (luckyProcess, error) {
+func startLuckyProcessDefault(platform *luckyPlatformSpec, root, entry string, log *os.File, qq string) (luckyProcess, error) {
 	command, err := luckyStartCommand(platform, root, entry)
 	if err != nil {
 		return luckyProcess{}, err

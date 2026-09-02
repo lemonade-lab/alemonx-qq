@@ -54,6 +54,7 @@ type kernelStatus struct {
 	PortReachable      bool           `json:"portReachable"`
 	WebUIReady         bool           `json:"webUiReady"`
 	OneBotReady        bool           `json:"oneBotReady"`
+	QQLoggedIn         bool           `json:"qqLoggedIn"`
 	LoginPending       bool           `json:"loginPending"`
 	QRCodeAvailable    bool           `json:"qrCodeAvailable"`
 	QRCodeUpdatedAt    string         `json:"qrCodeUpdatedAt,omitempty"`
@@ -365,6 +366,55 @@ func luckyPortURL(port int) string {
 	return "http://127.0.0.1:" + strconv.Itoa(port)
 }
 
+// luckyQQLoggedIn derives the login state from LLBot's persisted session.
+// LLBot deliberately leaves the last QR image in data/temp after a successful
+// scan, so its presence cannot be used as evidence that a new scan is needed.
+// A newer QR invalidates an older session indication, while a session written
+// after the current QR conclusively means the scan completed.
+func luckyQQLoggedIn(state luckyState) bool {
+	_, newestSession := luckySavedQQ(state)
+	if newestSession.IsZero() {
+		return false
+	}
+	_, qrInfo, qrErr := luckyQRCodeFile(state)
+	return qrErr != nil || qrInfo == nil || !newestSession.Before(qrInfo.ModTime())
+}
+
+// luckySavedQQ returns the QQ number of the most recently saved LLBot
+// session. The official CLI only resumes headless logins when --qq is passed;
+// omitting it always creates a fresh QR login, even when this file exists.
+func luckySavedQQ(state luckyState) (string, time.Time) {
+	root := state.InstallDir
+	if root == "" {
+		var err error
+		root, err = luckyInstallDir()
+		if err != nil {
+			return "", time.Time{}
+		}
+	}
+	dataDir := filepath.Join(root, "bin", "llbot", "data")
+	entries, err := os.ReadDir(dataDir)
+	if err != nil {
+		return "", time.Time{}
+	}
+	var newestSession time.Time
+	qq := ""
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasPrefix(entry.Name(), "qq-session-") || !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+		candidate := strings.TrimSuffix(strings.TrimPrefix(entry.Name(), "qq-session-"), ".json")
+		if candidate == "" || strings.Trim(candidate, "0123456789") != "" {
+			continue
+		}
+		info, statErr := entry.Info()
+		if statErr == nil && info.Mode().IsRegular() && info.Size() > 0 && info.ModTime().After(newestSession) {
+			newestSession, qq = info.ModTime(), candidate
+		}
+	}
+	return qq, newestSession
+}
+
 func luckyStatus() (string, error) {
 	state, err := loadLuckyState()
 	if err != nil {
@@ -382,6 +432,9 @@ func luckyStatus() (string, error) {
 	webPort, oneBotPort := luckyConfiguredPorts()
 	webUI := luckyPortURL(webPort)
 	onebot := luckyPortURL(oneBotPort)
+	// QQ session restoration and OneBot listening are separate milestones.
+	// Do not let a OneBot socket make the UI claim that QQ has logged in.
+	qqLoggedIn := luckyQQLoggedIn(state)
 	stateName := "not-installed"
 	if installed {
 		stateName = "stopped"
@@ -392,14 +445,14 @@ func luckyStatus() (string, error) {
 	if running {
 		stateName = "running"
 	}
-	if running && webUI != "" && onebot == "" {
+	if running && webUI != "" && !qqLoggedIn {
 		stateName = "login-pending"
 	}
 	platform := luckyPlatform()
 	if !luckySupported() {
 		stateName = "unsupported"
 	}
-	status := kernelStatus{Engine: "luckylillia", Installed: installed, InstallHealthy: healthy, Running: running, PortReachable: webUI != "", WebUIReady: webUI != "", OneBotReady: onebot != "", LoginPending: running && webUI != "" && onebot == "", Version: state.Version, PID: state.PID, WebUIURL: webUI, OneBotURL: "ws://127.0.0.1:" + strconv.Itoa(oneBotPort), Supported: luckySupported(), Managed: state.Managed, MigrationAvailable: luckyLegacyMigrationAllowed() && installed && !luckyManagedState(state), AuthTokenReady: authTokenReady, InstallMode: state.InstallMode, State: stateName, UpdatedAt: time.Now().UTC().Format(time.RFC3339)}
+	status := kernelStatus{Engine: "luckylillia", Installed: installed, InstallHealthy: healthy, Running: running, PortReachable: webUI != "", WebUIReady: webUI != "", OneBotReady: onebot != "", QQLoggedIn: qqLoggedIn, LoginPending: running && webUI != "" && !qqLoggedIn, Version: state.Version, PID: state.PID, WebUIURL: webUI, OneBotURL: "ws://127.0.0.1:" + strconv.Itoa(oneBotPort), Supported: luckySupported(), Managed: state.Managed, MigrationAvailable: luckyLegacyMigrationAllowed() && installed && !luckyManagedState(state), AuthTokenReady: authTokenReady, InstallMode: state.InstallMode, State: stateName, UpdatedAt: time.Now().UTC().Format(time.RFC3339)}
 	status.QRCodeAvailable, status.QRCodeUpdatedAt = luckyQRCodeStatus(state)
 	if platform != nil {
 		status.Platform = platform.Key
@@ -937,7 +990,17 @@ func luckyStart(confirmed bool) (string, error) {
 		return "", errors.New("缺少 LuckyLillia Auth Token；请先在“网络配置”中保存从 https://auth.luckylillia.com 获取的 Token")
 	}
 	if processAlive(state.PID) {
-		return "? LuckyLillia 已在运行中。", nil
+		webPort, _ := luckyConfiguredPorts()
+		if luckyPortURL(webPort) != "" {
+			return "? LuckyLillia 已在运行中。", nil
+		}
+		// A container restart can reuse the numeric PID recorded for the
+		// previous LLBot process. Never signal or kill that unknown process;
+		// discard only our stale record and launch a fresh managed instance.
+		state.PID, state.ProcessGroupID = 0, 0
+		if err := saveLuckyState(state); err != nil {
+			return "", err
+		}
 	}
 	entry := luckyEntryPoint(state.InstallDir)
 	if entry == "" {
@@ -955,7 +1018,8 @@ func luckyStart(confirmed bool) (string, error) {
 		return "", err
 	}
 	defer handle.Close()
-	process, err := startLuckyProcess(luckyPlatform(), state.InstallDir, entry, handle)
+	qq, _ := luckySavedQQ(state)
+	process, err := startLuckyProcess(luckyPlatform(), state.InstallDir, entry, handle, qq)
 	if err != nil {
 		return "", err
 	}
@@ -1243,6 +1307,8 @@ func luckySetOneBotConfig(params map[string]string, confirmed bool) (string, err
 	if err := requireManagedLucky(state, "写入 OneBot 配置"); err != nil {
 		return "", err
 	}
+	webPort, _ := luckyConfiguredPorts()
+	wasRunning := processAlive(state.PID) && luckyPortURL(webPort) != ""
 	port, err := portParam(params)
 	if err != nil {
 		return "", err
@@ -1308,5 +1374,12 @@ func luckySetOneBotConfig(params map[string]string, confirmed bool) (string, err
 	if err := atomicPrivateJSON(file, append(data, '\n')); err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("✓ 已更新 LuckyLillia OneBot WebSocket（端口 %d）。\n✓ 重启 LuckyLillia 后生效。", port), nil
+	if !wasRunning {
+		return fmt.Sprintf("✓ 已更新 LuckyLillia OneBot WebSocket（端口 %d）。\n✓ LuckyLillia 未运行；下次启动会自动加载该配置。", port), nil
+	}
+	restarted, restartErr := luckyRestart(true)
+	if restartErr != nil {
+		return "", fmt.Errorf("LuckyLillia OneBot 配置已保存，但自动重启失败：%w", restartErr)
+	}
+	return fmt.Sprintf("✓ 已更新 LuckyLillia OneBot WebSocket（端口 %d）。\n%s", port, restarted), nil
 }

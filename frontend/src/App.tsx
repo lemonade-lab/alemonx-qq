@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { chooseSystemPath, closeHostWebview, fetchHostRobotContext, fetchLocalServices, fetchOperationLog, fetchPluginLog, fetchPrivilegedAudit, fetchRobotProjects, fetchStatus, hostAlert, hostConfirm, luckyQRCodeURL, napcatQRCodeURL, openHostWebview, privilegePreflight, runActionAndPoll, syncRobotOneBot, type ActionResult, type LocalService, type PrivilegedAuditItem, type RobotProject, type StatusPayload, type Task, type TaskStep } from './api'
 import { splitStatusLines, type StatusLine } from './status'
 import { loadSession, saveSession, type QQEngine, type QQView } from './session'
+import { HealthSummary, JourneyCard } from './components/OverviewCards'
+import { PluginNavigation } from './components/PluginNavigation'
 
 type View = QQView
 type Engine = QQEngine
@@ -90,7 +92,7 @@ function ResultPanel({
       )}
       {current && (
         <div className="grid gap-1.5 rounded-md border border-[var(--theme-border-default)] bg-[var(--theme-surface-input)] px-2.5 py-2">
-          <div className="flex items-center justify-between gap-3 text-xs">
+          <div className="flex items-center justify-between gap-3 text-xs overflow-auto">
             <span className="min-w-0 truncate text-[var(--theme-text-secondary)]">{current.message}</span>
             <span className="shrink-0 font-mono text-[var(--theme-text-muted)]">{current.progress}%</span>
           </div>
@@ -313,10 +315,6 @@ function engineLabel(engine: Engine) {
 	return engine === 'napcat' ? 'NapCat' : engine === 'luckylillia' ? 'LuckyLillia' : 'SnowLuma'
 }
 
-function engineAction(engine: Engine, action: string) {
-	return engine === 'napcat' ? action : `${engine}-${action}`
-}
-
 export default function App() {
 	const [initialSession] = useState(loadSession)
   const [view, setView] = useState<View>(initialSession.view)
@@ -331,6 +329,9 @@ export default function App() {
 	const [sudoRequest, setSudoRequest] = useState<{ action: string; title: string; description: string; intentId: string } | null>(null)
 	const [logText, setLogText] = useState<string | null>(null)
 	const [logAutoRefresh, setLogAutoRefresh] = useState(true)
+	const [maintenanceLogOpen, setMaintenanceLogOpen] = useState(false)
+	const [maintenanceLogText, setMaintenanceLogText] = useState('')
+	const [maintenanceLogLoading, setMaintenanceLogLoading] = useState(false)
 	const [qrLoadFailed, setQrLoadFailed] = useState(false)
 	const [operationDetail, setOperationDetail] = useState('')
 	const [resultOrigin, setResultOrigin] = useState<ResultOrigin>(null)
@@ -383,7 +384,7 @@ export default function App() {
 	const napcatManagedActions = engine === 'napcat' && liveStatus?.managed === true
 	const [napcatQQ, setNapcatQQ] = useState(initialSession.napcatQQ)
 	useEffect(() => {
-		saveSession({ version: 1, engine, view, robotRoot, napcatQQ })
+		saveSession({ version: 2, engine, view, robotRoot, napcatQQ })
 	}, [engine, view, robotRoot, napcatQQ])
 	const selectedNapcatAccount = liveStatus?.accounts?.find(account => account.qq === (napcatQQ || liveStatus.selectedAccount))
 	const selectedOneBotReady = engine === 'napcat' ? Boolean(selectedNapcatAccount?.oneBotReady) : Boolean(liveStatus?.oneBotReady)
@@ -517,6 +518,26 @@ export default function App() {
 		}
 	}
 
+	const refreshMaintenanceLog = async () => {
+		setMaintenanceLogLoading(true)
+		try {
+			setMaintenanceLogText(await fetchPluginLog(engine))
+		} catch (reason) {
+			setMaintenanceLogText(reason instanceof Error ? reason.message : String(reason))
+		} finally {
+			setMaintenanceLogLoading(false)
+		}
+	}
+
+	const toggleMaintenanceLog = () => {
+		if (maintenanceLogOpen) {
+			setMaintenanceLogOpen(false)
+			return
+		}
+		setMaintenanceLogOpen(true)
+		void refreshMaintenanceLog()
+	}
+
 	// Keep the log modal fresh while it stays open and auto-refresh is on.
 	useEffect(() => {
 		if (logText === null || !logAutoRefresh) return
@@ -577,7 +598,7 @@ export default function App() {
 
 	useEffect(() => { void refreshAudit() }, [refreshAudit])
 
-  const confirm = (title: string, description: string, action: () => Promise<void>, _tone: 'primary' | 'danger' = 'primary') => {
+	const confirm = (title: string, description: string, action: () => Promise<void>, _tone: 'primary' | 'danger' = 'primary') => {
     void hostConfirm(title, description, '确认执行', '取消').then(confirmed => {
       if (confirmed) void action()
     })
@@ -684,56 +705,35 @@ export default function App() {
 		}
 	}
 
+	const cancelLoginAndStop = () => {
+		const action = engine === 'napcat' ? 'stop' : luckyAction('stop')
+		confirm(
+			`取消 ${engineLabel(engine)} 登录`,
+			'将停止本次启动的核心服务，当前二维码立即失效；之后可随时重新启动并扫码。',
+			() => run(action, {}, true),
+			'danger'
+		)
+	}
+
   return (
     <div className="qq-plugin-shell">
-      <aside className="qq-plugin-sidebar" aria-label="QQ 插件导航">
-        <nav className="qq-plugin-nav" aria-label="QQ 内核">
-          {(['napcat', 'luckylillia', 'snowluma'] as Engine[]).map(item => (
-            <button
-              key={item}
-              type="button"
-              className="qq-plugin-nav-button"
-              aria-current={engine === item ? 'page' : undefined}
-              onClick={() => {
-                setEngine(item)
-                setView('manage')
-                setResult(undefined)
-                setOperationSteps([])
-                setState('idle')
-                setResultOrigin(null)
-                setOperationDetail('')
-                void refreshStatus(item)
-              }}
-            >
-              <span className="qq-plugin-nav-icon" data-icon={item} aria-hidden />
-              {engineLabel(item)}
-            </button>
-          ))}
-        </nav>
-
-        {!coreNeedsInstall && !nativeLauncherNapcat && (
-          <nav className="qq-plugin-nav qq-plugin-view-nav" aria-label="QQ 功能">
-            {(['manage', 'config', 'background', 'webui'] as View[]).map(tab => (
-              <button
-                key={tab}
-                type="button"
-                className="qq-plugin-nav-button"
-                aria-current={view === tab ? 'page' : undefined}
-                onClick={() => setView(tab)}
-              >
-                <span className="qq-plugin-nav-icon" data-icon={tab} aria-hidden />
-                {tab === 'manage'
-                  ? '管理'
-                  : tab === 'config'
-                    ? '网络配置'
-                    : tab === 'background'
-                      ? '后台运行'
-                      : '管理面板'}
-              </button>
-            ))}
-          </nav>
-        )}
-      </aside>
+      <PluginNavigation
+        engine={engine}
+        view={view}
+        onViewChange={setView}
+        onEngineChange={(item) => {
+          setEngine(item)
+          setView('manage')
+		  setMaintenanceLogOpen(false)
+		  setMaintenanceLogText('')
+          setResult(undefined)
+          setOperationSteps([])
+          setState('idle')
+          setResultOrigin(null)
+          setOperationDetail('')
+          void refreshStatus(item)
+        }}
+      />
 
       <main className="qq-plugin-content">
         <div className="qq-plugin-content-inner">
@@ -741,16 +741,13 @@ export default function App() {
       {view === 'manage' && (
         <div className="grid gap-3">
 
-		  {guide && (
-			<section className="grid gap-3 rounded-panel border border-[var(--theme-border-strong)] bg-[var(--theme-surface-panel)] p-4">
-				<div className="flex flex-wrap items-start justify-between gap-3">
-					<div className="grid gap-1">
-						<strong className="text-sm font-semibold text-[var(--theme-text-strong)]">{guide.title}</strong>
-						<p className="m-0 text-xs leading-5 text-[var(--theme-text-muted)]">{guide.description}</p>
-					</div>
-					<ActionButton label={state === 'running' ? actionTitle(activeAction) : guide.label} running={state === 'running'} disabled={guide.label === '等待二维码' || guide.label === '读取中'} onClick={guide.action} />
-				</div>
-			</section>
+		  {guide && !liveStatus?.loginPending && (
+			<JourneyCard
+				engine={engine}
+				title={guide.title}
+				description={guide.description}
+				action={<ActionButton label={state === 'running' ? actionTitle(activeAction) : guide.label} running={state === 'running'} disabled={guide.label === '等待二维码' || guide.label === '读取中'} onClick={guide.action} />}
+			/>
 		  )}
 
 
@@ -774,54 +771,56 @@ export default function App() {
 		  )}
 
 
-		  {!coreNeedsInstall && !nativeLauncherNapcat && <details className="rounded-panel border border-[var(--theme-border-default)] bg-[var(--theme-surface-panel)] p-3">
+		  {liveStatus && !coreNeedsInstall && !nativeLauncherNapcat && !liveStatus.loginPending && <details className="order-3 rounded-panel border border-[var(--theme-border-default)] bg-[var(--theme-surface-panel)] p-3">
 			<summary className="cursor-pointer text-xs font-semibold text-[var(--theme-text-secondary)]">更多操作</summary>
 			<div className="mt-3 flex flex-wrap gap-2">
 			{engine === 'napcat' ? <>
-				<ActionButton label="启动" variant="secondary" running={state === 'running'} disabled={!napcatManagedActions || !liveStatus?.installed} onClick={() => confirm('启动 NapCat', '启动工作台受管的后台进程，用手机 QQ 扫码登录。', () => run('start', {}, true))} />
+				{!guide?.label.includes('启动') && <ActionButton label="启动" variant="secondary" running={state === 'running'} disabled={!napcatManagedActions || !liveStatus?.installed} onClick={() => confirm('启动 NapCat', '启动工作台受管的后台进程，用手机 QQ 扫码登录。', () => run('start', {}, true))} />}
 				<ActionButton label="停止" variant="secondary" running={state === 'running'} disabled={!napcatManagedActions || !liveStatus?.running} onClick={() => confirm('停止 NapCat', '停止工作台受管的 NapCat 进程组。', () => run('stop', {}, true))} />
 				{liveStatus?.installed && !liveStatus?.managed ? <ActionButton label="取消关联" variant="danger" running={state === 'running'} onClick={() => confirm('取消关联 NapCat', '不会删除或修改外部目录。', () => run('napcat-forget', {}, true), 'danger')} /> : <ActionButton label="卸载" variant="danger" running={state === 'running'} disabled={!napcatManagedActions} onClick={() => confirm('卸载 NapCat', '会停止并删除工作台受管目录。', () => run('uninstall', {}, true), 'danger')} />}
-				<ActionButton label="看日志" variant="secondary" running={state === 'running'} onClick={() => void run('log')} />
+				<ActionButton label={maintenanceLogOpen ? '折叠日志' : '展开日志'} variant="secondary" running={state === 'running'} onClick={toggleMaintenanceLog} />
 				{desktopUrl && <ActionButton label="打开 QQ 桌面" variant="secondary" running={state === 'running'} onClick={() => openWebview('QQ 桌面', desktopUrl)} />}
 				<ActionButton label="清理日志" variant="secondary" running={state === 'running'} onClick={() => confirm('清理 NapCat 日志', '将清空核心日志与操作日志，不影响安装与配置。', () => run('napcat-log-clear', {}, true), 'danger')} />
 			</> : engine === 'luckylillia' ? <>
-				<ActionButton label="启动" variant="secondary" running={state === 'running'} disabled={!luckyManaged || !luckyInstalled} onClick={() => confirm('启动 LuckyLillia', '将启动官方 CLI 并等待登录。', () => run(luckyAction('start'), {}, true))} />
+				{!guide?.label.includes('启动') && <ActionButton label="启动" variant="secondary" running={state === 'running'} disabled={!luckyManaged || !luckyInstalled} onClick={() => confirm('启动 LuckyLillia', '将启动官方 CLI 并等待登录。', () => run(luckyAction('start'), {}, true))} />}
 				{liveStatus?.migrationAvailable && <ActionButton label="迁移并接管" variant="primary" running={state === 'running'} onClick={() => confirm('迁移 LuckyLillia', '将复制到工作区管理目录，原目录不会删除。', () => run(luckyAction('migrate'), {}, true))} />}
 				<ActionButton label="停止" variant="secondary" running={state === 'running'} disabled={!luckyManaged || !liveStatus?.running} onClick={() => confirm('停止 LuckyLillia', '停止由工作台管理的 LuckyLillia 进程。', () => run(luckyAction('stop'), {}, true))} />
 				{luckyInstalled && (luckyManaged ? <ActionButton label="卸载" variant="danger" running={state === 'running'} onClick={() => confirm('卸载 LuckyLillia', '会停止并删除工作台安装的 LuckyLillia。', () => run(luckyAction('uninstall'), {}, true), 'danger')} /> : <ActionButton label="取消关联" variant="danger" running={state === 'running'} onClick={() => confirm('取消关联 LuckyLillia', '不会删除外部目录或修改其中的文件。', () => run(luckyAction('forget'), {}, true), 'danger')} />)}
-				<ActionButton label="看日志" variant="secondary" running={state === 'running'} onClick={() => void run(luckyAction('log'))} />
+				<ActionButton label={maintenanceLogOpen ? '折叠日志' : '展开日志'} variant="secondary" running={state === 'running'} onClick={toggleMaintenanceLog} />
 				<ActionButton label="清理日志" variant="secondary" running={state === 'running'} onClick={() => confirm('清理 LuckyLillia 日志', '将清空核心日志与操作日志，不影响安装与配置。', () => run(luckyAction('log-clear'), {}, true), 'danger')} />
 			</> : <>
-				<ActionButton label="启动" variant="secondary" running={state === 'running'} disabled={!liveStatus?.managed || !liveStatus?.installed} onClick={() => confirm('启动 SnowLuma', '启动工作台受管的 SnowLuma 原生进程。', () => run(snowLumaAction('start'), {}, true))} />
+				{!guide?.label.includes('启动') && <ActionButton label="启动" variant="secondary" running={state === 'running'} disabled={!liveStatus?.managed || !liveStatus?.installed} onClick={() => confirm('启动 SnowLuma', '启动工作台受管的 SnowLuma 原生进程。', () => run(snowLumaAction('start'), {}, true))} />}
 				<ActionButton label="停止" variant="secondary" running={state === 'running'} disabled={!liveStatus?.managed || !liveStatus?.running} onClick={() => confirm('停止 SnowLuma', '停止工作台受管的 SnowLuma 原生进程。', () => run(snowLumaAction('stop'), {}, true))} />
 				<ActionButton label="卸载" variant="danger" running={state === 'running'} disabled={!liveStatus?.managed} onClick={() => confirm('卸载 SnowLuma', '将删除工作台安装的 SnowLuma 原生完整包。', () => run(snowLumaAction('uninstall'), {}, true), 'danger')} />
-				<ActionButton label="看日志" variant="secondary" running={state === 'running'} onClick={() => void run(snowLumaAction('log'))} />
+				<ActionButton label={maintenanceLogOpen ? '折叠日志' : '展开日志'} variant="secondary" running={state === 'running'} onClick={toggleMaintenanceLog} />
 				<ActionButton label="清理操作日志" variant="secondary" running={state === 'running'} onClick={() => confirm('清理 SnowLuma 操作日志', '不会删除 SnowLuma 安装、QQ 登录或配置。', () => run(snowLumaAction('log-clear'), {}, true), 'danger')} />
-			</>}
-			</div>
-		  </details>}
-
-		  <details className="rounded-panel border border-[var(--theme-border-default)] bg-[var(--theme-surface-panel)] p-3">
-			<summary className="cursor-pointer text-xs font-semibold text-[var(--theme-text-secondary)]">系统操作记录（{auditItems.length}）</summary>
-			<div className="mt-2 grid gap-1.5">
-				{auditItems.length === 0 ? (
-					<p className="m-0 text-xs text-[var(--theme-text-muted)]">{auditLoading ? '正在读取…' : '暂无系统操作记录。'}</p>
-				) : (
-					auditItems.slice(0, 8).map(item => (
+				</>}
+				</div>
+				{maintenanceLogOpen && (
+					<section aria-label={`${engineLabel(engine)} 核心日志`} className="mt-4 grid gap-2 border-t border-[var(--theme-border-default)] pt-3">
+						<div className="flex items-center justify-between gap-3">
+							<strong className="text-xs text-[var(--theme-text-secondary)]">核心日志</strong>
+							<ActionButton label={maintenanceLogLoading ? '正在刷新…' : '刷新'} variant="secondary" running={state === 'running' || maintenanceLogLoading} onClick={() => void refreshMaintenanceLog()} />
+						</div>
+						<pre className="m-0 max-h-64 min-w-0 max-w-full overflow-auto whitespace-pre-wrap break-words rounded-md bg-[var(--theme-surface-input)] p-3 font-mono text-xs leading-5 text-[var(--theme-text-secondary)]">{maintenanceLogText || (maintenanceLogLoading ? '正在读取日志…' : '日志为空。')}</pre>
+					</section>
+				)}
+				<div className="mt-4 grid gap-2 border-t border-[var(--theme-border-default)] pt-3">
+					<div className="flex items-center justify-between gap-3">
+						<strong className="text-xs text-[var(--theme-text-secondary)]">系统操作记录</strong>
+						<ActionButton label="刷新记录" variant="secondary" running={state === 'running' || auditLoading} onClick={() => void refreshAudit()} />
+					</div>
+					{auditItems.length === 0 ? (
+						<p className="m-0 text-xs text-[var(--theme-text-muted)]">{auditLoading ? '正在读取…' : '暂无系统操作记录。'}</p>
+					) : auditItems.slice(0, 6).map(item => (
 						<div key={item.id} className="grid grid-cols-[auto_1fr_auto] items-baseline gap-2 text-xs">
 							<span className="font-semibold text-[var(--theme-text-strong)]">{item.action}</span>
 							<span className="min-w-0 truncate text-[var(--theme-text-muted)]">{item.output || item.operation}</span>
 							<span className="shrink-0 text-[var(--theme-text-faint)]">{new Date(item.createdAt).toLocaleString()}</span>
 						</div>
-					))
-				)}
-				<div>
-					<ActionButton label="刷新" variant="secondary" running={state === 'running' || auditLoading} onClick={() => void refreshAudit()} />
+					))}
 				</div>
-			</div>
-		  </details>
-
-
+			  </details>}
 		  {engine !== 'snowluma' && !nativeLauncherNapcat && liveStatus?.loginPending && (
 			<section className="grid justify-items-center gap-3 rounded-panel border border-[var(--theme-border-default)] bg-[var(--theme-surface-panel)] p-4 text-center">
 				<div>
@@ -832,10 +831,7 @@ export default function App() {
 					qrLoadFailed ? (
 						<div className="grid gap-2 text-[var(--theme-warning-text)]">
 							<p className="m-0 text-xs">二维码读取失败，请重试或查看日志。</p>
-							<div className="flex justify-center gap-2">
-								<ActionButton label="重试" variant="secondary" running={state === 'running'} onClick={() => void refreshStatus()} />
-								<ActionButton label="查看日志" variant="secondary" running={state === 'running'} onClick={() => void openLiveLog()} />
-							</div>
+							<div><ActionButton label="重试" variant="secondary" running={state === 'running'} onClick={() => void refreshStatus()} /></div>
 						</div>
 					) : (
 						<img className="size-56 rounded-lg bg-white p-2" src={qrImageUrl} onLoad={() => setQrLoadFailed(false)} onError={() => setQrLoadFailed(true)} alt={`${engine === 'napcat' ? 'NapCat' : 'LuckyLillia'} QQ 登录二维码`} />
@@ -846,73 +842,27 @@ export default function App() {
 				{qrStale && (
 					<div className="grid gap-2 rounded-md bg-[var(--theme-warning-soft)] px-3 py-2 text-xs text-[var(--theme-warning-text)]">
 						<p className="m-0">二维码可能已过期，正在等待内核刷新。</p>
-						<div className="flex justify-center gap-2">
-							<ActionButton label="刷新状态" variant="secondary" running={state === 'running'} onClick={() => void refreshStatus()} />
-							<ActionButton label="查看日志" variant="secondary" running={state === 'running'} onClick={() => void openLiveLog()} />
-						</div>
+						<div><ActionButton label="刷新状态" variant="secondary" running={state === 'running'} onClick={() => void refreshStatus()} /></div>
 					</div>
 				)}
+				<div className="flex flex-wrap justify-center gap-2">
+					<ActionButton label="查看日志" variant="secondary" running={state === 'running'} onClick={() => void openLiveLog()} />
+					<ActionButton label="取消登录并停止" variant="secondary" running={state === 'running'} onClick={cancelLoginAndStop} />
+				</div>
 			</section>
 		  )}
 
 
 
 
-		  {liveStatus && !coreNeedsInstall && !nativeLauncherNapcat && (
-            <section className="grid gap-2 rounded-panel border p-3 text-xs"
-              style={{ borderColor: 'var(--theme-border-default)', background: 'var(--theme-surface-panel)' }}
-            >
-              <div className="flex items-center gap-2">
-                <span
-                  className={
-                    'inline-flex size-2.5 rounded-full ' +
-						(liveStatus.installed && liveStatus.running && (liveStatus.webUiReady || liveStatus.portReachable)
-                      ? 'bg-[var(--theme-success)]'
-                      : 'bg-[var(--theme-danger)]')
-                  }
-                />
-                <strong className="text-sm font-semibold text-[var(--theme-text-strong)]">
-					{liveStatus.installed && liveStatus.running && (liveStatus.webUiReady || liveStatus.portReachable)
-                    ? '运行正常'
-                    : '需要关注'}
-                </strong>
-                <span className="text-[var(--theme-text-muted)]">
-					{liveStatus.installed ? (liveStatus.running ? (liveStatus.loginPending ? '等待扫码登录' : liveStatus.oneBotReady ? '已连接' : liveStatus.qqLoggedIn ? 'QQ 已登录，等待 OneBot' : '正在连接') : '已停止') : '尚未安装'}
-                </span>
-              </div>
-              {liveStatus.error && (
-                <p className="m-0 rounded-md bg-[var(--theme-danger-soft)] px-2 py-1.5 font-semibold text-[var(--theme-danger-text)]">
-                  {liveStatus.error}
-                </p>
-              )}
-				{liveStatus.diagnosticHint && <p className="m-0 rounded-md bg-[var(--theme-warning-soft)] px-2 py-1.5 text-[var(--theme-warning-text)]">{liveStatus.diagnosticHint}</p>}
-			  {engine === 'napcat' && napcatManagedActions && liveStatus.installed && !liveStatus.running && (
-                <div className="flex gap-2">
-                  <ActionButton label="一键重启" running={state === 'running'} onClick={() => void run('restart', {}, true)} />
-                </div>
-              )}
-			  {engine === 'luckylillia' && luckyManaged && luckyInstalled && !liveStatus.running && (
-                <div className="flex gap-2">
-                  <ActionButton label="一键重启" running={state === 'running'} onClick={() => void run(luckyAction('restart'), {}, true)} />
-                </div>
-              )}
-			  {engine === 'snowluma' && liveStatus.managed && liveStatus.installed && !liveStatus.running && (
-				<div className="flex gap-2"><ActionButton label="一键重启" running={state === 'running'} onClick={() => void run(snowLumaAction('restart'), {}, true)} /></div>
-			  )}
-			</section>
+		  {liveStatus && !liveStatus.loginPending && (
+			<div className="order-2">
+			  <HealthSummary
+				status={liveStatus}
+				webAction={webUrl && liveStatus.installed && liveStatus.running ? <ActionButton label={`打开 ${engineLabel(engine)} 管理面板 ↗`} variant="secondary" running={state === 'running'} onClick={() => openWebview(`${engineLabel(engine)} 管理面板`, webUrl)} /> : undefined}
+			  />
+			</div>
 		  )}
-
-
-		  {!coreNeedsInstall && !nativeLauncherNapcat && webUrl && (
-            <section className="grid gap-2 rounded-panel border border-[var(--theme-border-default)] bg-[var(--theme-surface-panel)] p-3 text-xs">
-              <strong className="text-sm font-semibold text-[var(--theme-text-strong)]">
-                管理面板可用
-              </strong>
-              <p className="m-0 text-[var(--theme-text-muted)]">
-                可在「管理面板」页签或新窗口打开。
-              </p>
-            </section>
-          )}
         </div>
       )}
 
@@ -956,7 +906,7 @@ export default function App() {
                 enable: String(data.get('httpEnable') || 'true'),
                 token: String(data.get('httpToken') || '')
               }
-              confirm('保存 HTTP 服务', '更新 HTTP 端口与 Token，重启 NapCat 后生效。', () => run('onebot-http-set', params, true, 'config-http'))
+								confirm('保存 HTTP 服务', '更新 HTTP 端口与 Token；NapCat 运行中会自动重启加载。', () => run('onebot-http-set', params, true, 'config-http'))
             }}
           >
             <h3 className="col-span-full m-0 text-sm font-semibold text-[var(--theme-text-strong)]">
@@ -986,7 +936,7 @@ export default function App() {
                 enable: String(data.get('wsEnable') || 'true'),
                 token: String(data.get('wsToken') || '')
               }
-              confirm('保存 WebSocket 服务', '更新 WS 端口与 Token，重启 NapCat 后生效。', () => run('onebot-ws-set', params, true, 'config-ws'))
+								confirm('保存 WebSocket 服务', '更新 WS 端口与 Token；NapCat 运行中会自动重启加载。', () => run('onebot-ws-set', params, true, 'config-ws'))
             }}
           >
             <h3 className="col-span-full m-0 text-sm font-semibold text-[var(--theme-text-strong)]">
@@ -1009,7 +959,7 @@ export default function App() {
 				event.preventDefault()
 				const data = new FormData(event.currentTarget)
 				const params = { port: String(data.get('port') || '7199'), enable: String(data.get('enable') || 'true'), token: String(data.get('token') || '') }
-				confirm('保存 LuckyLillia OneBot 服务', '更新 WebSocket 端口与 Token，重启 LuckyLillia 后生效。', () => run(luckyAction('onebot-set'), params, true, 'config-lucky'))
+				confirm('保存 LuckyLillia OneBot 服务', '更新 WebSocket 端口与 Token；LuckyLillia 运行中会自动重启加载。', () => run(luckyAction('onebot-set'), params, true, 'config-lucky'))
 			}}>
 			<h3 className="col-span-full m-0 text-sm font-semibold text-[var(--theme-text-strong)]">LuckyLillia OneBot WebSocket</h3>
 			<Field label="启用" name="enable"><select className={inputClass} name="enable" defaultValue="true"><option value="true">是</option><option value="false">否</option></select></Field>
@@ -1029,7 +979,7 @@ export default function App() {
 				<label className="grid gap-1 text-xs font-semibold text-[var(--theme-text-secondary)]">目标机器人
 					<select className={inputClass} value={robotRoot} onChange={event => setRobotRoot(event.target.value)}><option value="">请选择机器人</option>{projects.map(project => <option key={project.root} value={project.root}>{project.name}</option>)}</select>
 				</label>
-				<ActionField><ActionButton label="同步连接" running={state === 'running'} onClick={() => confirm('同步 OneBot 配置', '自动读取 Token 并写入目标机器人。', async () => {
+				<ActionField><ActionButton label="同步连接" running={state === 'running'} onClick={() => confirm('同步 OneBot 配置', '写入 OneBot WebSocket URL；Token 可留空，且会覆盖目标机器人的旧 Token。', async () => {
 					setResultOrigin('config-sync')
 					if (!robotRoot) { setResult({ output: '', error: '请选择目标机器人。' }); setState('failed'); return }
 					setState('running'); setResult(undefined); setOperationSteps([])
@@ -1037,7 +987,7 @@ export default function App() {
 						const token = await readOneBotToken()
 						const url = selectedOneBotURL || (engine === 'napcat' || engine === 'snowluma' ? 'ws://127.0.0.1:3001' : 'ws://127.0.0.1:7199')
 						await syncRobotOneBot(robotRoot, url, token)
-						setResult({ output: '✓ OneBot 配置已同步到目标机器人（Token 已自动读取）。请按需重启机器人使连接生效。' }); setState('done')
+						setResult({ output: '✓ OneBot URL 与 Token 已同步到目标机器人（Token 可为空）。请按需重启机器人使连接生效。' }); setState('done')
 					} catch (reason) { setResult({ output: '', error: reason instanceof Error ? reason.message : String(reason) }); setState('failed') }
 				})} /></ActionField>
 			</div>
@@ -1048,55 +998,7 @@ export default function App() {
         </div>
       )}
 
-      {view === 'background' && (
-        <div className="grid gap-3">
-          <p className="m-0 text-xs leading-5 text-[var(--theme-text-muted)]">后台进程独立于工作台运行；ALemonX 更新或重启不会中断它们。主机重启后需手动再次启动。</p>
-          <section className="grid gap-3 rounded-panel border border-[var(--theme-border-default)] bg-[var(--theme-surface-panel)] p-3">
-            <div className="flex items-center justify-between gap-3">
-              <strong className="text-sm font-semibold text-[var(--theme-text-strong)]">{engineLabel(engine)}</strong>
-              <span className={'text-xs ' + (liveStatus?.running ? 'text-[var(--theme-success-text)]' : 'text-[var(--theme-text-muted)]')}>
-                {liveStatus?.installed ? (liveStatus.running ? `后台运行中${liveStatus.pid ? `（PID ${liveStatus.pid}）` : ''}` : '已停止') : '未安装'}
-              </span>
-            </div>
-            {liveStatus?.error && <p className="m-0 rounded-md bg-[var(--theme-danger-soft)] px-2 py-1.5 text-xs text-[var(--theme-danger-text)]">{liveStatus.error}</p>}
-            <div className="flex flex-wrap gap-2">
-              <ActionButton label="后台启动" running={state === 'running'} disabled={!liveStatus?.installed || liveStatus?.running === true} onClick={() => confirm(`后台启动 ${engineLabel(engine)}`, '进程将脱离工作台独立运行；ALemonX 更新或重启不会中断。', () => run(engineAction(engine, 'start'), {}, true, 'manage', engine))} />
-              <ActionButton label="停止" variant="secondary" running={state === 'running'} disabled={liveStatus?.running !== true} onClick={() => confirm(`停止 ${engineLabel(engine)}`, '停止后台进程。', () => run(engineAction(engine, 'stop'), {}, true, 'manage', engine))} />
-              <ActionButton label="看日志" variant="secondary" running={state === 'running'} onClick={() => void run(engineAction(engine, 'log'), {}, false, 'manage', engine)} />
-            </div>
-          </section>
-        </div>
-      )}
-
-      {view === 'webui' && (
-        <div className="grid gap-3">
-          {webUrl ? (
-            <section className="grid gap-2 rounded-panel border border-[var(--theme-border-default)] bg-[var(--theme-surface-panel)] p-3 text-xs">
-              <strong className="text-sm text-[var(--theme-text-strong)]">
-                {engineLabel(engine)} 管理面板
-              </strong>
-              <p className="m-0 leading-5 text-[var(--theme-text-muted)]">
-                管理面板在宿主 WebView 窗口中打开（可拖拽、缩放、最小化），不再内嵌在插件页内。
-              </p>
-              <div>
-                <ActionButton label="在宿主窗口打开管理面板" variant="secondary" running={state === 'running'} onClick={() => openWebview(`${engineLabel(engine)} 管理面板`, webUrl)} />
-              </div>
-            </section>
-          ) : (
-            <div className="grid gap-2 rounded-panel border border-[var(--theme-border-default)] p-6 text-center">
-              <strong className="text-sm text-[var(--theme-text-strong)]">
-                管理面板未连接
-              </strong>
-              <p className="m-0 text-xs leading-5 text-[var(--theme-text-muted)]">
-                需先「安装」并「启动」，且其管理面板就绪后才能打开。
-              </p>
-            </div>
-          )}
-        </div>
-      )}
-
-
-      {(view === 'manage' || view === 'background') && resultOrigin === 'manage' && <ResultPanel state={state} result={result ?? (state === 'running' ? { output: actionTitle(activeAction) } : undefined)} steps={operationSteps} liveDetail={operationDetail} onViewLog={() => void openLiveLog()} />}
+      {view === 'manage' && resultOrigin === 'manage' && <ResultPanel state={state} result={result ?? (state === 'running' ? { output: actionTitle(activeAction) } : undefined)} steps={operationSteps} liveDetail={operationDetail} onViewLog={() => void openLiveLog()} />}
 
       {sudoRequest && (
         <SudoModal

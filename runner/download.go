@@ -78,7 +78,12 @@ func assetCandidateURLs(raw string) []string {
 type downloadOnceFunc func(url, dest string, progress downloadProgress) error
 
 func downloadFromCandidates(original, dest string, progress downloadProgress, once downloadOnceFunc) error {
-	candidates := assetCandidateURLs(original)
+	return downloadFromURLs(assetCandidateURLs(original), dest, progress, once)
+}
+
+// downloadFromURLs retries each explicitly supplied source twice. It is also
+// used by platform-specific, integrity-checked recovery paths.
+func downloadFromURLs(candidates []string, dest string, progress downloadProgress, once downloadOnceFunc) error {
 	var lastErr error
 	for index, candidate := range candidates {
 		var candidateErr error

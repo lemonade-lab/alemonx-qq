@@ -277,5 +277,12 @@ func setServerConfig(params map[string]string, websocket, confirmed bool) (strin
 	if err := saveState(state); err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("✓ 已更新 %s 服务（QQ %s，端口 %d，监听 127.0.0.1）。\n✓ 重启 NapCat 后生效。", label, cfg.QQ, port), nil
+	if !isRunning(state) {
+		return fmt.Sprintf("✓ 已更新 %s 服务（QQ %s，端口 %d，监听 127.0.0.1）。\n✓ NapCat 未运行；下次启动会自动加载该配置。", label, cfg.QQ, port), nil
+	}
+	restarted, restartErr := restartAction(true)
+	if restartErr != nil {
+		return "", fmt.Errorf("%s 服务配置已保存，但自动重启 NapCat 失败：%w", label, restartErr)
+	}
+	return fmt.Sprintf("✓ 已更新 %s 服务（QQ %s，端口 %d，监听 127.0.0.1）。\n%s", label, cfg.QQ, port, restarted), nil
 }

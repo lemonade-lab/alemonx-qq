@@ -96,7 +96,7 @@ func run(action string, params map[string]string, confirmed bool) (string, error
 
 func napcatLifecycleAction(action string) bool {
 	switch action {
-	case "install", "uninstall", "start", "stop", "restart", "update", "watchdog-on", "watchdog-off":
+	case "install", "uninstall", "start", "stop", "restart", "update", "watchdog-on", "watchdog-off", "onebot-http-set", "onebot-ws-set", "luckylillia-onebot-set":
 		return true
 	default:
 		return false
@@ -369,6 +369,13 @@ func installAction(params map[string]string, confirmed bool) (string, error) {
 	}
 	if state.InstallDir != "" && !state.Managed {
 		return "", errors.New("已关联外部 NapCat；请先取消关联，工作台才可创建受管安装")
+	}
+	// Installing while the managed instance is already serving its WebUI would
+	// make startNapCat correctly reject port 6099, but report it misleadingly as
+	// an unrelated process. Keep the active instance intact and direct callers
+	// to the lifecycle action instead.
+	if state.Managed && isRunning(state) {
+		return "? NapCat 已在运行中；无需重新安装。", nil
 	}
 	if runtime.GOOS == "darwin" || runtime.GOOS == "windows" {
 		return "", errors.New("当前系统请使用工作台下载并打开官方 NapCat 启动器；工作台不会修改 QQ 注入文件")

@@ -47,10 +47,10 @@ func TestLinuxQQReleaseAssetsMatchPlatformContracts(t *testing.T) {
 		name         string
 		kind         string
 	}{
-		{"apt", "amd64", "QQ_3.2.31_260710_amd64_01.deb", "deb"},
-		{"apt", "arm64", "QQ_3.2.31_260710_arm64_01.deb", "deb"},
-		{"dnf", "amd64", "QQ_3.2.31_260710_x86_64_01.rpm", "rpm"},
-		{"dnf", "arm64", "QQ_3.2.31_260710_aarch64_01.rpm", "rpm"},
+		{"apt", "amd64", "QQ_3.2.32_260730_amd64_01.deb", "deb"},
+		{"apt", "arm64", "QQ_3.2.32_260730_arm64_01.deb", "deb"},
+		{"dnf", "amd64", "QQ_3.2.32_260730_x86_64_01.rpm", "rpm"},
+		{"dnf", "arm64", "QQ_3.2.32_260730_aarch64_01.rpm", "rpm"},
 	}
 	for _, expected := range want {
 		asset, err := linuxQQReleaseAssetFor(expected.architecture, expected.manager)

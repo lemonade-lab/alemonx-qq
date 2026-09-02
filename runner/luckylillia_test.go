@@ -101,6 +101,51 @@ func TestLuckyConfiguredPortsUsesOfficialConfig(t *testing.T) {
 	}
 }
 
+func TestLuckyQQLoggedInRequiresSessionNewerThanQRCode(t *testing.T) {
+	install := t.TempDir()
+	dataDir := filepath.Join(install, "bin", "llbot", "data")
+	qrPath := filepath.Join(dataDir, "temp", "login-qrcode.png")
+	if err := os.MkdirAll(filepath.Dir(qrPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(qrPath, append([]byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'}, []byte("qr")...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	qrTime := time.Now().Add(-time.Minute)
+	if err := os.Chtimes(qrPath, qrTime, qrTime); err != nil {
+		t.Fatal(err)
+	}
+	session := filepath.Join(dataDir, "qq-session-10001.json")
+	if err := os.WriteFile(session, []byte(`{"uin":"10001"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	loggedAt := time.Now()
+	if err := os.Chtimes(session, loggedAt, loggedAt); err != nil {
+		t.Fatal(err)
+	}
+	state := luckyState{InstallDir: install}
+	if !luckyQQLoggedIn(state) {
+		t.Fatal("session written after QR must mark QQ as logged in")
+	}
+	if qq, _ := luckySavedQQ(state); qq != "10001" {
+		t.Fatalf("saved QQ = %q, want 10001", qq)
+	}
+	newQRTime := loggedAt.Add(time.Minute)
+	if err := os.Chtimes(qrPath, newQRTime, newQRTime); err != nil {
+		t.Fatal(err)
+	}
+	if luckyQQLoggedIn(state) {
+		t.Fatal("a newer QR must mark the prior session as requiring login again")
+	}
+}
+
+func TestLuckyJourneyTreatsConfirmedQQAsOneBotConnecting(t *testing.T) {
+	journey := luckyJourney(kernelStatus{Supported: true, Installed: true, InstallHealthy: true, Managed: true, AuthTokenReady: true, Running: true, WebUIReady: true, QQLoggedIn: true})
+	if journey.Phase != "connecting" {
+		t.Fatalf("journey = %#v, want OneBot connecting", journey)
+	}
+}
+
 func TestLuckyAuthTokenIsPrivateAndSurvivesRestore(t *testing.T) {
 	original := userConfigDir
 	base := t.TempDir()

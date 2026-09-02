@@ -257,8 +257,6 @@ body,
 .qq-plugin-nav-icon[data-icon='snowluma']::before { content: '✦'; }
 .qq-plugin-nav-icon[data-icon='manage']::before { content: '◫'; }
 .qq-plugin-nav-icon[data-icon='config']::before { content: '⌘'; }
-.qq-plugin-nav-icon[data-icon='background']::before { content: '◉'; }
-.qq-plugin-nav-icon[data-icon='webui']::before { content: '↗'; }
 
 .qq-plugin-content {
   height: 100%;
