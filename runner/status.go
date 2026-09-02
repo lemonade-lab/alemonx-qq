@@ -22,6 +22,7 @@ type statusPayload struct {
 	PortReachable   bool            `json:"portReachable"`
 	WebUIReady      bool            `json:"webUiReady"`
 	OneBotReady     bool            `json:"oneBotReady"`
+	QQLoggedIn      bool            `json:"qqLoggedIn"`
 	LoginPending    bool            `json:"loginPending"`
 	Watchdog        bool            `json:"watchdog"`
 	Version         string          `json:"version,omitempty"`
@@ -117,13 +118,17 @@ func collectStatus(state State) statusPayload {
 		for _, account := range accounts {
 			if account.QQ == selected {
 				payload.SelectedAccount = account.QQ
+				payload.QQLoggedIn = true
 				payload.OneBotURL = account.OneBotURL
 				payload.OneBotReady = account.OneBotReady
 				break
 			}
 		}
 	}
-	payload.LoginPending = payload.Running && payload.WebUIReady && !payload.OneBotReady
+	// NapCat creates onebot11_<QQ>.json for the logged-in account. A disabled
+	// or not-yet-restarted WebSocket must not make a successfully logged-in QQ
+	// account look as though it needs to scan a QR code again.
+	payload.LoginPending = payload.Running && payload.WebUIReady && !payload.QQLoggedIn
 	payload.QRCodeAvailable, payload.QRCodeUpdatedAt = napcatQRCodeStatus(state)
 	if path, err := logPath(); err == nil {
 		payload.LogPath = path
@@ -171,7 +176,7 @@ func napcatJourney(status statusPayload) runtimeJourney {
 	case status.LoginPending:
 		return runtimeJourney{Phase: "scan-qq", Title: "请用手机 QQ 扫码", Detail: "登录成功后会自动继续初始化 OneBot 服务。", NextAction: "scan-qq"}
 	case !status.OneBotReady:
-		return runtimeJourney{Phase: "connecting", Title: "正在等待 OneBot", Detail: "QQ 已登录，正在等待已配置的 OneBot 服务监听端口。", NextAction: "view-log"}
+		return runtimeJourney{Phase: "connecting", Title: "QQ 已登录，正在等待 OneBot", Detail: "QQ 登录已确认；请启用并重启已配置的 OneBot 服务，使其开始监听端口。", NextAction: "view-log"}
 	default:
 		return runtimeJourney{Phase: "ready", Title: "NapCat 已就绪", Detail: "QQ 与 OneBot 服务均已可用，可同步到机器人。", NextAction: "configure"}
 	}

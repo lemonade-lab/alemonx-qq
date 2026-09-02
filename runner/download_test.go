@@ -44,17 +44,17 @@ func TestAssetCandidateURLsMirrorOnlyGitHub(t *testing.T) {
 	}
 }
 
-func TestMirrorsDisabledWhileHostBrokerConfigured(t *testing.T) {
+func TestExplicitMirrorsRemainAvailableWithHostBroker(t *testing.T) {
 	t.Setenv("ALX_PLUGIN_DOWNLOAD_BROKER", "https://broker.example")
 	t.Setenv("ALX_PLUGIN_DOWNLOAD_TOKEN", "secret")
 	t.Setenv("ALX_PLUGIN_DOWNLOAD_MIRRORS", "https://ghfast.top")
 	t.Setenv("ALX_PLUGIN_GITHUB_API_MIRROR", "https://api.example.local")
 	original := "https://github.com/acme/releases/download/v1/pkg.zip"
-	if candidates := assetCandidateURLs(original); len(candidates) != 1 || candidates[0] != original {
-		t.Fatalf("mirrors must be disabled with a broker: %v", candidates)
+	if candidates := assetCandidateURLs(original); len(candidates) != 2 || candidates[1] != "https://ghfast.top/"+original {
+		t.Fatalf("host-configured mirrors must survive with a broker: %v", candidates)
 	}
-	if got := officialReleaseMetadataURL("https://api.github.com/repos/acme/releases/latest"); got != "https://api.github.com/repos/acme/releases/latest" {
-		t.Fatalf("API mirror must be disabled with a broker: %q", got)
+	if got := officialReleaseMetadataURL("https://api.github.com/repos/acme/releases/latest"); got != "https://api.example.local/repos/acme/releases/latest" {
+		t.Fatalf("API mirror must survive with a broker: %q", got)
 	}
 }
 

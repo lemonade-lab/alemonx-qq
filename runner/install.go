@@ -567,6 +567,13 @@ func installLinuxNapCat() (napcatInstallation, error) {
 	if err != nil {
 		return napcatInstallation{}, err
 	}
+	// Tencent rotates QQ release paths frequently. Prefer the official current
+	// metadata, while retaining the pinned contract as a short outage fallback.
+	if current, currentErr := currentLinuxQQReleaseAsset(qqAsset.Kind); currentErr == nil {
+		qqAsset = current
+	} else {
+		appendActionDiagnostic("install", "腾讯 QQ 当前下载配置不可用，暂回退到固定契约："+currentErr.Error())
+	}
 	stateRoot, err := stateDir()
 	if err != nil {
 		return napcatInstallation{}, err

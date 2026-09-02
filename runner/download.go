@@ -10,21 +10,19 @@ import (
 const githubAPIBase = "https://api.github.com"
 
 // hostDownloadBrokerConfigured reports whether the workbench download broker
-// is active. The broker is the sanctioned single path; mirror fallbacks would
-// only duplicate or confuse its URL handling, so they are disabled while it
-// is configured.
+// is active.
 func hostDownloadBrokerConfigured() bool {
 	return strings.TrimSpace(os.Getenv("ALX_PLUGIN_DOWNLOAD_BROKER")) != "" &&
 		strings.TrimSpace(os.Getenv("ALX_PLUGIN_DOWNLOAD_TOKEN")) != ""
 }
 
-// officialReleaseMetadataURL applies the optional GitHub API mirror. Common
-// ghproxy deployments reject api.github.com, so this mirror is opt-in and
-// operator-provided (ALX_PLUGIN_GITHUB_API_MIRROR); without it the official
-// endpoint is used as-is.
+// officialReleaseMetadataURL applies the optional GitHub API mirror. The
+// mirror is explicitly host-configured, so it remains valid even when the
+// host's download broker is active (for example after a shared Docker egress
+// IP exhausts GitHub's unauthenticated API quota).
 func officialReleaseMetadataURL(original string) string {
 	mirror := strings.TrimSpace(os.Getenv("ALX_PLUGIN_GITHUB_API_MIRROR"))
-	if hostDownloadBrokerConfigured() || mirror == "" || !strings.HasPrefix(original, githubAPIBase) {
+	if mirror == "" || !strings.HasPrefix(original, githubAPIBase) {
 		return original
 	}
 	return strings.TrimRight(mirror, "/") + strings.TrimPrefix(original, githubAPIBase)
@@ -35,9 +33,6 @@ func officialReleaseMetadataURL(original string) string {
 // <prefix>/<original-url>, the ghproxy convention, and only for GitHub-hosted
 // files: release assets, raw content and objects.githubusercontent redirects.
 func downloadMirrors() []string {
-	if hostDownloadBrokerConfigured() {
-		return nil
-	}
 	raw := strings.TrimSpace(os.Getenv("ALX_PLUGIN_DOWNLOAD_MIRRORS"))
 	if raw == "" {
 		return nil

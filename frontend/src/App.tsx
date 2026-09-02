@@ -877,7 +877,7 @@ export default function App() {
                     : '需要关注'}
                 </strong>
                 <span className="text-[var(--theme-text-muted)]">
-					{liveStatus.installed ? (liveStatus.running ? (liveStatus.loginPending ? '等待扫码登录' : liveStatus.oneBotReady ? '已连接' : '正在连接') : '已停止') : '尚未安装'}
+					{liveStatus.installed ? (liveStatus.running ? (liveStatus.loginPending ? '等待扫码登录' : liveStatus.oneBotReady ? '已连接' : liveStatus.qqLoggedIn ? 'QQ 已登录，等待 OneBot' : '正在连接') : '已停止') : '尚未安装'}
                 </span>
               </div>
               {liveStatus.error && (
@@ -921,7 +921,7 @@ export default function App() {
 		  <section className="flex flex-wrap items-center justify-between gap-3 rounded-panel border border-[var(--theme-border-default)] bg-[var(--theme-surface-panel)] p-3 text-xs">
 			<div className="grid gap-1">
 				<strong className="text-sm text-[var(--theme-text-strong)]">OneBot 连接健康</strong>
-				<p className="m-0 text-[var(--theme-text-muted)]">{liveStatus?.oneBotReady ? '核心已就绪，可同步到机器人。' : '核心未就绪，请先完成 QQ 登录。'}</p>
+				<p className="m-0 text-[var(--theme-text-muted)]">{liveStatus?.oneBotReady ? '核心已就绪，可同步到机器人。' : liveStatus?.qqLoggedIn ? 'QQ 已登录；请启用并重启 OneBot WebSocket。' : '核心未就绪，请先完成 QQ 登录。'}</p>
 			</div>
 			{engine === 'snowluma' ? <p className="m-0 text-xs text-[var(--theme-text-muted)]">SnowLuma 的账号级 OneBot 配置由其 WebUI 管理；默认 WebSocket 为 3001。</p> : <ActionButton label="读取当前配置" variant="secondary" running={state === 'running'} onClick={() => void run(engine === 'napcat' ? 'onebot-config' : luckyAction('onebot-config'), engine === 'napcat' && napcatQQ ? { qq: napcatQQ } : {}, false, 'config-read')} />}
 		  </section>

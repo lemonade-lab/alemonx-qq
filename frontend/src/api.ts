@@ -152,6 +152,7 @@ export type StatusPayload = {
   portReachable: boolean
 	webUiReady?: boolean
 	oneBotReady?: boolean
+	qqLoggedIn?: boolean
 	loginPending?: boolean
   watchdog: boolean
   version?: string

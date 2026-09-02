@@ -134,4 +134,11 @@ func TestNapCatStatusKeepsOneBotAccountsSeparate(t *testing.T) {
 	if len(payload.Accounts) != 2 || payload.SelectedAccount != "10002" || payload.OneBotURL != "ws://127.0.0.1:3102" {
 		t.Fatalf("accounts=%+v selected=%q url=%q", payload.Accounts, payload.SelectedAccount, payload.OneBotURL)
 	}
+	if !payload.QQLoggedIn || payload.LoginPending {
+		t.Fatalf("logged-in account must not be shown as awaiting QR scan: %#v", payload)
+	}
+	journey := napcatJourney(statusPayload{Supported: true, Installed: true, InstallHealthy: true, Managed: true, Running: true, WebUIReady: true, QQLoggedIn: true})
+	if journey.Phase != "connecting" {
+		t.Fatalf("journey=%#v, want OneBot connecting", journey)
+	}
 }
