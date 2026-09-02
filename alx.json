@@ -158,7 +158,8 @@
       "healthPath": "/",
       "embed": true,
       "rewriteHtml": true,
-      "sse": true
+      "sse": true,
+      "webSocket": true
     },
     {
       "id": "luckylillia-webui",
@@ -183,6 +184,17 @@
       "rewriteHtml": true,
       "rewriteApiBase": true,
       "sse": true
+    },
+    {
+      "id": "qq-desktop",
+      "name": "QQ 桌面",
+      "host": "127.0.0.1",
+      "port": 6080,
+      "basePath": "/vnc.html",
+      "healthPath": "/vnc.html",
+      "embed": true,
+      "rewriteHtml": true,
+      "webSocket": true
     }
   ],
   "navigation": {

@@ -86,6 +86,17 @@ func saveSnowLumaState(s snowLumaState) error {
 	return atomicPrivateText(p, string(b)+"\n")
 }
 func snowLumaSupported() bool { _, _, ok := snowLumaPlatform(); return ok }
+
+func snowLumaEnabled() bool {
+	return runtime.GOOS != "linux" || strings.TrimSpace(os.Getenv("ALX_CONTAINER")) != "1" || strings.TrimSpace(os.Getenv("ALX_SNOWLUMA_ENABLED")) == "1"
+}
+
+func snowLumaEnablementError() error {
+	if snowLumaEnabled() {
+		return nil
+	}
+	return errors.New("SnowLuma 在 Docker 中默认关闭：请使用 docker-compose.snowluma.yml 启动，以显式授予 SYS_PTRACE 和受控 seccomp 权限")
+}
 func reportSnowLumaProgress(stage string, p int, msg string) {
 	appendActionDiagnostic(currentSnowLumaOperationAction(), fmt.Sprintf("[%s] %d%% %s", time.Now().UTC().Format(time.RFC3339), p, msg))
 	b, _ := json.Marshal(map[string]any{"stage": stage, "percent": p, "message": msg})
@@ -197,6 +208,9 @@ func requireSnowLumaConfirmation(c bool, a string) error {
 	return nil
 }
 func snowLumaInstall(_ map[string]string, c bool) (string, error) {
+	if err := snowLumaEnablementError(); err != nil {
+		return "", err
+	}
 	if e := requireSnowLumaConfirmation(c, "安装 SnowLuma"); e != nil {
 		return "", e
 	}
@@ -361,6 +375,9 @@ func snowLumaLinuxReady() error {
 }
 
 func snowLumaPreflight(root string) error {
+	if err := snowLumaEnablementError(); err != nil {
+		return err
+	}
 	if snowLumaEntry(root) == "" || !snowLumaNativeReady(root) {
 		return errors.New("SnowLuma 安装不完整，请重新安装")
 	}
@@ -648,6 +665,10 @@ func snowLumaStatus() (string, error) {
 	if !ok {
 		x.State = "unsupported"
 		x.DiagnosticHint = "上游未发布 macOS/Darwin Hook，无法注入 QQ 进程。"
+	} else if err := snowLumaEnablementError(); err != nil {
+		x.Supported = false
+		x.State = "unsupported"
+		x.DiagnosticHint = err.Error()
 	} else if !installed {
 		x.State = "not-installed"
 	} else if running {

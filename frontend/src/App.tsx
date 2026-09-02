@@ -346,6 +346,8 @@ export default function App() {
 	const webServiceID = engine === 'napcat' ? 'napcat-webui' : engine === 'luckylillia' ? 'luckylillia-webui' : 'snowluma-webui'
 	const webService = services.find(service => service.id === webServiceID)
 	const webUrl = webService?.reachable && webService.embed ? webService.proxyUrl : ''
+	const desktopService = services.find(service => service.id === 'qq-desktop')
+	const desktopUrl = desktopService?.reachable && desktopService.embed ? desktopService.proxyUrl : ''
 	const webviewID = useRef<string | null>(null)
 	const openWebview = (title: string, url: string) => {
 		void closeHostWebview(webviewID.current).finally(() => {
@@ -645,7 +647,7 @@ export default function App() {
 			action: () => confirm('打开 NapCat 启动器', '启动器负责安装、启动和管理 NapCat。', () => run('napcat-macos-launcher-open', {}, true)),
 		}
 		if (engine === 'napcat' && liveStatus.installed && !liveStatus.managed) return { title: 'NapCat 已关联', description: webUrl ? '可以继续登录 QQ。' : '正在检查登录状态。', label: webUrl ? '打开登录页' : '刷新', action: () => webUrl ? openWebview(`${engineLabel(engine)} 管理面板`, webUrl) : void refreshStatus() }
-		if (engine === 'snowluma' && liveStatus.supported === false) return { title: '此系统暂无上游原生 Hook', description: liveStatus.diagnosticHint || 'macOS 尚无官方 Darwin Hook。', label: '查看状态', action: () => void refreshStatus() }
+		if (engine === 'snowluma' && liveStatus.supported === false) return { title: 'SnowLuma 高级模式未启用', description: liveStatus.diagnosticHint || '此系统暂无上游原生 Hook。', label: '查看状态', action: () => void refreshStatus() }
 		if (engine === 'snowluma' && !liveStatus.installed) return { title: '安装 SnowLuma', description: '下载官方完整发行包，不使用 Docker。', label: '安装 SnowLuma', action: () => confirm('安装 SnowLuma', '将下载、验证并安装官方原生完整包。', () => run(snowLumaAction('install'), {}, true)) }
 		if (engine === 'snowluma' && !liveStatus.running) return { title: '启动 SnowLuma', description: '先启动同一系统用户、同一权限级别的 QQ；Linux 还需可用的 X11/Xvfb 与 ptrace 条件。', label: '启动 SnowLuma', action: () => confirm('启动 SnowLuma', '将先验证 QQ 与运行环境，再启动工作台受管的 SnowLuma 原生进程。', () => run(snowLumaAction('start'), {}, true)) }
 		if (engine === 'snowluma' && liveStatus.loginPending) return { title: '请在 QQ 窗口扫码', description: 'SnowLuma 已启动，正在等待 QQ 登录并建立 OneBot 服务。', label: '查看实时日志', action: () => void openLiveLog() }
@@ -780,6 +782,7 @@ export default function App() {
 				<ActionButton label="停止" variant="secondary" running={state === 'running'} disabled={!napcatManagedActions || !liveStatus?.running} onClick={() => confirm('停止 NapCat', '停止工作台受管的 NapCat 进程组。', () => run('stop', {}, true))} />
 				{liveStatus?.installed && !liveStatus?.managed ? <ActionButton label="取消关联" variant="danger" running={state === 'running'} onClick={() => confirm('取消关联 NapCat', '不会删除或修改外部目录。', () => run('napcat-forget', {}, true), 'danger')} /> : <ActionButton label="卸载" variant="danger" running={state === 'running'} disabled={!napcatManagedActions} onClick={() => confirm('卸载 NapCat', '会停止并删除工作台受管目录。', () => run('uninstall', {}, true), 'danger')} />}
 				<ActionButton label="看日志" variant="secondary" running={state === 'running'} onClick={() => void run('log')} />
+				{desktopUrl && <ActionButton label="打开 QQ 桌面" variant="secondary" running={state === 'running'} onClick={() => openWebview('QQ 桌面', desktopUrl)} />}
 				<ActionButton label="清理日志" variant="secondary" running={state === 'running'} onClick={() => confirm('清理 NapCat 日志', '将清空核心日志与操作日志，不影响安装与配置。', () => run('napcat-log-clear', {}, true), 'danger')} />
 			</> : engine === 'luckylillia' ? <>
 				<ActionButton label="启动" variant="secondary" running={state === 'running'} disabled={!luckyManaged || !luckyInstalled} onClick={() => confirm('启动 LuckyLillia', '将启动官方 CLI 并等待登录。', () => run(luckyAction('start'), {}, true))} />

@@ -3,7 +3,7 @@
 ALemonX 的 QQ 内核管理插件。NapCat、LuckyLillia 与 SnowLuma 使用独立的安装目录、状态、日志、进程组和 OneBot 配置；一个内核的操作不会修改另一个内核。
 
 工作台受管安装的内核、配置、日志和状态保存在
-`<workspace>/store/alemonx-qq/`；`<workspace>` 由启动参数 `--workspace` 或
+`<workspace>/store/alemonx-qq/runtimes/<系统-架构>/`；`<workspace>` 由启动参数 `--workspace` 或
 `ALX_WORKSPACE` 决定，因此 Docker 挂载工作区后可跨容器重启保留。首次使用新目录
 时会复制旧版插件数据，原目录不会被删除。用户手动关联的既有安装目录仍保留在其
 原位置，不会被插件迁移或移动。
@@ -14,9 +14,9 @@ ALemonX 的 QQ 内核管理插件。NapCat、LuckyLillia 与 SnowLuma 使用独�
 | --- | --- | --- | --- |
 | NapCat | 以插件状态页为准 | 工作台受管安装 | 由 NapCat 流程提供登录引导 |
 | LuckyLillia | 以官方 CLI 资产为准 | 工作台受管或关联已有目录 | 官方 Auth Token 后进入登录流程 |
-| SnowLuma | Windows x64、Linux x64、Linux ARM64 | 下载官方完整原生包；不使用 Docker | 使用已经运行的本机 QQ 窗口扫码 |
+| SnowLuma | Windows x64、Linux x64、Linux ARM64 | 下载官方完整原生包；Docker 中须显式开启高级模式 | 使用已经运行的同用户 QQ 窗口扫码 |
 
-SnowLuma 不是 Linux QQ 的安装器，也不会创建 VNC/noVNC 桌面。启动 SnowLuma 前必须已有同一系统用户、同一权限级别的 QQ 进程；Linux 还必须具备可用的 X11/Xvfb `DISPLAY` 和允许 Hook 注入的 ptrace 条件。macOS 没有上游 Darwin native addon，因此不支持 SnowLuma 原生注入。
+NapCat 在 Linux Docker 中会管理 Xvfb、QQ 和仅绑定容器回环地址的 noVNC 桌面入口；入口只能通过 ALemonX 的已鉴权内嵌服务访问。SnowLuma 不是 Linux QQ 的安装器。启动 SnowLuma 前必须已有同一系统用户、同一权限级别的 QQ 进程；Linux 还必须具备可用的 X11/Xvfb `DISPLAY` 和允许 Hook 注入的 ptrace 条件。Docker 默认关闭 SnowLuma，须用 `docker-compose.snowluma.yml` 显式授予所需权限。macOS 没有上游 Darwin native addon，因此不支持 SnowLuma 原生注入。
 
 SnowLuma 启动后会验证 WebUI，并从已生成且启用的 `config/onebot.json` WebSocket 配置读取 Token。没有 QQ、图形会话、注入权限或 OneBot Token 时，插件会报告阻断原因，不会把端口可达误报成登录成功。
 

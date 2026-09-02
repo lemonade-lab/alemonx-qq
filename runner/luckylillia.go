@@ -680,15 +680,7 @@ func extractLuckyArchive(archivePath, destination string, platform *luckyPlatfor
 }
 
 func luckyArchiveTarget(destination, name string) (string, error) {
-	name = filepath.Clean(name)
-	if name == "." || filepath.IsAbs(name) || strings.HasPrefix(name, ".."+string(filepath.Separator)) || name == ".." {
-		return "", errors.New("安装包包含越界路径")
-	}
-	target := filepath.Join(destination, name)
-	if !strings.HasPrefix(filepath.Clean(target), filepath.Clean(destination)+string(filepath.Separator)) {
-		return "", errors.New("安装包包含越界路径")
-	}
-	return target, nil
+	return secureArchiveTarget(destination, name)
 }
 
 func extractLuckyZip(archivePath, destination string) error {

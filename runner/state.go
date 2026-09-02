@@ -20,6 +20,8 @@ type State struct {
 	WatchdogPID           int    `json:"watchdogPid,omitempty"`
 	Managed               bool   `json:"managed"`
 	Platform              string `json:"platform,omitempty"`
+	Architecture          string `json:"architecture,omitempty"`
+	MigrationSource       string `json:"migrationSource,omitempty"`
 	InstallMode           string `json:"installMode,omitempty"`
 	ReleaseTag            string `json:"releaseTag,omitempty"`
 	Asset                 string `json:"asset,omitempty"`
@@ -78,7 +80,58 @@ func stateDir() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return pluginStoreDir(legacy)
+	root, err := pluginStoreDir(legacy)
+	if err != nil {
+		return "", err
+	}
+	platform := runtime.GOOS + "-" + runtime.GOARCH
+	if spec := napcatPlatform(); spec != nil {
+		platform = spec.Key
+	}
+	target := filepath.Join(root, "runtimes", platform)
+	if err := migrateUnscopedPlatformLogs(root, target, platform); err != nil {
+		return "", err
+	}
+	return target, nil
+}
+
+// migrateUnscopedPlatformLogs marks the old shared store as migrated and
+// retains only human-readable logs.  Old state files and program directories
+// may contain a different operating system's binaries, so they are never
+// copied into a runtime-specific directory.
+func migrateUnscopedPlatformLogs(root, target, platform string) error {
+	if err := os.MkdirAll(target, 0o700); err != nil {
+		return err
+	}
+	marker := filepath.Join(target, ".migration-v1.json")
+	if _, err := os.Stat(marker); err == nil {
+		return nil
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	for _, name := range []string{"napcat.log", "napcat-operation.log", "luckylillia.log", "luckylillia-operation.log", "snowluma.log", "snowluma-operation.log"} {
+		source := filepath.Join(root, name)
+		info, err := os.Stat(source)
+		if err != nil || !info.Mode().IsRegular() {
+			continue
+		}
+		data, err := os.ReadFile(source)
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(target, name), data, 0o600); err != nil {
+			return err
+		}
+	}
+	metadata, err := json.Marshal(map[string]string{
+		"platform": platform,
+		"source":   root,
+		"message":  "旧共享运行目录未复用；请在当前平台重新安装 QQ 内核。",
+	})
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(marker, metadata, 0o600)
 }
 
 func statePath() (string, error) {
@@ -167,6 +220,14 @@ func loadState() (State, error) {
 }
 
 func saveState(state State) error {
+	if state.Architecture == "" {
+		state.Architecture = runtime.GOARCH
+	}
+	if state.Platform == "" {
+		if platform := napcatPlatform(); platform != nil {
+			state.Platform = platform.Key
+		}
+	}
 	path, err := statePath()
 	if err != nil {
 		return err

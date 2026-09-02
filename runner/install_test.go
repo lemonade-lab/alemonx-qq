@@ -23,6 +23,23 @@ func TestSecureArchiveTargetRejectsEscapingPath(t *testing.T) {
 	}
 }
 
+func TestSecureArchiveTargetAcceptsArchiveRootDirectory(t *testing.T) {
+	destination := t.TempDir()
+	target, err := secureArchiveTarget(destination, "./")
+	if err != nil {
+		t.Fatalf("archive root must be accepted: %v", err)
+	}
+	if filepath.Clean(target) != filepath.Clean(destination) {
+		t.Fatalf("target = %q, want %q", target, destination)
+	}
+}
+
+func TestSecureArchiveTargetRejectsWindowsTraversal(t *testing.T) {
+	if _, err := secureArchiveTarget(t.TempDir(), `..\\escape`); err == nil {
+		t.Fatal("Windows traversal must be rejected")
+	}
+}
+
 func TestLinuxQQReleaseAssetsMatchPlatformContracts(t *testing.T) {
 	want := []struct {
 		manager      string

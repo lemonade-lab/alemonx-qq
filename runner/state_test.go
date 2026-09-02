@@ -77,3 +77,29 @@ func TestLoadStateIgnoresLegacyHashFields(t *testing.T) {
 		t.Fatalf("legacy runtime migration = %+v", state)
 	}
 }
+
+func TestPlatformMigrationOnlyCopiesReadableLogs(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "runtimes", "linux-amd64")
+	if err := os.MkdirAll(filepath.Join(root, "napcat"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "napcat", "qq"), []byte("foreign binary"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "napcat.log"), []byte("readable log"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrateUnscopedPlatformLogs(root, target, "linux-amd64"); err != nil {
+		t.Fatal(err)
+	}
+	if data, err := os.ReadFile(filepath.Join(target, "napcat.log")); err != nil || string(data) != "readable log" {
+		t.Fatalf("log migration = %q, %v", data, err)
+	}
+	if _, err := os.Stat(filepath.Join(target, "napcat", "qq")); !os.IsNotExist(err) {
+		t.Fatalf("binary must not migrate, err=%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(target, ".migration-v1.json")); err != nil {
+		t.Fatalf("migration marker missing: %v", err)
+	}
+}

@@ -65,9 +65,23 @@ func linuxQQReleaseAssetFor(goarch, packageManager string) (linuxQQAsset, error)
 }
 
 func secureArchiveTarget(destination, name string) (string, error) {
-	name = filepath.Clean(strings.TrimPrefix(name, "./"))
-	if name == "." || name == ".." || filepath.IsAbs(name) || strings.HasPrefix(name, ".."+string(filepath.Separator)) {
+	// Archive formats conventionally contain a top-level "./" directory. It
+	// is safe and must not be confused with traversal. Backslashes are refused
+	// on every platform so a Windows-style traversal cannot become dangerous
+	// when the same archive is handled elsewhere.
+	name = strings.TrimSpace(name)
+	if strings.ContainsRune(name, '\x00') || strings.Contains(name, "\\") {
 		return "", errors.New("安装包包含越界路径")
+	}
+	for strings.HasPrefix(name, "./") {
+		name = strings.TrimPrefix(name, "./")
+	}
+	name = filepath.Clean(filepath.FromSlash(name))
+	if name == ".." || filepath.IsAbs(name) || strings.HasPrefix(name, ".."+string(filepath.Separator)) {
+		return "", errors.New("安装包包含越界路径")
+	}
+	if name == "." {
+		return filepath.Clean(destination), nil
 	}
 	target := filepath.Join(destination, name)
 	if !strings.HasPrefix(filepath.Clean(target), filepath.Clean(destination)+string(filepath.Separator)) {

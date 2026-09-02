@@ -14,8 +14,12 @@ func withTempState(t *testing.T) string {
 	dir := t.TempDir()
 	userConfigDir = func() (string, error) { return dir, nil }
 	t.Cleanup(func() { userConfigDir = original })
-	// installDir = <dir>/alx-qq/napcat
-	napcat := filepath.Join(dir, "alx-qq", "napcat")
+	// Runtime data is isolated under <dir>/alx-qq/runtimes/<platform>/.
+	stateRoot, err := stateDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	napcat := filepath.Join(stateRoot, "napcat")
 	if err := os.MkdirAll(filepath.Join(napcat, "config"), 0755); err != nil {
 		t.Fatal(err)
 	}

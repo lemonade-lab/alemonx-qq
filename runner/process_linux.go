@@ -63,6 +63,10 @@ func startNapCat(state State) (napcatProcess, error) {
 		stopXvfb()
 		return napcatProcess{}, errors.New("Xvfb 未能在 5 秒内就绪，请查看 NapCat 日志")
 	}
+	if err := startDesktopBridge(display, groupID, logHandle); err != nil {
+		stopXvfb()
+		return napcatProcess{}, err
+	}
 	// Chromium refuses to run its sandbox as UID 0. Retain the sandbox for
 	// ordinary service accounts; root installations need this explicit fallback
 	// and the fact is visible in the operation log.
@@ -91,6 +95,51 @@ func startNapCat(state State) (napcatProcess, error) {
 	_ = xvfb.Process.Release()
 	_ = qqCommand.Process.Release()
 	return napcatProcess{PID: pid, ProcessGroupID: groupID}, nil
+}
+
+const (
+	desktopVNCBindPort = 5900
+	desktopWebPort     = 6080
+)
+
+// startDesktopBridge intentionally binds both services to loopback. ALemonX
+// exposes the web client only through its authenticated local-service proxy;
+// Docker Compose never publishes either port to the host network.
+func startDesktopBridge(display string, groupID int, log *os.File) error {
+	if desktopPortOpen(desktopWebPort) {
+		return nil
+	}
+	vnc := exec.Command("x11vnc", "-display", display, "-localhost", "-nopw", "-forever", "-shared", "-rfbport", strconv.Itoa(desktopVNCBindPort))
+	vnc.Stdout, vnc.Stderr, vnc.Stdin = log, log, nil
+	joinProcessGroup(vnc, groupID)
+	if err := vnc.Start(); err != nil {
+		return fmt.Errorf("启动 QQ 桌面服务失败：%w", err)
+	}
+	_ = vnc.Process.Release()
+	web := exec.Command("websockify", "--web=/usr/share/novnc", "127.0.0.1:"+strconv.Itoa(desktopWebPort), "127.0.0.1:"+strconv.Itoa(desktopVNCBindPort))
+	web.Stdout, web.Stderr, web.Stdin = log, log, nil
+	joinProcessGroup(web, groupID)
+	if err := web.Start(); err != nil {
+		return fmt.Errorf("启动 QQ 桌面网页入口失败：%w", err)
+	}
+	_ = web.Process.Release()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if desktopPortOpen(desktopWebPort) {
+			return nil
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return errors.New("QQ 桌面网页入口未能在 5 秒内就绪")
+}
+
+func desktopPortOpen(port int) bool {
+	connection, err := net.DialTimeout("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)), 200*time.Millisecond)
+	if err != nil {
+		return false
+	}
+	_ = connection.Close()
+	return true
 }
 
 func linuxQQBinary(state State) (string, error) {

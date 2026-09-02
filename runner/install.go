@@ -368,9 +368,9 @@ func unzipArchiveWithProgress(srcZip, destDir string, progress func(completed, t
 		if file.FileInfo().Mode()&os.ModeSymlink != 0 {
 			return errors.New("下载包包含符号链接，已拒绝解压")
 		}
-		target := filepath.Join(destDir, file.Name)
-		if !strings.HasPrefix(filepath.Clean(target), filepath.Clean(destDir)+string(filepath.Separator)) {
-			return errors.New("下载包包含越界路径，已中止")
+		target, err := secureArchiveTarget(destDir, file.Name)
+		if err != nil {
+			return fmt.Errorf("下载包包含越界路径，已中止：%w", err)
 		}
 		if file.FileInfo().IsDir() {
 			if err := os.MkdirAll(target, 0o755); err != nil {
