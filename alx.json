@@ -171,7 +171,8 @@
       "embed": true,
       "rewriteHtml": true,
       "rewriteApiBase": true,
-      "sse": true
+      "sse": true,
+      "webSocket": true
     },
     {
       "id": "snowluma-webui",
@@ -183,7 +184,8 @@
       "embed": true,
       "rewriteHtml": true,
       "rewriteApiBase": true,
-      "sse": true
+      "sse": true,
+      "webSocket": true
     },
     {
       "id": "qq-desktop",
