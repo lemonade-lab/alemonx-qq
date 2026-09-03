@@ -38,7 +38,9 @@ export function loadSession(): QQSession {
       version: 2,
       engine: value.engine === 'luckylillia' || value.engine === 'snowluma' ? value.engine : 'napcat',
       view: value.view === 'config' ? 'config' : 'manage',
-      robotRoot: typeof value.robotRoot === 'string' ? value.robotRoot : '',
+      // A sync target is intentionally never restored: every sync must start
+      // with an explicit selection from the currently validated project list.
+      robotRoot: '',
       napcatQQ: typeof value.napcatQQ === 'string' ? value.napcatQQ : ''
     }
   } catch {

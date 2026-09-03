@@ -215,6 +215,12 @@ export async function chooseSystemPath(pickerId: string): Promise<string> {
 	return payload.paths[0]
 }
 
+export async function validateRobotDirectory(root: string): Promise<string> {
+	const payload = await json<{ valid?: boolean; path?: string; error?: string }>(await fetch(`/api/v1/robot/validate?root=${encodeURIComponent(root)}`))
+	if (!payload.valid || !payload.path) throw new Error(payload.error || '所选目录不是有效的 AlemonJS 机器人目录。')
+	return payload.path
+}
+
 // fetchStatus uses the workbench's read-only status endpoint. Unlike actions,
 // it does not allocate or persist an operation task on each refresh.
 export async function fetchStatus(engine: 'napcat' | 'luckylillia' | 'snowluma' = 'napcat'): Promise<StatusPayload> {

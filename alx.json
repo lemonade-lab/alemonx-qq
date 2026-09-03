@@ -53,6 +53,11 @@
   },
   "systemPickers": [
     {
+      "id": "robot-directory",
+      "kind": "directory",
+      "title": "选择 AlemonJS 机器人目录"
+    },
+    {
       "id": "napcat-directory",
       "kind": "directory",
       "title": "选择现有 NapCat 安装目录"

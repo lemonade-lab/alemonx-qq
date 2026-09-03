@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { chooseSystemPath, closeHostWebview, fetchHostRobotContext, fetchLocalServices, fetchOperationLog, fetchPluginLog, fetchPrivilegedAudit, fetchRobotProjects, fetchStatus, hostAlert, hostConfirm, luckyQRCodeURL, napcatQRCodeURL, openHostWebview, privilegePreflight, runActionAndPoll, syncRobotOneBot, type ActionResult, type LocalService, type PrivilegedAuditItem, type RobotProject, type StatusPayload, type Task, type TaskStep } from './api'
+import { chooseSystemPath, closeHostWebview, fetchLocalServices, fetchOperationLog, fetchPluginLog, fetchPrivilegedAudit, fetchRobotProjects, fetchStatus, hostAlert, hostConfirm, luckyQRCodeURL, napcatQRCodeURL, openHostWebview, privilegePreflight, runActionAndPoll, syncRobotOneBot, validateRobotDirectory, type ActionResult, type LocalService, type PrivilegedAuditItem, type RobotProject, type StatusPayload, type Task, type TaskStep } from './api'
 import { splitStatusLines, type StatusLine } from './status'
 import { loadSession, saveSession, type QQEngine, type QQView } from './session'
 import { HealthSummary, JourneyCard } from './components/OverviewCards'
@@ -343,7 +343,9 @@ export default function App() {
 	const [services, setServices] = useState<LocalService[]>([])
 	const [auditItems, setAuditItems] = useState<PrivilegedAuditItem[]>([])
 	const [auditLoading, setAuditLoading] = useState(false)
-	const [robotRoot, setRobotRoot] = useState(initialSession.robotRoot)
+	// OneBot synchronization must always target an explicit, freshly validated
+	// selection; never infer it from the current dashboard or saved UI state.
+	const [robotRoot, setRobotRoot] = useState('')
 	const webServiceID = engine === 'napcat' ? 'napcat-webui' : engine === 'luckylillia' ? 'luckylillia-webui' : 'snowluma-webui'
 	const webService = services.find(service => service.id === webServiceID)
 	// NapCat's WebUI treats its token as a separate WebUI login credential. The
@@ -600,12 +602,7 @@ export default function App() {
 	}, [liveStatus?.loginPending, refreshStatus])
 
 	useEffect(() => {
-		void Promise.all([fetchRobotProjects(), fetchHostRobotContext().catch(() => null)])
-			.then(([items, current]) => {
-				setProjects(items)
-				setRobotRoot(previous => previous || (current && items.some(item => item.root === current.root) ? current.root : ''))
-			})
-			.catch(() => setProjects([]))
+		void fetchRobotProjects().then(setProjects).catch(() => setProjects([]))
 	}, [])
 
 	useEffect(() => { void refreshAudit() }, [refreshAudit])
@@ -988,9 +985,25 @@ export default function App() {
 				<ActionButton label="刷新" variant="secondary" running={state === 'running'} onClick={() => void fetchRobotProjects(true).then(setProjects).catch(() => setProjects([]))} />
 			</div>
 			<div className="grid grid-cols-[repeat(auto-fit,minmax(180px,1fr))] gap-3">
-				<label className="grid gap-1 text-xs font-semibold text-[var(--theme-text-secondary)]">目标机器人
-					<select className={inputClass} value={robotRoot} onChange={event => setRobotRoot(event.target.value)}><option value="">请选择机器人</option>{projects.map(project => <option key={project.root} value={project.root}>{project.name}</option>)}</select>
-				</label>
+				<div className="grid gap-2 text-xs font-semibold text-[var(--theme-text-secondary)]">
+					<span>机器人目录</span>
+					<div className="flex items-center gap-2">
+						<span className="min-w-0 flex-1 truncate rounded border border-[var(--theme-border-default)] px-2 py-2 font-normal text-[var(--theme-text-muted)]" title={robotRoot}>{robotRoot || '尚未选择目录（必须通过 Finder 选择）'}</span>
+						<ActionButton label="选择目录" variant="secondary" running={state === 'running'} onClick={async () => {
+							try {
+								const selected = await chooseSystemPath('robot-directory')
+								const validated = await validateRobotDirectory(selected)
+								const known = await fetchRobotProjects(true)
+								if (!known.some(project => project.root === validated)) throw new Error('所选目录不是已识别的 AlemonJS 机器人目录（缺少 alemon.config.yaml）。')
+								setProjects(known)
+								setRobotRoot(validated)
+								setResult({ output: `✓ 已识别为机器人目录：${validated}` }); setState('done'); setResultOrigin('config-sync')
+							} catch (reason) {
+								setRobotRoot(''); setResult({ output: '', error: reason instanceof Error ? reason.message : String(reason) }); setState('failed'); setResultOrigin('config-sync')
+							}
+						}} />
+					</div>
+				</div>
 				<ActionField><ActionButton label="同步连接" running={state === 'running'} onClick={() => confirm('同步 OneBot 配置', '写入 OneBot WebSocket URL；Token 可留空，且会覆盖目标机器人的旧 Token。', async () => {
 					setResultOrigin('config-sync')
 					if (!robotRoot) { setResult({ output: '', error: '请选择目标机器人。' }); setState('failed'); return }
