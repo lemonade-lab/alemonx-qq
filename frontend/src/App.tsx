@@ -959,7 +959,7 @@ export default function App() {
               </select>
             </Field>
             <Field label="端口" name="wsPort" type="number" defaultValue="3001" />
-            <Field label="Token" name="wsToken" />
+            <Field label="Token（已保存的值不会显示；留空保持不变）" name="wsToken" />
 			<ActionField><button className="primary-button min-h-9" type="submit" disabled={!napcatManagedActions || ((liveStatus?.accounts?.length || 0) > 1 && !napcatQQ)}>保存 WebSocket</button></ActionField>
 			{localResult('config-ws')}
 		  </form></> : engine === 'luckylillia' ? <form

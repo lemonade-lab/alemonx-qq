@@ -152,13 +152,42 @@ func napcatOneBotToken(params map[string]string) (string, error) {
 	}
 	network, _ := doc["network"].(map[string]any)
 	if servers, ok := network["websocketServers"].([]any); ok {
-		for _, raw := range servers {
-			if server, ok := raw.(map[string]any); ok {
-				return oneBotTokenPayload(fmt.Sprint(server["token"]))
-			}
+		if server := activeOneBotServer(servers); server != nil {
+			return oneBotTokenPayload(fmt.Sprint(server["token"]))
 		}
 	}
 	return oneBotTokenPayload("")
+}
+
+// activeOneBotServer returns the WebSocket server the runtime can actually use.
+// NapCat permits more than one WebSocket server, so blindly using index zero
+// can copy a disabled server's empty or stale token into the robot config.
+func activeOneBotServer(servers []any) map[string]any {
+	for _, raw := range servers {
+		server, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		enabled, _ := server["enable"].(bool)
+		if enabled {
+			return server
+		}
+	}
+	return nil
+}
+
+// preferredOneBotServer chooses the active server when editing a config, or
+// the first valid entry so a disabled legacy server can be enabled in place.
+func preferredOneBotServer(servers []any) map[string]any {
+	if active := activeOneBotServer(servers); active != nil {
+		return active
+	}
+	for _, raw := range servers {
+		if server, ok := raw.(map[string]any); ok {
+			return server
+		}
+	}
+	return nil
 }
 
 func oneBotTokenPayload(token string) (string, error) {
@@ -252,10 +281,7 @@ func setServerConfig(params map[string]string, websocket, confirmed bool) (strin
 		key, label = "websocketServers", "WebSocket"
 	}
 	servers, _ := network[key].([]any)
-	var server map[string]any
-	if len(servers) > 0 {
-		server, _ = servers[0].(map[string]any)
-	}
+	server := preferredOneBotServer(servers)
 	if server == nil {
 		server = map[string]any{}
 		network[key] = append(servers, server)

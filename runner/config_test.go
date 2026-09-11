@@ -98,6 +98,44 @@ func TestNapcatOneBotTokenReadsWebSocketToken(t *testing.T) {
 	}
 }
 
+func TestNapcatOneBotTokenPrefersEnabledWebSocket(t *testing.T) {
+	napcat := withTempState(t)
+	config := `{"network":{"websocketServers":[{"enable":false,"port":3001,"token":"stale-token"},{"enable":true,"port":3101,"token":"active-token"}]}}`
+	if err := os.WriteFile(filepath.Join(napcat, "config", "onebot11_7.json"), []byte(config), 0600); err != nil {
+		t.Fatal(err)
+	}
+	output, err := napcatOneBotToken(map[string]string{"qq": "7"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]string
+	if err := json.Unmarshal([]byte(output), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["token"] != "active-token" {
+		t.Fatalf("token = %q, want active WebSocket token", payload["token"])
+	}
+}
+
+func TestNapcatOneBotTokenIgnoresDisabledWebSocket(t *testing.T) {
+	napcat := withTempState(t)
+	config := `{"network":{"websocketServers":[{"enable":false,"port":3001,"token":"disabled-token"}]}}`
+	if err := os.WriteFile(filepath.Join(napcat, "config", "onebot11_7.json"), []byte(config), 0600); err != nil {
+		t.Fatal(err)
+	}
+	output, err := napcatOneBotToken(map[string]string{"qq": "7"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]string
+	if err := json.Unmarshal([]byte(output), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["token"] != "" {
+		t.Fatalf("token = %q, want no token for a disabled WebSocket", payload["token"])
+	}
+}
+
 func TestSetServerConfigPreservesOtherFields(t *testing.T) {
 	napcat := withTempState(t)
 	makeManagedNapcatForConfig(t, napcat)
