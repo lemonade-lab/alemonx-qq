@@ -31,6 +31,22 @@ type snowLumaPorts struct {
 	OneBotEnabled bool
 }
 
+var (
+	snowLumaGroupAlive  = managedProcessGroupAlive
+	stopSnowLumaProcess = stopManagedProcess
+)
+
+func snowLumaProcessGroup(state snowLumaState) int {
+	if state.ProcessGroupID > 0 {
+		return state.ProcessGroupID
+	}
+	return state.PID
+}
+
+func snowLumaRunning(state snowLumaState) bool {
+	return snowLumaGroupAlive(snowLumaProcessGroup(state)) || processAlive(state.PID)
+}
+
 func snowLumaPlatform() (asset, native string, ok bool) {
 	switch runtime.GOOS + "/" + runtime.GOARCH {
 	case "windows/amd64":
@@ -502,13 +518,27 @@ func snowLumaStart(c bool) (string, error) {
 	if !s.Managed || s.InstallDir == "" {
 		return "", errors.New("请先安装 SnowLuma")
 	}
-	if processAlive(s.PID) {
-		return "? SnowLuma 已在运行。", nil
+	ports := snowLumaPortsFor(s.InstallDir)
+	if snowLumaRunning(s) {
+		if snowLumaWebUIURL(ports.WebUI) != "" {
+			return "? SnowLuma 已在运行。", nil
+		}
+		// SnowLuma may have handed work to children after its launcher exited.
+		// Stop the complete managed group before a new run, otherwise a hidden
+		// child can survive ALX restart and make future controls ineffective.
+		groupID := snowLumaProcessGroup(s)
+		stopSnowLumaProcess(groupID)
+		if snowLumaGroupAlive(groupID) || processAlive(s.PID) {
+			return "", errors.New("SnowLuma 遗留进程组未能停止；状态已保留以便继续诊断")
+		}
+		s.PID, s.ProcessGroupID = 0, 0
+		if e = saveSnowLumaState(s); e != nil {
+			return "", e
+		}
 	}
 	if e = snowLumaPreflight(s.InstallDir); e != nil {
 		return "", e
 	}
-	ports := snowLumaPortsFor(s.InstallDir)
 	if snowLumaPortOpen(ports.WebUI) {
 		return "", fmt.Errorf("SnowLuma WebUI 端口 %d 已被占用；为避免误判，未启动新的 SnowLuma 进程", ports.WebUI)
 	}
@@ -540,9 +570,13 @@ func snowLumaStart(c bool) (string, error) {
 	s.ProcessGroupID = s.PID
 	_ = cmd.Process.Release()
 	if e = saveSnowLumaState(s); e != nil {
+		stopSnowLumaProcess(snowLumaProcessGroup(s))
 		return "", e
 	}
 	if e = waitSnowLumaWebUI(s.PID, ports.WebUI, 45*time.Second); e != nil {
+		stopSnowLumaProcess(snowLumaProcessGroup(s))
+		s.PID, s.ProcessGroupID = 0, 0
+		_ = saveSnowLumaState(s)
 		return "", e
 	}
 	reportSnowLumaProgress("complete", 100, "SnowLuma WebUI 已就绪，等待 QQ 登录")
@@ -575,8 +609,12 @@ func snowLumaStop(c bool) (string, error) {
 	if e != nil {
 		return "", e
 	}
-	if s.PID > 0 {
-		stopManagedProcess(s.ProcessGroupID)
+	if snowLumaRunning(s) {
+		groupID := snowLumaProcessGroup(s)
+		stopSnowLumaProcess(groupID)
+		if snowLumaGroupAlive(groupID) || processAlive(s.PID) {
+			return "", errors.New("SnowLuma 进程组未能停止；状态已保留以便继续诊断")
+		}
 	}
 	s.PID, s.ProcessGroupID = 0, 0
 	return "✓ SnowLuma 已停止。", saveSnowLumaState(s)
@@ -598,7 +636,7 @@ func snowLumaUpdate(c bool) (string, error) {
 	if !s.Managed || s.InstallDir == "" {
 		return "", errors.New("请先安装 SnowLuma")
 	}
-	wasRunning := processAlive(s.PID)
+	wasRunning := snowLumaRunning(s)
 	if wasRunning {
 		reportSnowLumaProgress("stop", 10, "停止旧版 SnowLuma 进程")
 		if _, err = snowLumaStop(true); err != nil {
@@ -653,7 +691,7 @@ func snowLumaStatus() (string, error) {
 		return "", e
 	}
 	installed := s.InstallDir != "" && snowLumaEntry(s.InstallDir) != "" && snowLumaNativeReady(s.InstallDir)
-	running := processAlive(s.PID)
+	running := snowLumaRunning(s)
 	ports := snowLumaPortsFor(s.InstallDir)
 	web := ""
 	if running {

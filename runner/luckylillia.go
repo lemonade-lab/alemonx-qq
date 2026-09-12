@@ -46,6 +46,11 @@ type luckyProcess struct {
 	ProcessGroupID int
 }
 
+var (
+	luckyProcessGroupAlive = managedProcessGroupAlive
+	stopLuckyProcess       = stopManagedProcess
+)
+
 type kernelStatus struct {
 	Engine             string         `json:"engine"`
 	Installed          bool           `json:"installed"`
@@ -989,14 +994,23 @@ func luckyStart(confirmed bool) (string, error) {
 	if !luckyAuthTokenReady(state.InstallDir) {
 		return "", errors.New("缺少 LuckyLillia Auth Token；请先在“网络配置”中保存从 https://auth.luckylillia.com 获取的 Token")
 	}
-	if processAlive(state.PID) {
+	if luckyProcessGroupAlive(state.ProcessGroupID) || processAlive(state.PID) {
 		webPort, _ := luckyConfiguredPorts()
 		if luckyPortURL(webPort) != "" {
 			return "? LuckyLillia 已在运行中。", nil
 		}
-		// A container restart can reuse the numeric PID recorded for the
-		// previous LLBot process. Never signal or kill that unknown process;
-		// discard only our stale record and launch a fresh managed instance.
+		// The launcher may have exited after it handed LLBot to a child. Its
+		// process group is still ours, and must be stopped before a replacement
+		// starts; otherwise the orphan can retain ports and cannot be controlled
+		// after ALX is reopened.
+		processGroupID := state.ProcessGroupID
+		if processGroupID <= 0 {
+			processGroupID = state.PID
+		}
+		stopLuckyProcess(processGroupID)
+		if luckyProcessGroupAlive(processGroupID) || processAlive(state.PID) {
+			return "", errors.New("LuckyLillia 遗留进程组未能停止；状态已保留以便继续诊断")
+		}
 		state.PID, state.ProcessGroupID = 0, 0
 		if err := saveLuckyState(state); err != nil {
 			return "", err
@@ -1026,12 +1040,12 @@ func luckyStart(confirmed bool) (string, error) {
 	state.PID = process.PID
 	state.ProcessGroupID = process.ProcessGroupID
 	if err := saveLuckyState(state); err != nil {
-		stopManagedProcess(state.PID)
+		stopLuckyProcess(state.PID)
 		return "", err
 	}
 	webPort, _ := luckyConfiguredPorts()
 	if err := waitLuckyWebUIForProcess(state.PID, webPort, webUIStartupTimeout); err != nil {
-		stopManagedProcess(state.PID)
+		stopLuckyProcess(state.PID)
 		state.PID, state.ProcessGroupID = 0, 0
 		_ = saveLuckyState(state)
 		return "", fmt.Errorf("LuckyLillia 启动后管理页面（端口 %d）未能就绪：%w", webPort, err)
@@ -1081,13 +1095,13 @@ func luckyStop(confirmed bool) (string, error) {
 	if err := requireManagedLucky(state, "停止"); err != nil {
 		return "", err
 	}
-	if processAlive(state.ProcessGroupID) || processAlive(state.PID) {
+	if luckyProcessGroupAlive(state.ProcessGroupID) || processAlive(state.PID) {
 		processGroupID := state.ProcessGroupID
 		if processGroupID <= 0 {
 			processGroupID = state.PID
 		}
-		stopManagedProcess(processGroupID)
-		if processAlive(processGroupID) || processAlive(state.PID) {
+		stopLuckyProcess(processGroupID)
+		if luckyProcessGroupAlive(processGroupID) || processAlive(state.PID) {
 			return "", errors.New("LuckyLillia 进程组未能停止；状态已保留以便继续诊断")
 		}
 	}

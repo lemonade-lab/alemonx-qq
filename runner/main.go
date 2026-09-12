@@ -458,6 +458,11 @@ func napcatProcessGroup(state State) int {
 	return state.PID
 }
 
+var (
+	napcatManagedGroupAlive  = managedNapcatGroupAlive
+	stopNapcatManagedProcess = stopProcess
+)
+
 func startAction(confirmed bool) (string, error) {
 	if err := requireNapcatConfirmation(confirmed, "启动 NapCat"); err != nil {
 		return "", err
@@ -508,11 +513,11 @@ func stopAction(confirmed bool) (string, error) {
 	if err := requireManagedNapcat(state, "停止"); err != nil {
 		return "", err
 	}
-	if !managedNapcatGroupAlive(state) {
+	if !napcatManagedGroupAlive(state) {
 		return "? NapCat 当前没有在运行。", nil
 	}
-	stopProcess(napcatProcessGroup(state))
-	if isRunning(state) {
+	stopNapcatManagedProcess(napcatProcessGroup(state))
+	if napcatManagedGroupAlive(state) {
 		return "", errors.New("NapCat 进程组未能停止；状态已保留以便继续诊断")
 	}
 	state.PID, state.ProcessGroupID = 0, 0

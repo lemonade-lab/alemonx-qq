@@ -101,6 +101,50 @@ func TestLuckyConfiguredPortsUsesOfficialConfig(t *testing.T) {
 	}
 }
 
+func TestLuckyStopTargetsSurvivingChildProcessGroup(t *testing.T) {
+	originalConfigDir := userConfigDir
+	originalGroupAlive := luckyProcessGroupAlive
+	originalStop := stopLuckyProcess
+	dir := t.TempDir()
+	userConfigDir = func() (string, error) { return dir, nil }
+	t.Cleanup(func() {
+		userConfigDir = originalConfigDir
+		luckyProcessGroupAlive = originalGroupAlive
+		stopLuckyProcess = originalStop
+	})
+	install, err := luckyInstallDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(install, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := saveLuckyState(luckyState{InstallDir: install, Managed: true, InstallMode: "managed", Platform: luckyPlatform().Key, PID: 0, ProcessGroupID: 4242}); err != nil {
+		t.Fatal(err)
+	}
+	alive := true
+	luckyProcessGroupAlive = func(pid int) bool { return pid == 4242 && alive }
+	stopped := 0
+	stopLuckyProcess = func(pid int) {
+		if pid != 4242 {
+			t.Fatalf("stop target = %d, want process group 4242", pid)
+		}
+		stopped++
+		alive = false
+	}
+
+	if _, err := luckyStop(true); err != nil {
+		t.Fatalf("luckyStop: %v", err)
+	}
+	if stopped != 1 {
+		t.Fatalf("stop calls = %d, want 1", stopped)
+	}
+	state, err := loadLuckyState()
+	if err != nil || state.PID != 0 || state.ProcessGroupID != 0 {
+		t.Fatalf("state after stop = %+v, %v", state, err)
+	}
+}
+
 func TestLuckyQQLoggedInRequiresSessionNewerThanQRCode(t *testing.T) {
 	install := t.TempDir()
 	dataDir := filepath.Join(install, "bin", "llbot", "data")

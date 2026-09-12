@@ -82,3 +82,40 @@ func TestSnowLumaOneBotTokenRejectsMissingConfig(t *testing.T) {
 		t.Fatal("missing SnowLuma OneBot config must not silently return an empty token")
 	}
 }
+
+func TestSnowLumaStopTargetsSurvivingChildProcessGroup(t *testing.T) {
+	originalConfigDir := userConfigDir
+	originalGroupAlive := snowLumaGroupAlive
+	originalStop := stopSnowLumaProcess
+	dir := t.TempDir()
+	userConfigDir = func() (string, error) { return dir, nil }
+	t.Cleanup(func() {
+		userConfigDir = originalConfigDir
+		snowLumaGroupAlive = originalGroupAlive
+		stopSnowLumaProcess = originalStop
+	})
+	if err := saveSnowLumaState(snowLumaState{Managed: true, PID: 0, ProcessGroupID: 4242}); err != nil {
+		t.Fatal(err)
+	}
+	alive := true
+	snowLumaGroupAlive = func(pid int) bool { return pid == 4242 && alive }
+	stopped := 0
+	stopSnowLumaProcess = func(pid int) {
+		if pid != 4242 {
+			t.Fatalf("stop target = %d, want process group 4242", pid)
+		}
+		stopped++
+		alive = false
+	}
+
+	if _, err := snowLumaStop(true); err != nil {
+		t.Fatalf("snowLumaStop: %v", err)
+	}
+	if stopped != 1 {
+		t.Fatalf("stop calls = %d, want 1", stopped)
+	}
+	state, err := loadSnowLumaState()
+	if err != nil || state.PID != 0 || state.ProcessGroupID != 0 {
+		t.Fatalf("state after stop = %+v, %v", state, err)
+	}
+}

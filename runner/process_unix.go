@@ -53,6 +53,14 @@ func processGroupAlive(pid int) bool {
 	return err == nil || errors.Is(err, syscall.EPERM)
 }
 
+// managedProcessGroupAlive checks the complete process group that the runner
+// created. The shell that launched LLBot may exit after handing off to its
+// child, so probing only the recorded leader PID would lose a still-running
+// WebUI and make it impossible for a later ALX session to stop it.
+func managedProcessGroupAlive(pid int) bool {
+	return processGroupAlive(pid)
+}
+
 func managedNapcatGroupAlive(state State) bool {
 	return processGroupAlive(napcatProcessGroup(state))
 }

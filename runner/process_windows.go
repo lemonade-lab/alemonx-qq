@@ -50,3 +50,9 @@ func aliveProbe(pid int) bool {
 	defer syscall.CloseHandle(process)
 	return true
 }
+
+// Windows taskkill addresses the managed process tree by its root PID, so the
+// same liveness probe is the closest equivalent of a Unix process-group check.
+func managedProcessGroupAlive(pid int) bool {
+	return aliveProbe(pid)
+}
