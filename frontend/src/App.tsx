@@ -785,6 +785,7 @@ export default function App() {
 			<div className="mt-3 flex flex-wrap gap-2">
 			{engine === 'napcat' ? <>
 				{!guide?.label.includes('启动') && <ActionButton label="启动" variant="secondary" running={state === 'running'} disabled={!napcatManagedActions || !liveStatus?.installed} onClick={() => confirm('启动 NapCat', '启动工作台受管的后台进程，用手机 QQ 扫码登录。', () => run('start', {}, true))} />}
+				<ActionButton label="检查并更新" running={state === 'running'} disabled={!napcatManagedActions || !liveStatus?.installed} onClick={() => confirm('更新 NapCat', '将检查并下载官方最新 Release。更新时会停止服务、保留现有配置；若更新失败会自动恢复旧版本。服务原本正在运行时，更新完成后会自动恢复。', () => run('update', {}, true))} />
 				<ActionButton label="停止" variant="secondary" running={state === 'running'} disabled={!napcatManagedActions || !liveStatus?.running} onClick={() => confirm('停止 NapCat', '停止工作台受管的 NapCat 进程组。', () => run('stop', {}, true))} />
 				{liveStatus?.installed && !liveStatus?.managed ? <ActionButton label="取消关联" variant="danger" running={state === 'running'} onClick={() => confirm('取消关联 NapCat', '不会删除或修改外部目录。', () => run('napcat-forget', {}, true), 'danger')} /> : <ActionButton label="卸载" variant="danger" running={state === 'running'} disabled={!napcatManagedActions} onClick={() => confirm('卸载 NapCat', '会停止并删除工作台受管目录。', () => run('uninstall', {}, true), 'danger')} />}
 				<ActionButton label={maintenanceLogOpen ? '折叠日志' : '展开日志'} variant="secondary" running={state === 'running'} onClick={toggleMaintenanceLog} />
@@ -793,12 +794,14 @@ export default function App() {
 			</> : engine === 'luckylillia' ? <>
 				{!guide?.label.includes('启动') && <ActionButton label="启动" variant="secondary" running={state === 'running'} disabled={!luckyManaged || !luckyInstalled} onClick={() => confirm('启动 LuckyLillia', '将启动官方 CLI 并等待登录。', () => run(luckyAction('start'), {}, true))} />}
 				{liveStatus?.migrationAvailable && <ActionButton label="迁移并接管" variant="primary" running={state === 'running'} onClick={() => confirm('迁移 LuckyLillia', '将复制到工作区管理目录，原目录不会删除。', () => run(luckyAction('migrate'), {}, true))} />}
+				<ActionButton label="检查并更新" running={state === 'running'} disabled={!luckyManaged || !luckyInstalled} onClick={() => confirm('更新 LuckyLillia', '将检查并下载官方最新 Release。更新时会停止服务、保留已保存的 Token 与连接配置；若更新失败会恢复原安装。', () => run(luckyAction('update'), {}, true))} />
 				<ActionButton label="停止" variant="secondary" running={state === 'running'} disabled={!luckyManaged || !liveStatus?.running} onClick={() => confirm('停止 LuckyLillia', '停止由工作台管理的 LuckyLillia 进程。', () => run(luckyAction('stop'), {}, true))} />
 				{luckyInstalled && (luckyManaged ? <ActionButton label="卸载" variant="danger" running={state === 'running'} onClick={() => confirm('卸载 LuckyLillia', '会停止并删除工作台安装的 LuckyLillia。', () => run(luckyAction('uninstall'), {}, true), 'danger')} /> : <ActionButton label="取消关联" variant="danger" running={state === 'running'} onClick={() => confirm('取消关联 LuckyLillia', '不会删除外部目录或修改其中的文件。', () => run(luckyAction('forget'), {}, true), 'danger')} />)}
 				<ActionButton label={maintenanceLogOpen ? '折叠日志' : '展开日志'} variant="secondary" running={state === 'running'} onClick={toggleMaintenanceLog} />
 				<ActionButton label="清理日志" variant="secondary" running={state === 'running'} onClick={() => confirm('清理 LuckyLillia 日志', '将清空核心日志与操作日志，不影响安装与配置。', () => run(luckyAction('log-clear'), {}, true), 'danger')} />
 			</> : <>
 				{!guide?.label.includes('启动') && <ActionButton label="启动" variant="secondary" running={state === 'running'} disabled={!liveStatus?.managed || !liveStatus?.installed} onClick={() => confirm('启动 SnowLuma', '启动工作台受管的 SnowLuma 原生进程。', () => run(snowLumaAction('start'), {}, true))} />}
+				<ActionButton label="检查并更新" running={state === 'running'} disabled={!liveStatus?.managed || !liveStatus?.installed} onClick={() => confirm('更新 SnowLuma', '将检查并下载官方最新 Release。更新时会保留数据目录；服务原本正在运行时，更新完成后会自动恢复。', () => run(snowLumaAction('update'), {}, true))} />
 				<ActionButton label="停止" variant="secondary" running={state === 'running'} disabled={!liveStatus?.managed || !liveStatus?.running} onClick={() => confirm('停止 SnowLuma', '停止工作台受管的 SnowLuma 原生进程。', () => run(snowLumaAction('stop'), {}, true))} />
 				<ActionButton label="卸载" variant="danger" running={state === 'running'} disabled={!liveStatus?.managed} onClick={() => confirm('卸载 SnowLuma', '将删除工作台安装的 SnowLuma 原生完整包。', () => run(snowLumaAction('uninstall'), {}, true), 'danger')} />
 				<ActionButton label={maintenanceLogOpen ? '折叠日志' : '展开日志'} variant="secondary" running={state === 'running'} onClick={toggleMaintenanceLog} />
